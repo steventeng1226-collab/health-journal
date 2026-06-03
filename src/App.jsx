@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v1.4";
+const VERSION = "v1.5";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 const CLAUDE_API = "https://api.anthropic.com/v1/messages";
 
@@ -266,7 +266,7 @@ export default function HealthJournal(){
 
   // AI 解析報告（文字）
   const parseLabText=async()=>{
-    const key=apiKey||localStorage.getItem("hj_apikey")||"";
+    const key=localStorage.getItem("hj_apikey")||apiKey||"";
     if(!key){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");return;}
     if(!labInputText.trim()&&labPhotos.length===0){showToast("⚠️ 請先貼上報告文字或上傳照片");return;}
     setLabStep("parsing");
@@ -311,7 +311,12 @@ ${textPart}
 
       const res=await fetch(CLAUDE_API,{
         method:"POST",
-        headers:{"Content-Type":"application/json"},
+        headers:{
+          "Content-Type":"application/json",
+          "x-api-key": key,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true"
+        },
         body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content}]})
       });
       const data=await res.json();
@@ -988,11 +993,16 @@ ${textPart}
 
   // ── AI分析 ─────────────────────────────────────────────
   const generateAIReport=async()=>{
-    const key=apiKey||localStorage.getItem("hj_apikey")||"";
+    const key=localStorage.getItem("hj_apikey")||apiKey||"";
     if(!key){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");return;}
     setAiLoading(true);
     try{
-      const res=await fetch(CLAUDE_API,{method:"POST",headers:{"Content-Type":"application/json"},
+      const res=await fetch(CLAUDE_API,{method:"POST",headers:{
+          "Content-Type":"application/json",
+          "x-api-key": key,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true"
+        },
         body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,
           messages:[{role:"user",content:`你是個人健康顧問。用繁體中文分析：
 病患：張文彬，55歲，父親T2D家族史，越南工作
@@ -1186,21 +1196,24 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
           </div>
         </div>
 
-        {/* 個人資料 */}
+        {/* 健康背景 */}
         <div className="card">
-          <div className="card-title">個人資料</div>
+          <div className="card-title">健康背景（AI分析用）</div>
           {[
-            {label:"姓名",val:"張文彬"},
             {label:"年齡",val:"55歲"},
-            {label:"家族史",val:"父親 T2D"},
+            {label:"性別",val:"男性"},
+            {label:"家族史",val:"父親 T2D（第二型糖尿病）"},
             {label:"工作地點",val:"越南"},
+            {label:"血糖機",val:"Accu-Chek Guide（mmol/L）"},
+            {label:"血壓計",val:"OMRON Connect"},
+            {label:"體重計",val:"小米體重計"},
           ].map(item=>(
             <div key={item.label} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
               <span style={{fontSize:13,color:C.textMuted}}>{item.label}</span>
-              <span style={{fontSize:13,color:C.text}}>{item.val}</span>
+              <span style={{fontSize:13,color:C.text,textAlign:"right",flex:1,marginLeft:12}}>{item.val}</span>
             </div>
           ))}
-          <div style={{fontSize:11,color:C.textMuted,marginTop:10}}>個人資料已內建到AI分析背景</div>
+          <div style={{fontSize:11,color:C.textMuted,marginTop:10}}>以上背景已自動帶入每次AI分析</div>
         </div>
 
         {/* APP資訊 */}
