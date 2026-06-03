@@ -1,8 +1,25 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v1.7";
+const VERSION = "v1.8";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
-const CLAUDE_API = "https://api.anthropic.com/v1/messages";
+// Claude API 透過 Apps Script Proxy 呼叫（避免CORS問題）
+const callClaude = async (messages, maxTokens=1000) => {
+  const key = localStorage.getItem("hj_apikey") || "";
+  if (!key) throw new Error("NO_API_KEY");
+  const res = await fetch(GAS_URL, {
+    method: "POST",
+    body: JSON.stringify({
+      action: "claudeProxy",
+      apiKey: key,
+      model: "claude-sonnet-4-20250514",
+      max_tokens: maxTokens,
+      messages: messages,
+    })
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || data.error);
+  return data.content?.map(b => b.text || "").join("") || "";
+};
 
 const api = {
   get: async (action, params={}) => {
@@ -319,23 +336,7 @@ ${textPart}
 {"date":"偵測到的日期或null","hospital":"偵測到的醫院名稱或null","hba1c":數值或null,"glucose_ac":數值或null,"alt":數值或null,"ast":數值或null,"hdl":數值或null,"ldl":數值或null,"tg":數值或null,"cholesterol":數值或null,"uric_acid":數值或null,"creatinine":數值或null,"gfr":數值或null,"upcr":數值或null,"tsh":數值或null,"hb":數值或null,"wbc":數值或null,"platelet":數值或null,"rbc":數值或null,"hct":數值或null,"mcv":數值或null,"mch":數值或null,"mchc":數值或null,"note":null}
 數值只填數字，不要單位。找不到填null。越南單位mmol/L請×18換算為mg/dL。`});
 
-      const res=await fetch(CLAUDE_API,{
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          "x-api-key": key,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true"
-        },
-        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content}]})
-      });
-      const data=await res.json();
-      console.log("API response:",JSON.stringify(data).slice(0,500));
-      // 檢查API錯誤
-      if(data.error){
-        throw new Error("API錯誤: "+data.error.message);
-      }
-      const rawText=data.content?.map(b=>b.text||"").join("")||"{}";
+      const rawText = await callClaude([{role:"user",content}], 1200);
       console.log("Raw text:",rawText.slice(0,500));
       // 清理並解析JSON - 多重嘗試
       let parsed={};
@@ -388,7 +389,12 @@ ${textPart}
       }));
       setLabStep("confirm");
     }catch(e){
-      showToast("❌ 解析失敗，請確認API金鑰或改用文字輸入");
+      if(e.message==="NO_API_KEY"){
+        showToast("⚠️ 請先在設定Tab輸入API金鑰");
+        setTab("setting");
+      }else{
+        showToast("❌ 解析失敗："+e.message);
+      }
       setLabStep("input");
     }
   };
@@ -1055,23 +1061,25 @@ ${textPart}
     if(!key){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");return;}
     setAiLoading(true);
     try{
-      const res=await fetch(CLAUDE_API,{method:"POST",headers:{
-          "Content-Type":"application/json",
-          "x-api-key": key,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true"
-        },
-        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,
-          messages:[{role:"user",content:`你是個人健康顧問。用繁體中文分析：
-病患：張文彬，55歲，父親T2D家族史，越南工作
+      showToast("⏳ 連接中，約15秒...");
+      const prompt=`你是個人健康顧問。用繁體中文分析：
+病患：55歲男性，父親T2D家族史，越南工作
 HbA1c：${latestLab?.hba1c||5.8}%，血糖：${latestGlucose?.value_mgdl||104} mg/dL
 ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
 血壓：${latestBP?.systolic||118}/${latestBP?.diastolic||76} mmHg
 請提供：1.本週總評 2.三大重點 3.飲食建議3點 4.運動建議 5.鼓勵一句
-不用markdown符號`}]})});
-      const data=await res.json();
-      setAiReport(data.content?.map(b=>b.text||"").join("")||"分析失敗");
-    }catch(e){setAiReport("請檢查API金鑰");}
+不用markdown符號`;
+      const result=await callClaude([{role:"user",content:prompt}]);
+      setAiReport(result||"分析失敗");
+    }catch(e){
+      if(e.message==="NO_API_KEY"){
+        showToast("⚠️ 請先在設定Tab輸入API金鑰");
+        setTab("setting");
+      }else{
+        setAiReport("❌ 分析失敗："+e.message);
+        showToast("❌ "+e.message);
+      }
+    }
     setAiLoading(false);
   };
 
