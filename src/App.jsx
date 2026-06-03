@@ -1,97 +1,95 @@
 import React, { useState, useEffect, useCallback } from "react";
 
-// ── 版本 & 後端設定 ───────────────────────────────────────
-const VERSION = "v1.1";
+const VERSION = "v1.2";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 
-// ── API 工具 ──────────────────────────────────────────────
 const api = {
   get: async (action, params = {}) => {
-    const q = new URLSearchParams({ action, ...params }).toString();
-    const res = await fetch(`${GAS_URL}?${q}`);
-    return res.json();
+    try {
+      const q = new URLSearchParams({ action, ...params }).toString();
+      const res = await fetch(`${GAS_URL}?${q}`);
+      return res.json();
+    } catch(e) { return { error: e.toString() }; }
   },
   post: async (action, sheet, data) => {
-    const res = await fetch(GAS_URL, {
-      method: "POST",
-      body: JSON.stringify({ action, sheet, data }),
-    });
-    return res.json();
+    try {
+      const res = await fetch(GAS_URL, { method:"POST", body: JSON.stringify({ action, sheet, data }) });
+      return res.json();
+    } catch(e) { return { error: e.toString() }; }
   },
 };
 
-// ── 全域色彩系統 ──────────────────────────────────────────
 const C = {
-  bg: "#0d1f17", bgCard: "#132a1e", bgCard2: "#1a3828",
-  green: "#2ecc8a", greenDark: "#1a8c5e", greenLight: "#4fffb0",
-  red: "#ff5a7e", amber: "#ffb347", blue: "#5ab4ff",
-  text: "#e8f5ef", textMuted: "#7aaa90",
-  border: "rgba(46,204,138,0.15)", borderBright: "rgba(46,204,138,0.35)",
+  bg:"#0d1f17", bgCard:"#132a1e", bgCard2:"#1a3828",
+  green:"#2ecc8a", greenDark:"#1a8c5e",
+  red:"#ff5a7e", amber:"#ffb347", blue:"#5ab4ff", purple:"#c084fc",
+  text:"#e8f5ef", textMuted:"#7aaa90",
+  border:"rgba(46,204,138,0.15)", borderBright:"rgba(46,204,138,0.35)",
+};
+
+// mmol/L → mg/dL
+const toMgdl = (v, unit) => unit === "mmol/L" ? Math.round(parseFloat(v) * 18.016 * 10) / 10 : parseFloat(v);
+
+const fmtDate = (d) => {
+  if (!d) return "—";
+  const s = String(d).slice(0,10);
+  const parts = s.split("-");
+  if (parts.length === 3) return `${parts[1]}/${parts[2]}`;
+  return s;
+};
+const daysSince = (d) => {
+  if (!d) return "—";
+  const diff = Math.floor((new Date() - new Date(String(d).slice(0,10))) / 86400000);
+  if (diff === 0) return "今天"; if (diff === 1) return "昨天"; return `${diff}天前`;
 };
 
 const styles = `
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=DM+Serif+Display&display=swap');
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: ${C.bg}; color: ${C.text}; font-family: 'Noto Sans TC', sans-serif; }
-  ::-webkit-scrollbar { width: 4px; }
-  ::-webkit-scrollbar-track { background: ${C.bg}; }
-  ::-webkit-scrollbar-thumb { background: ${C.greenDark}; border-radius: 2px; }
-  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.7;transform:scale(0.95)} }
-  @keyframes fadeIn { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
-  @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
-  @keyframes spin { to{transform:rotate(360deg)} }
-  .fade-in { animation: fadeIn 0.4s ease forwards; }
-  .spin { animation: spin 1s linear infinite; display:inline-block; }
-  .tab-bar {
-    position: fixed; bottom: 0; left: 0; right: 0;
-    background: ${C.bgCard}; border-top: 1px solid ${C.border};
-    display: flex; z-index: 100;
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-  .tab-btn {
-    flex: 1; padding: 10px 4px 8px; background: none; border: none; cursor: pointer;
-    display: flex; flex-direction: column; align-items: center; gap: 3px;
-    color: ${C.textMuted}; font-size: 10px; font-family: 'Noto Sans TC', sans-serif;
-    transition: color 0.2s;
-  }
-  .tab-btn.active { color: ${C.green}; }
-  .tab-btn svg { width: 22px; height: 22px; }
-  .card { background: ${C.bgCard}; border: 1px solid ${C.border}; border-radius: 16px; padding: 16px; margin-bottom: 12px; }
-  .card-title { font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: ${C.textMuted}; margin-bottom: 12px; font-weight: 500; }
-  .metric-value { font-family: 'DM Serif Display', serif; font-size: 32px; color: ${C.text}; line-height: 1; }
-  .metric-unit { font-size: 13px; color: ${C.textMuted}; }
-  .status-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 500; }
-  .status-ok { background: rgba(46,204,138,0.15); color: ${C.green}; }
-  .status-warn { background: rgba(255,179,71,0.15); color: ${C.amber}; }
-  .status-alert { background: rgba(255,90,126,0.15); color: ${C.red}; }
-  .input-field { width: 100%; background: ${C.bg}; border: 1px solid ${C.border}; border-radius: 10px; padding: 12px 14px; color: ${C.text}; font-family: 'Noto Sans TC', sans-serif; font-size: 15px; outline: none; transition: border-color 0.2s; }
-  .input-field:focus { border-color: ${C.green}; }
-  .input-field::placeholder { color: ${C.textMuted}; }
-  .btn-primary { width: 100%; padding: 14px; background: linear-gradient(135deg, ${C.green}, ${C.greenDark}); border: none; border-radius: 12px; color: #0d1f17; font-weight: 700; font-size: 15px; cursor: pointer; font-family: 'Noto Sans TC', sans-serif; transition: opacity 0.2s, transform 0.1s; }
-  .btn-primary:active { opacity: 0.85; transform: scale(0.98); }
-  .btn-primary:disabled { opacity: 0.5; }
-  .btn-secondary { padding: 10px 20px; background: ${C.bgCard2}; border: 1px solid ${C.borderBright}; border-radius: 10px; color: ${C.green}; font-size: 13px; cursor: pointer; font-family: 'Noto Sans TC', sans-serif; transition: background 0.2s; }
-  .reminder-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid ${C.border}; }
-  .reminder-item:last-child { border-bottom: none; }
-  .section-header { font-size: 20px; font-weight: 700; color: ${C.text}; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
-  .ai-bubble { background: linear-gradient(135deg, rgba(46,204,138,0.1), rgba(26,140,94,0.05)); border: 1px solid ${C.borderBright}; border-radius: 16px; padding: 16px; position: relative; overflow: hidden; }
-  .knowledge-card { background: ${C.bgCard2}; border-radius: 12px; padding: 14px; margin-bottom: 10px; border-left: 3px solid ${C.green}; cursor: pointer; }
-  select.input-field { appearance: none; }
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-  .time-btn { padding: 8px; border-radius: 8px; text-align: center; font-size: 12px; cursor: pointer; border: 1px solid ${C.border}; background: ${C.bg}; color: ${C.textMuted}; font-family: 'Noto Sans TC', sans-serif; transition: all 0.2s; }
-  .time-btn.selected { background: rgba(46,204,138,0.15); border-color: ${C.green}; color: ${C.green}; }
-  .save-toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: ${C.green}; color: #0d1f17; padding: 10px 24px; border-radius: 20px; font-weight: 700; font-size: 14px; z-index: 999; animation: fadeIn 0.3s ease; }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:${C.bg};color:${C.text};font-family:'Noto Sans TC',sans-serif;}
+  ::-webkit-scrollbar{width:4px;} ::-webkit-scrollbar-track{background:${C.bg};} ::-webkit-scrollbar-thumb{background:${C.greenDark};border-radius:2px;}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+  .fade-in{animation:fadeIn 0.4s ease forwards;}
+  .spin{animation:spin 1s linear infinite;display:inline-block;}
+  .tab-bar{position:fixed;bottom:0;left:0;right:0;background:${C.bgCard};border-top:1px solid ${C.border};display:flex;z-index:100;padding-bottom:env(safe-area-inset-bottom);}
+  .tab-btn{flex:1;padding:10px 4px 8px;background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;color:${C.textMuted};font-size:10px;font-family:'Noto Sans TC',sans-serif;transition:color 0.2s;}
+  .tab-btn.active{color:${C.green};} .tab-btn svg{width:22px;height:22px;}
+  .card{background:${C.bgCard};border:1px solid ${C.border};border-radius:16px;padding:16px;margin-bottom:12px;}
+  .card-title{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:${C.textMuted};margin-bottom:12px;font-weight:500;}
+  .status-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:500;}
+  .status-ok{background:rgba(46,204,138,0.15);color:${C.green};}
+  .status-warn{background:rgba(255,179,71,0.15);color:${C.amber};}
+  .status-alert{background:rgba(255,90,126,0.15);color:${C.red};}
+  .input-field{width:100%;background:${C.bg};border:1px solid ${C.border};border-radius:10px;padding:12px 14px;color:${C.text};font-family:'Noto Sans TC',sans-serif;font-size:15px;outline:none;transition:border-color 0.2s;}
+  .input-field:focus{border-color:${C.green};} .input-field::placeholder{color:${C.textMuted};}
+  .btn-primary{width:100%;padding:14px;background:linear-gradient(135deg,${C.green},${C.greenDark});border:none;border-radius:12px;color:#0d1f17;font-weight:700;font-size:15px;cursor:pointer;font-family:'Noto Sans TC',sans-serif;transition:opacity 0.2s,transform 0.1s;}
+  .btn-primary:active{opacity:0.85;transform:scale(0.98);} .btn-primary:disabled{opacity:0.5;}
+  .btn-secondary{padding:10px 20px;background:${C.bgCard2};border:1px solid ${C.borderBright};border-radius:10px;color:${C.green};font-size:13px;cursor:pointer;font-family:'Noto Sans TC',sans-serif;}
+  .btn-sm{padding:6px 14px;background:${C.bgCard2};border:1px solid ${C.border};border-radius:8px;color:${C.textMuted};font-size:12px;cursor:pointer;font-family:'Noto Sans TC',sans-serif;}
+  .btn-sm.active{border-color:${C.green};color:${C.green};background:rgba(46,204,138,0.1);}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+  .time-btn{padding:8px;border-radius:8px;text-align:center;font-size:12px;cursor:pointer;border:1px solid ${C.border};background:${C.bg};color:${C.textMuted};font-family:'Noto Sans TC',sans-serif;transition:all 0.2s;}
+  .time-btn.selected{background:rgba(46,204,138,0.15);border-color:${C.green};color:${C.green};}
+  .save-toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:${C.green};color:#0d1f17;padding:10px 24px;border-radius:20px;font-weight:700;font-size:14px;z-index:999;animation:fadeIn 0.3s ease;}
+  .section-header{font-size:20px;font-weight:700;color:${C.text};margin-bottom:16px;display:flex;align-items:center;gap:10px;}
+  .source-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;}
+  .source-daily{background:rgba(46,204,138,0.15);color:${C.green};}
+  .source-hospital{background:rgba(90,180,255,0.15);color:${C.blue};}
+  .knowledge-card{background:${C.bgCard2};border-radius:12px;padding:14px;margin-bottom:10px;border-left:3px solid ${C.green};cursor:pointer;}
+  select.input-field{appearance:none;}
+  .reminder-item{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid ${C.border};}
+  .reminder-item:last-child{border-bottom:none;}
+  .ai-bubble{background:linear-gradient(135deg,rgba(46,204,138,0.1),rgba(26,140,94,0.05));border:1px solid ${C.borderBright};border-radius:16px;padding:16px;position:relative;overflow:hidden;}
+  .empty-state{text-align:center;padding:32px 16px;color:${C.textMuted};font-size:13px;}
 `;
 
-// ── Icons ─────────────────────────────────────────────────
-const ShieldIcon = ({ size = 28 }) => (
+// Icons
+const ShieldIcon = ({size=28}) => (
   <svg width={size} height={size} viewBox="0 0 512 512" fill="none">
-    <defs>
-      <linearGradient id="sg" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#2ecc8a"/><stop offset="100%" stopColor="#1a6b4a"/>
-      </linearGradient>
-    </defs>
+    <defs><linearGradient id="sg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stopColor="#2ecc8a"/><stop offset="100%" stopColor="#1a6b4a"/></linearGradient></defs>
     <path d="M256 40L400 100L400 250C400 330 330 395 256 420C182 395 112 330 112 250L112 100Z" fill="url(#sg)"/>
     <path d="M185 250C185 222 200 208 215 208C226 208 236 215 244 226C252 215 262 208 273 208C288 208 303 222 303 250C303 290 256 320 256 320C256 320 209 290 185 250Z" fill="#ff5a7e"/>
     <polyline points="145,248 178,248 192,222 208,274 222,238 244,248 256,248 270,228 284,264 298,248 340,248" stroke="white" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
@@ -103,36 +101,60 @@ const RecordIcon = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentCol
 const AIIcon = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 110 20A10 10 0 0112 2z"/><path d="M9 9h.01M15 9h.01M9.5 15a4 4 0 005 0"/></svg>;
 const BookIcon = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>;
 
-// ── 知識庫資料 ────────────────────────────────────────────
+// 知識庫資料（框架，待補充）
 const KNOWLEDGE_ITEMS = [
   { key:"hba1c", title:"HbA1c 糖化血色素", icon:"🩸", color:C.red,
-    desc:"反映過去3個月的平均血糖水準，是診斷糖尿病前期的黃金指標。",
-    levels:[{label:"正常",range:"< 5.7%",color:C.green},{label:"前期⚠️",range:"5.7–6.4%",color:C.amber},{label:"糖尿病",range:"≥ 6.5%",color:C.red}],
+    desc:"反映過去3個月的平均血糖水準，是診斷糖尿病前期的黃金指標。不受單次血糖波動影響，是長期血糖控制的最佳指標。",
+    levels:[{label:"正常",range:"< 5.7%",color:C.green},{label:"糖尿病前期⚠️",range:"5.7–6.4%",color:C.amber},{label:"糖尿病",range:"≥ 6.5%",color:C.red}],
     yourValue:"5.8%", yourStatus:"warn",
-    tips:["每3個月追蹤一次","減少精緻碳水化合物攝取","飯後30分鐘步行15分鐘","體重每減1kg，HbA1c約降0.1%"]},
+    tips:["每3個月追蹤一次（你的狀況）","減少精緻碳水：白飯、麵包、含糖飲料","飯後30分鐘步行15分鐘效果最佳","體重每減1kg，HbA1c約可降0.1%","睡眠不足會使HbA1c上升，維持7小時睡眠"]},
   { key:"glucose", title:"空腹血糖 Glucose AC", icon:"🍬", color:C.amber,
-    desc:"空腹8小時後的血糖值，反映基礎胰島素功能。",
+    desc:"空腹8小時後的血糖值，反映基礎胰島素分泌功能。你的血糖機（Accu-Chek）顯示mmol/L，APP會自動換算成mg/dL。",
     levels:[{label:"正常",range:"70–99 mg/dL",color:C.green},{label:"前期⚠️",range:"100–125 mg/dL",color:C.amber},{label:"糖尿病",range:"≥ 126 mg/dL",color:C.red}],
     yourValue:"104 mg/dL", yourStatus:"warn",
-    tips:["晚餐後不吃宵夜","避免含糖飲料","規律有氧運動可改善胰島素敏感性"]},
-  { key:"alt", title:"ALT 肝功能指標", icon:"🫀", color:C.amber,
-    desc:"肝細胞損傷的敏感指標，輕微偏高常見於脂肪肝。",
-    levels:[{label:"正常",range:"4–44 U/L",color:C.green},{label:"輕微偏高",range:"45–80 U/L",color:C.amber},{label:"明顯偏高",range:"> 80 U/L",color:C.red}],
+    tips:["晚餐後不吃宵夜，維持空腹狀態","避免含糖飲料（包括果汁）","有氧運動可改善胰島素敏感性","壓力荷爾蒙會使血糖升高，注意紓壓"]},
+  { key:"alt", title:"ALT 丙胺酸轉胺酶", icon:"🫀", color:C.amber,
+    desc:"肝細胞損傷時釋放到血液中的酵素，是肝功能最敏感的指標。輕微偏高（45 U/L）常見於脂肪肝，結合你的血糖前期狀況需注意。",
+    levels:[{label:"正常",range:"4–44 U/L",color:C.green},{label:"輕微偏高",range:"45–80 U/L",color:C.amber},{label:"明顯異常",range:"> 80 U/L",color:C.red}],
     yourValue:"45 U/L", yourStatus:"warn",
-    tips:["減重可顯著改善脂肪肝","避免過量保健品","多吃十字花科蔬菜"]},
-  { key:"hdl", title:"HDL 好膽固醇", icon:"💚", color:C.green,
-    desc:"將多餘膽固醇運回肝臟代謝，數值越高越好。",
-    levels:[{label:"理想(男)",range:"> 40 mg/dL",color:C.green},{label:"偏低⚠️",range:"< 40 mg/dL",color:C.amber}],
+    tips:["減重5-10%可顯著改善脂肪肝","避免過量飲酒","不要自行服用過多保健品","多吃十字花科蔬菜（花椰菜、高麗菜）","戒菸"]},
+  { key:"hdl", title:"HDL 高密度脂蛋白（好膽固醇）", icon:"💚", color:C.green,
+    desc:"負責將血管中多餘的膽固醇運回肝臟代謝，數值越高越能保護心血管。你目前38.5 mg/dL略低於男性建議值。",
+    levels:[{label:"理想(男)",range:"> 40 mg/dL",color:C.green},{label:"偏低⚠️",range:"< 40 mg/dL",color:C.amber},{label:"心血管高風險",range:"< 35 mg/dL",color:C.red}],
     yourValue:"38.5 mg/dL", yourStatus:"warn",
-    tips:["規律有氧運動是提升HDL最有效方法","攝取健康脂肪（橄欖油、堅果）","減少反式脂肪"]},
+    tips:["規律有氧運動是提升HDL最有效方法","每週150分鐘中等強度運動","攝取健康脂肪：橄欖油、堅果、酪梨","減少反式脂肪（加工食品）","戒菸可使HDL上升5-10%"]},
+  { key:"ldl", title:"LDL 低密度脂蛋白（壞膽固醇）", icon:"⚠️", color:C.blue,
+    desc:"容易沉積在血管壁造成動脈硬化，是心血管疾病主要風險因子。你目前50.1 mg/dL在正常範圍，表現良好。",
+    levels:[{label:"理想",range:"< 100 mg/dL",color:C.green},{label:"正常",range:"100–129 mg/dL",color:C.green},{label:"偏高",range:"130–159 mg/dL",color:C.amber},{label:"高",range:"≥ 160 mg/dL",color:C.red}],
+    yourValue:"50.1 mg/dL", yourStatus:"ok",
+    tips:["維持現有飲食習慣","減少飽和脂肪：紅肉、全脂乳品","增加膳食纖維：燕麥、豆類、蔬果","定期追蹤，每年至少一次"]},
+  { key:"tg", title:"三酸甘油酯 Triglyceride", icon:"🫧", color:C.purple,
+    desc:"血液中的脂肪，主要來自飲食中的碳水化合物和脂肪。過高與糖尿病前期、代謝症候群密切相關。",
+    levels:[{label:"正常",range:"< 150 mg/dL",color:C.green},{label:"偏高",range:"150–199 mg/dL",color:C.amber},{label:"高",range:"≥ 200 mg/dL",color:C.red}],
+    yourValue:"70 mg/dL", yourStatus:"ok",
+    tips:["你目前70 mg/dL非常理想","避免精緻碳水和含糖飲料","限制飲酒","規律運動維持現狀"]},
   { key:"uricAcid", title:"尿酸 Uric Acid", icon:"🔬", color:C.blue,
-    desc:"嘌呤代謝產物，過高會沉積在關節引起痛風。",
-    levels:[{label:"正常(男)",range:"4.4–7.6 mg/dL",color:C.green},{label:"偏高",range:"> 7.6 mg/dL",color:C.amber}],
+    desc:"嘌呤代謝的最終產物，過高會在關節沉積引起痛風，也與腎功能、心血管風險相關。你有痛風家族史需特別注意。",
+    levels:[{label:"正常(男)",range:"4.4–7.6 mg/dL",color:C.green},{label:"偏高",range:"7.6–9.0 mg/dL",color:C.amber},{label:"高風險痛風",range:"≥ 9.0 mg/dL",color:C.red}],
     yourValue:"5.4 mg/dL", yourStatus:"ok",
-    tips:["多喝水（每天≥2000ml）","限制內臟、海鮮攝取","避免啤酒和含糖飲料"]},
+    tips:["每天喝水2000ml以上","限制內臟類：肝、腎、腦","限制海鮮：蝦、蟹、蛤蜊","避免啤酒和含糖飲料（果糖）","維持健康體重"]},
+  { key:"creatinine", title:"肌酸酐 Creatinine", icon:"🫘", color:C.blue,
+    desc:"肌肉代謝產物，由腎臟過濾排出，是評估腎功能的基本指標。你的0.84 mg/dL完全正常，腎功能良好。",
+    levels:[{label:"正常(男)",range:"0.7–1.3 mg/dL",color:C.green},{label:"輕度異常",range:"1.3–2.0 mg/dL",color:C.amber},{label:"腎功能受損",range:"≥ 2.0 mg/dL",color:C.red}],
+    yourValue:"0.84 mg/dL", yourStatus:"ok",
+    tips:["多喝水保護腎臟","控制血糖（糖尿病會損傷腎臟）","避免長期服用止痛藥","定期追蹤（每6個月）"]},
+  { key:"upcr", title:"UPCR 尿蛋白肌酸酐比值", icon:"💧", color:C.amber,
+    desc:"偵測尿液中是否有蛋白質滲漏，是早期腎臟損傷的敏感指標。正常腎臟不應讓蛋白質漏出，你的76.40 mg/g需定期追蹤。",
+    levels:[{label:"正常",range:"< 30 mg/g",color:C.green},{label:"微量蛋白尿",range:"30–300 mg/g",color:C.amber},{label:"大量蛋白尿",range:"≥ 300 mg/g",color:C.red}],
+    yourValue:"76.40 mg/g", yourStatus:"warn",
+    tips:["控制血糖是保護腎臟最重要的事","控制血壓（目標<130/80）","每6個月複查","減少鹽分攝取","避免非必要的止痛藥"]},
+  { key:"tsh", title:"TSH 甲狀腺促素", icon:"🦋", color:C.green,
+    desc:"腦下垂體分泌的激素，用來控制甲狀腺功能。TSH高表示甲狀腺功能低下，TSH低表示功能亢進。你的1.979完全正常。",
+    levels:[{label:"正常",range:"0.34–5.60 uIU/mL",color:C.green},{label:"偏低(亢進)",range:"< 0.34 uIU/mL",color:C.amber},{label:"偏高(低下)",range:"> 5.60 uIU/mL",color:C.amber}],
+    yourValue:"1.979 uIU/mL", yourStatus:"ok",
+    tips:["你的甲狀腺功能完全正常","每年追蹤一次即可","甲狀腺問題會影響體重和血糖，持續監控"]},
 ];
 
-// ── 主 APP ────────────────────────────────────────────────
 export default function HealthJournal() {
   const [tab, setTab] = useState("home");
   const [recordTab, setRecordTab] = useState("glucose");
@@ -146,398 +168,395 @@ export default function HealthJournal() {
   const [loading, setLoading] = useState(false);
 
   // 後端資料
-  const [summary, setSummary] = useState(null);
-  const [reminders, setReminders] = useState([]);
   const [labHistory, setLabHistory] = useState([]);
   const [glucoseHistory, setGlucoseHistory] = useState([]);
   const [bpHistory, setBpHistory] = useState([]);
+  const [weightHistory, setWeightHistory] = useState([]);
+  const [reminders, setReminders] = useState([
+    { id:"R001", title:"洗牙", icon:"🦷", intervalDays:180, lastDate:"2025-12-03", nextDate:"2026-06-01", active:true },
+    { id:"R002", title:"HbA1c追蹤", icon:"🩸", intervalDays:90, lastDate:"2026-05-27", nextDate:"2026-08-27", active:true },
+    { id:"R003", title:"腎功能追蹤", icon:"🫘", intervalDays:180, lastDate:"2026-05-27", nextDate:"2026-11-27", active:true },
+    { id:"R004", title:"眼底檢查", icon:"👁️", intervalDays:365, lastDate:"2025-05-27", nextDate:"2026-05-27", active:true },
+    { id:"R005", title:"心電圖", icon:"💓", intervalDays:365, lastDate:"2025-05-27", nextDate:"2026-05-27", active:true },
+  ]);
+  const [editReminder, setEditReminder] = useState(null);
 
   // 表單
-  const [glucoseForm, setGlucoseForm] = useState({ value:"", timePoint:"空腹", note:"" });
-  const [bpForm, setBpForm] = useState({ sys:"", dia:"", pulse:"" });
+  const [glucoseForm, setGlucoseForm] = useState({ value:"", unit:"mmol/L", timePoint:"空腹", source:"日常", note:"" });
+  const [bpForm, setBpForm] = useState({ sys:"", dia:"", pulse:"", source:"日常" });
   const [weightForm, setWeightForm] = useState({ value:"" });
 
-  const showToast = (msg) => {
-    setToast(msg);
-    setTimeout(() => setToast(""), 2500);
-  };
+  const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(""),2500); };
 
-  // 載入資料
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [sum, rem, lab, glu, bp] = await Promise.all([
-        api.get("getSummary"),
-        api.get("getReminders"),
+      const [lab, glu, bp, wt] = await Promise.all([
         api.get("getLabHistory"),
-        api.get("getAll", { sheet: "daily_glucose" }),
-        api.get("getAll", { sheet: "daily_bp" }),
+        api.get("getAll", { sheet:"daily_glucose" }),
+        api.get("getAll", { sheet:"daily_bp" }),
+        api.get("getAll", { sheet:"daily_weight" }),
       ]);
-      if (sum && !sum.error) setSummary(sum);
-      if (rem && rem.data) setReminders(rem.data);
-      if (lab && lab.data) setLabHistory(lab.data);
-      if (glu && glu.data) setGlucoseHistory(glu.data.slice(-14));
-      if (bp && bp.data) setBpHistory(bp.data.slice(-14));
-    } catch (e) {
-      console.log("載入失敗，使用示範資料");
-    }
+      if (lab?.data) setLabHistory(lab.data);
+      if (glu?.data) setGlucoseHistory(glu.data);
+      if (bp?.data) setBpHistory(bp.data);
+      if (wt?.data) setWeightHistory(wt.data);
+    } catch(e) { console.log("載入失敗"); }
     setLoading(false);
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // 示範資料（後端無資料時顯示）
-  const demoSummary = {
-    glucose: { value_mgdl:104, timePoint:"空腹", date:"2026-06-03", time:"07:30" },
-    bp: { systolic:118, diastolic:76, pulse:72, date:"2026-05-31" },
-    weight: { value_kg:75.2, date:"2026-06-02" },
-    lab: { hba1c:5.8, date:"2026-05-27", hospital:"台灣新陳代謝科" },
-  };
-  const demoReminders = [
-    { id:"R001", title:"洗牙", icon:"🦷", nextDate:"2026-06-03", overdue:true, diffDays:0 },
-    { id:"R002", title:"HbA1c追蹤", icon:"🩸", nextDate:"2026-08-27", overdue:false, diffDays:85 },
-    { id:"R003", title:"腎功能追蹤", icon:"🫘", nextDate:"2026-11-27", overdue:false, diffDays:177 },
-  ];
-  const demoGlucose = [98,102,107,99,104,101,104];
-  const demoBP = [{s:116,d:74},{s:120,d:78},{s:118,d:76},{s:115,d:73},{s:119,d:77},{s:117,d:75},{s:118,d:76}];
-
-  const S = summary || demoSummary;
-  const R = reminders.length > 0 ? reminders : demoReminders;
-  const overdueCount = R.filter(r => r.overdue).length;
-
-  // 儲存血糖
   const saveGlucose = async () => {
     if (!glucoseForm.value) { showToast("⚠️ 請輸入血糖值"); return; }
+    const mgdl = toMgdl(glucoseForm.value, glucoseForm.unit);
     const now = new Date();
-    await api.post("append", "daily_glucose", {
+    const r = await api.post("append", "daily_glucose", {
       date: now.toISOString().split("T")[0],
       time: now.toTimeString().slice(0,5),
       timePoint: glucoseForm.timePoint,
-      value_mgdl: parseFloat(glucoseForm.value),
+      value_mgdl: mgdl,
+      value_original: glucoseForm.value,
+      unit_original: glucoseForm.unit,
+      source: glucoseForm.source,
       note: glucoseForm.note,
     });
-    showToast("✅ 血糖已儲存");
-    setGlucoseForm({ value:"", timePoint:"空腹", note:"" });
-    loadData();
+    if (r?.success) { showToast(`✅ 血糖 ${mgdl} mg/dL 已儲存`); setGlucoseForm({ value:"", unit:"mmol/L", timePoint:"空腹", source:"日常", note:"" }); loadData(); }
+    else showToast("❌ 儲存失敗，請檢查網路");
   };
 
-  // 儲存血壓
   const saveBP = async () => {
     if (!bpForm.sys || !bpForm.dia) { showToast("⚠️ 請輸入血壓值"); return; }
     const now = new Date();
-    await api.post("append", "daily_bp", {
+    const r = await api.post("append", "daily_bp", {
       date: now.toISOString().split("T")[0],
       time: now.toTimeString().slice(0,5),
       systolic: parseInt(bpForm.sys),
       diastolic: parseInt(bpForm.dia),
       pulse: parseInt(bpForm.pulse) || "",
+      source: bpForm.source,
     });
-    showToast("✅ 血壓已儲存");
-    setBpForm({ sys:"", dia:"", pulse:"" });
-    loadData();
+    if (r?.success) { showToast("✅ 血壓已儲存"); setBpForm({ sys:"", dia:"", pulse:"", source:"日常" }); loadData(); }
+    else showToast("❌ 儲存失敗");
   };
 
-  // 儲存體重
   const saveWeight = async () => {
     if (!weightForm.value) { showToast("⚠️ 請輸入體重"); return; }
-    const now = new Date();
-    await api.post("append", "daily_weight", {
-      date: now.toISOString().split("T")[0],
-      value_kg: parseFloat(weightForm.value),
-    });
-    showToast("✅ 體重已儲存");
-    setWeightForm({ value:"" });
-    loadData();
+    const r = await api.post("append", "daily_weight", { date: new Date().toISOString().split("T")[0], value_kg: parseFloat(weightForm.value) });
+    if (r?.success) { showToast("✅ 體重已儲存"); setWeightForm({ value:"" }); loadData(); }
+    else showToast("❌ 儲存失敗");
   };
 
-  // AI 週報
-  const generateAIReport = async () => {
-    if (!apiKey) { setShowApiInput(true); return; }
-    setAiLoading(true);
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:1000,
-          messages:[{ role:"user", content:`你是個人健康顧問。用繁體中文分析以下健康資料：
-
-病患：張文彬，55歲，父親T2D家族史，越南工作
-最新數值：HbA1c ${S.lab?.hba1c||5.8}%，空腹血糖 ${S.glucose?.value_mgdl||104} mg/dL，ALT 45，HDL 38.5，BMI正常
-本週血糖趨勢：${demoGlucose.join(', ')} mg/dL
-
-請提供：
-1. 本週健康總評（80字內）
-2. 三大重點（各一行）
-3. 飲食建議（3點）
-4. 運動建議（具體）
-5. 一句鼓勵
-
-不用markdown符號，用清楚段落。` }]
-        })
-      });
-      const data = await res.json();
-      const text = data.content?.map(b=>b.text||"").join("") || "分析失敗";
-      setAiReport(text);
-      api.post("saveAIReport", "", { content:text, reportType:"weekly" });
-    } catch(e) { setAiReport("請檢查API金鑰是否正確。"); }
-    setAiLoading(false);
+  const updateReminderDate = (id, lastDate) => {
+    setReminders(prev => prev.map(r => {
+      if (r.id !== id) return r;
+      const next = new Date(lastDate);
+      next.setDate(next.getDate() + r.intervalDays);
+      return { ...r, lastDate, nextDate: next.toISOString().split("T")[0] };
+    }));
+    showToast("✅ 提醒已更新");
+    setEditReminder(null);
   };
 
-  // ── 折線圖元件 ────────────────────────────────────────
-  const LineChart = ({ data, data2, labels, color, color2, min=0, max=200, refLines=[] }) => {
-    const W=320, H=110, P=20;
+  // 最新值
+  const latestGlucose = glucoseHistory.length > 0 ? glucoseHistory[glucoseHistory.length-1] : null;
+  const latestBP = bpHistory.length > 0 ? bpHistory[bpHistory.length-1] : null;
+  const latestWeight = weightHistory.length > 0 ? weightHistory[weightHistory.length-1] : null;
+  const latestLab = labHistory.length > 0 ? labHistory[labHistory.length-1] : null;
+  const overdueReminders = reminders.filter(r => new Date(r.nextDate) <= new Date());
+
+  // ── 折線圖 ─────────────────────────────────────────────
+  const LineChart = ({ datasets, min=0, max=200, refLines=[], height=120 }) => {
+    if (!datasets || datasets.every(d=>d.data.length===0)) {
+      return <div className="empty-state">📊 尚無資料<br/>請先記錄數值</div>;
+    }
+    const W=320, H=height, P=24;
+    const allDates = [...new Set(datasets.flatMap(d=>d.data.map(p=>p.date)))].sort();
+    if (allDates.length === 0) return <div className="empty-state">尚無資料</div>;
     const toY = v => P + (1-(v-min)/(max-min))*(H-P*2);
-    const toX = i => P + (i/(data.length-1))*(W-P*2);
-    const pts = data.map((v,i)=>`${toX(i)},${toY(v)}`).join(" ");
-    const pts2 = data2?.map((v,i)=>`${toX(i)},${toY(v)}`).join(" ");
+    const toX = i => allDates.length === 1 ? W/2 : P + (i/(allDates.length-1))*(W-P*2);
+
     return (
-      <svg width="100%" viewBox={`0 0 ${W} ${H+20}`} style={{display:"block"}}>
-        {[0.25,0.5,0.75,1].map(f=>(
-          <line key={f} x1={P} y1={toY(min+f*(max-min))} x2={W-P} y2={toY(min+f*(max-min))} stroke={C.border} strokeWidth="1"/>
-        ))}
-        {refLines.map(r=>(
-          <g key={r.v}>
-            <line x1={P} y1={toY(r.v)} x2={W-P} y2={toY(r.v)} stroke={r.c} strokeWidth="1.5" strokeDasharray="4,3"/>
-            <text x={W-P+2} y={toY(r.v)+4} fontSize="9" fill={r.c}>{r.v}</text>
-          </g>
-        ))}
-        <polyline points={pts} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-        {pts2 && <polyline points={pts2} fill="none" stroke={color2} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>}
-        {data.map((v,i)=>(
-          <circle key={i} cx={toX(i)} cy={toY(v)} r="4" fill={color} stroke={C.bg} strokeWidth="2"/>
-        ))}
-        {data2?.map((v,i)=>(
-          <circle key={i} cx={toX(i)} cy={toY(v)} r="4" fill={color2} stroke={C.bg} strokeWidth="2"/>
-        ))}
-        {labels.map((l,i)=>(
-          <text key={i} x={toX(i)} y={H+14} fontSize="9" fill={C.textMuted} textAnchor="middle">{l}</text>
-        ))}
-        <text x={toX(data.length-1)} y={toY(data[data.length-1])-8} fontSize="11" fill={color} textAnchor="middle" fontWeight="bold">
-          {data[data.length-1]}
-        </text>
-      </svg>
+      <div style={{overflowX:"auto"}}>
+        <svg width="100%" viewBox={`0 0 ${W} ${H+28}`} style={{display:"block"}}>
+          {[0,0.25,0.5,0.75,1].map(f=>(
+            <line key={f} x1={P} y1={toY(min+f*(max-min))} x2={W-P} y2={toY(min+f*(max-min))} stroke={C.border} strokeWidth="1"/>
+          ))}
+          {/* Y軸數值 */}
+          {[0,0.5,1].map(f=>(
+            <text key={f} x={P-4} y={toY(min+f*(max-min))+4} fontSize="8" fill={C.textMuted} textAnchor="end">{Math.round(min+f*(max-min))}</text>
+          ))}
+          {/* 規格線 */}
+          {refLines.map(r=>(
+            <g key={r.label}>
+              <line x1={P} y1={toY(r.v)} x2={W-P} y2={toY(r.v)} stroke={r.c} strokeWidth="1.5" strokeDasharray="5,3"/>
+              <text x={W-P+2} y={toY(r.v)+4} fontSize="9" fill={r.c}>{r.v}</text>
+              <text x={P+2} y={toY(r.v)-3} fontSize="8" fill={r.c}>{r.label}</text>
+            </g>
+          ))}
+          {/* 資料線 */}
+          {datasets.map((ds, di) => {
+            if (ds.data.length === 0) return null;
+            const points = ds.data.map(p => {
+              const xi = allDates.indexOf(p.date);
+              return `${toX(xi)},${toY(p.v)}`;
+            }).join(" ");
+            return (
+              <g key={di}>
+                <polyline points={points} fill="none" stroke={ds.color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                {ds.data.map((p,i) => {
+                  const xi = allDates.indexOf(p.date);
+                  return (
+                    <g key={i}>
+                      <circle cx={toX(xi)} cy={toY(p.v)} r="4" fill={ds.color} stroke={C.bg} strokeWidth="2"/>
+                      <text x={toX(xi)} y={toY(p.v)-8} fontSize="10" fill={ds.color} textAnchor="middle" fontWeight="bold">{p.v}</text>
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })}
+          {/* X軸日期（只顯示有資料的） */}
+          {allDates.map((d,i)=>(
+            <text key={i} x={toX(i)} y={H+14} fontSize="9" fill={C.textMuted} textAnchor="middle">{fmtDate(d)}</text>
+          ))}
+        </svg>
+      </div>
     );
   };
 
   // ── 首頁 ───────────────────────────────────────────────
-  const HomeTab = () => {
-    const g = S.glucose; const b = S.bp; const w = S.weight; const l = S.lab;
-    const daysSince = (dateStr) => {
-      if (!dateStr) return "—";
-      const diff = Math.floor((new Date() - new Date(dateStr)) / 86400000);
-      if (diff === 0) return "今天";
-      if (diff === 1) return "昨天";
-      return `${diff}天前`;
-    };
-    return (
-      <div className="fade-in" style={{padding:"16px 16px 80px"}}>
-        {/* Header */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <ShieldIcon size={36}/>
-            <div>
-              <div style={{display:"flex",alignItems:"baseline",gap:8}}>
-                <span style={{fontSize:18,fontWeight:700}}>我的健康日誌</span>
-                <span style={{fontSize:11,color:C.green,background:"rgba(46,204,138,0.12)",padding:"2px 7px",borderRadius:10}}>{VERSION}</span>
-              </div>
-              <div style={{fontSize:12,color:C.textMuted}}>
-                {new Date().toLocaleDateString("zh-TW",{month:"long",day:"numeric",weekday:"short"})}
-              </div>
-            </div>
-          </div>
-          {overdueCount > 0 && (
-            <div style={{background:C.red,borderRadius:20,padding:"4px 10px",fontSize:12,color:"white"}}>
-              {overdueCount} 項到期
-            </div>
-          )}
-        </div>
-
-        {loading && (
-          <div style={{textAlign:"center",color:C.textMuted,fontSize:12,marginBottom:12}}>
-            <span className="spin">⟳</span> 載入資料中...
-          </div>
-        )}
-
-        {/* T2D警示 */}
-        <div style={{background:"rgba(255,179,71,0.1)",border:"1px solid rgba(255,179,71,0.3)",borderRadius:12,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:20}}>⚠️</span>
+  const HomeTab = () => (
+    <div className="fade-in" style={{padding:"16px 16px 80px"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <ShieldIcon size={36}/>
           <div>
-            <div style={{fontSize:12,fontWeight:600,color:C.amber}}>糖尿病前期 + 家族史 T2D</div>
-            <div style={{fontSize:11,color:C.textMuted}}>HbA1c {l?.hba1c||5.8}% · 需積極管理</div>
+            <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+              <span style={{fontSize:18,fontWeight:700}}>我的健康日誌</span>
+              <span style={{fontSize:11,color:C.green,background:"rgba(46,204,138,0.12)",padding:"2px 7px",borderRadius:10}}>{VERSION}</span>
+            </div>
+            <div style={{fontSize:12,color:C.textMuted}}>{new Date().toLocaleDateString("zh-TW",{month:"long",day:"numeric",weekday:"short"})}</div>
           </div>
         </div>
+        {overdueReminders.length > 0 && (
+          <div style={{background:C.red,borderRadius:20,padding:"4px 10px",fontSize:12,color:"white"}}>{overdueReminders.length} 項到期</div>
+        )}
+      </div>
 
-        {/* 數值卡片 */}
-        <div style={{fontSize:11,color:C.textMuted,letterSpacing:2,marginBottom:8}}>TODAY'S SNAPSHOT</div>
-        <div className="grid-2">
-          <div className="card" style={{cursor:"pointer"}} onClick={()=>{setTab("trend");setTrendItem("glucose")}}>
-            <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>🩸 血糖</div>
+      {loading && <div style={{textAlign:"center",color:C.textMuted,fontSize:12,marginBottom:12}}><span className="spin">⟳</span> 載入中...</div>}
+
+      <div style={{background:"rgba(255,179,71,0.1)",border:"1px solid rgba(255,179,71,0.3)",borderRadius:12,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
+        <span style={{fontSize:20}}>⚠️</span>
+        <div>
+          <div style={{fontSize:12,fontWeight:600,color:C.amber}}>糖尿病前期 + 家族史 T2D</div>
+          <div style={{fontSize:11,color:C.textMuted}}>HbA1c {latestLab?.hba1c||"5.8"}% · 需積極管理</div>
+        </div>
+      </div>
+
+      <div style={{fontSize:11,color:C.textMuted,letterSpacing:2,marginBottom:8}}>LATEST VALUES</div>
+      <div className="grid-2">
+        {/* 血糖 */}
+        <div className="card" style={{cursor:"pointer"}} onClick={()=>{setTab("trend");setTrendItem("glucose")}}>
+          <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>🩸 血糖</div>
+          {latestGlucose ? <>
             <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-              <span className="metric-value" style={{fontSize:28,color:C.amber}}>{g?.value_mgdl||"—"}</span>
-              <span className="metric-unit">mg/dL</span>
+              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:28,color:C.amber,lineHeight:1}}>{latestGlucose.value_mgdl}</span>
+              <span style={{fontSize:12,color:C.textMuted}}>mg/dL</span>
             </div>
-            <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>{g?.timePoint||"空腹"} · {daysSince(g?.date)}</div>
-            <div style={{display:"flex",gap:2,alignItems:"flex-end",height:20,marginTop:8}}>
-              {demoGlucose.map((v,i)=>(
-                <div key={i} style={{flex:1,borderRadius:2,height:`${Math.max(20,(v/135)*100)}%`,background:i===demoGlucose.length-1?C.amber:`${C.amber}55`}}/>
-              ))}
-            </div>
-          </div>
+            <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>{latestGlucose.timePoint} · {daysSince(latestGlucose.date)}</div>
+            <span className={`source-tag ${latestGlucose.source==="醫院"?"source-hospital":"source-daily"}`} style={{marginTop:6,display:"inline-flex"}}>{latestGlucose.source==="醫院"?"🏥 醫院":"🏠 日常"}</span>
+          </> : <div style={{fontSize:12,color:C.textMuted,marginTop:8}}>尚無資料</div>}
+        </div>
 
-          <div className="card" style={{cursor:"pointer"}} onClick={()=>{setTab("trend");setTrendItem("bp")}}>
-            <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>💓 血壓</div>
+        {/* 血壓 */}
+        <div className="card" style={{cursor:"pointer"}} onClick={()=>{setTab("trend");setTrendItem("bp")}}>
+          <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>💓 血壓</div>
+          {latestBP ? <>
             <div style={{display:"flex",alignItems:"baseline",gap:4}}>
-              <span className="metric-value" style={{fontSize:24,color:C.green}}>{b?.systolic||"—"}</span>
-              <span className="metric-unit">/{b?.diastolic||"—"}</span>
+              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:C.green,lineHeight:1}}>{latestBP.systolic}</span>
+              <span style={{fontSize:12,color:C.textMuted}}>/{latestBP.diastolic}</span>
             </div>
-            <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>mmHg · {daysSince(b?.date)}</div>
-            <div style={{marginTop:10}}><span className="status-chip status-ok">正常</span></div>
-          </div>
-
-          <div className="card" style={{cursor:"pointer"}} onClick={()=>{setTab("trend");setTrendItem("weight")}}>
-            <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>⚖️ 體重</div>
-            <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-              <span className="metric-value" style={{fontSize:28}}>{w?.value_kg||"—"}</span>
-              <span className="metric-unit">kg</span>
-            </div>
-            <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>{daysSince(w?.date)}</div>
-            <div style={{marginTop:10}}><span className="status-chip status-ok">正常範圍</span></div>
-          </div>
-
-          <div className="card" style={{cursor:"pointer"}} onClick={()=>setSelectedKnowledge(KNOWLEDGE_ITEMS[0])}>
-            <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>📊 HbA1c</div>
-            <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-              <span className="metric-value" style={{fontSize:28,color:C.amber}}>{l?.hba1c||"—"}</span>
-              <span className="metric-unit">%</span>
-            </div>
-            <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>{daysSince(l?.date)}</div>
-            <div style={{marginTop:10}}><span className="status-chip status-warn">前期範圍</span></div>
-          </div>
+            <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>mmHg · {daysSince(latestBP.date)}</div>
+            <span className={`source-tag ${latestBP.source==="醫院"?"source-hospital":"source-daily"}`} style={{marginTop:6,display:"inline-flex"}}>{latestBP.source==="醫院"?"🏥 醫院":"🏠 日常"}</span>
+          </> : <div style={{fontSize:12,color:C.textMuted,marginTop:8}}>尚無資料</div>}
         </div>
 
-        {/* 今日待記錄 */}
-        <div className="card">
-          <div className="card-title">今日待記錄</div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {[{label:"午餐",icon:"🍱"},{label:"晚餐",icon:"🍽️"},{label:"血糖(飯後)",icon:"🩸"},{label:"運動",icon:"🏃"}].map(item=>(
-              <div key={item.label} onClick={()=>setTab("record")}
-                style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 12px",fontSize:12,color:C.textMuted,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
-                {item.icon} {item.label}
-              </div>
-            ))}
-          </div>
+        {/* 體重 */}
+        <div className="card" style={{cursor:"pointer"}} onClick={()=>{setTab("trend");setTrendItem("weight")}}>
+          <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>⚖️ 體重</div>
+          {latestWeight ? <>
+            <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:28,lineHeight:1}}>{latestWeight.value_kg}</span>
+              <span style={{fontSize:12,color:C.textMuted}}>kg</span>
+            </div>
+            <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>{daysSince(latestWeight.date)}</div>
+          </> : <div style={{fontSize:12,color:C.textMuted,marginTop:8}}>尚無資料</div>}
         </div>
 
-        {/* 健康提醒 */}
-        <div className="card">
-          <div className="card-title">定期健康提醒</div>
-          {R.slice(0,4).map(r=>(
+        {/* HbA1c */}
+        <div className="card" style={{cursor:"pointer"}} onClick={()=>setSelectedKnowledge(KNOWLEDGE_ITEMS[0])}>
+          <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>📊 HbA1c</div>
+          {latestLab ? <>
+            <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:28,color:C.amber,lineHeight:1}}>{latestLab.hba1c}</span>
+              <span style={{fontSize:12,color:C.textMuted}}>%</span>
+            </div>
+            <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>{daysSince(latestLab.date)}</div>
+            <span className="status-chip status-warn" style={{marginTop:6,display:"inline-flex"}}>前期範圍</span>
+          </> : <div style={{fontSize:12,color:C.textMuted,marginTop:8}}>尚無資料</div>}
+        </div>
+      </div>
+
+      {/* 今日待記錄 */}
+      <div className="card">
+        <div className="card-title">快速記錄</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {[{label:"血糖",icon:"🩸",sub:"glucose"},{label:"血壓",icon:"💓",sub:"bp"},{label:"體重",icon:"⚖️",sub:"weight"},{label:"飲食",icon:"🍱",sub:"meal"},{label:"運動",icon:"🏃",sub:"exercise"}].map(item=>(
+            <div key={item.label} onClick={()=>{setTab("record");setRecordTab(item.sub)}}
+              style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 14px",fontSize:12,color:C.textMuted,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+              {item.icon} {item.label}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 健康提醒 */}
+      <div className="card">
+        <div className="card-title">定期健康提醒</div>
+        {reminders.map(r=>{
+          const isOverdue = new Date(r.nextDate) <= new Date();
+          const diffDays = Math.floor((new Date(r.nextDate)-new Date())/86400000);
+          return (
             <div key={r.id} className="reminder-item">
               <span style={{fontSize:22}}>{r.icon}</span>
               <div style={{flex:1}}>
                 <div style={{fontSize:14,fontWeight:500}}>{r.title}</div>
                 <div style={{fontSize:11,color:C.textMuted}}>下次：{r.nextDate}</div>
               </div>
-              <span className={`status-chip ${r.overdue?"status-alert":"status-ok"}`}>
-                {r.overdue?"今天到期！":r.diffDays<=30?"快到了":"待追蹤"}
-              </span>
+              <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
+                <span className={`status-chip ${isOverdue?"status-alert":diffDays<=30?"status-warn":"status-ok"}`}>
+                  {isOverdue?"到期！":diffDays<=30?`${diffDays}天後`:"待追蹤"}
+                </span>
+                <button className="btn-sm" onClick={()=>setEditReminder(r)} style={{fontSize:10,padding:"3px 8px"}}>更新日期</button>
+              </div>
             </div>
-          ))}
-        </div>
+          );
+        })}
       </div>
-    );
-  };
+
+      {/* 更新提醒日期彈窗 */}
+      {editReminder && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:20}}>
+          <div className="card" style={{width:"100%",maxWidth:360,margin:0}}>
+            <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>{editReminder.icon} {editReminder.title}</div>
+            <div style={{fontSize:12,color:C.textMuted,marginBottom:16}}>輸入最近一次檢查日期，系統自動計算下次時間（{editReminder.intervalDays}天後）</div>
+            <div style={{fontSize:12,color:C.textMuted,marginBottom:6}}>最近一次檢查日期</div>
+            <input className="input-field" type="date" defaultValue={editReminder.lastDate}
+              id="reminderDateInput" style={{marginBottom:16}}/>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn-secondary" style={{flex:1}} onClick={()=>setEditReminder(null)}>取消</button>
+              <button className="btn-primary" style={{flex:2}} onClick={()=>{
+                const val = document.getElementById("reminderDateInput").value;
+                if(val) updateReminderDate(editReminder.id, val);
+              }}>確認更新</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
   // ── 趨勢 ───────────────────────────────────────────────
   const TrendTab = () => {
-    const days7 = ["週一","週二","週三","週四","週五","週六","週日"];
-    const gData = glucoseHistory.length>=7 ? glucoseHistory.slice(-7).map(r=>parseFloat(r.value_mgdl)) : demoGlucose;
-    const bData = bpHistory.length>=7 ? bpHistory.slice(-7).map(r=>parseInt(r.systolic)) : demoBP.map(b=>b.s);
-    const bData2 = bpHistory.length>=7 ? bpHistory.slice(-7).map(r=>parseInt(r.diastolic)) : demoBP.map(b=>b.d);
+    const BTNS = [{key:"glucose",label:"血糖"},{key:"bp",label:"血壓"},{key:"weight",label:"體重"},{key:"lab",label:"抽血指標"}];
 
-    const labData = labHistory.length>0 ? labHistory : [
-      {date:"2025/05/20",hospital:"越南醫院",hba1c:5.6,alt:38,hdl:41.0,ldl:58.0},
-      {date:"2025/11/15",hospital:"台灣",hba1c:5.7,alt:42,hdl:39.2,ldl:55.3},
-      {date:"2026/05/27",hospital:"台灣",hba1c:5.8,alt:45,hdl:38.5,ldl:50.1},
-    ];
+    const gDaily = glucoseHistory.filter(r=>r.source!=="醫院").map(r=>({date:r.date,v:parseFloat(r.value_mgdl)}));
+    const gHosp = glucoseHistory.filter(r=>r.source==="醫院").map(r=>({date:r.date,v:parseFloat(r.value_mgdl)}));
+    const bpDaily = bpHistory.filter(r=>r.source!=="醫院");
+    const bpHosp = bpHistory.filter(r=>r.source==="醫院");
+    const wtData = weightHistory.map(r=>({date:r.date,v:parseFloat(r.value_kg)}));
+    const labDates = labHistory.map(r=>r.date);
 
-    const BTNS = [{key:"glucose",label:"血糖"},{key:"bp",label:"血壓"},{key:"lab",label:"抽血指標"}];
     return (
       <div className="fade-in" style={{padding:"16px 16px 80px"}}>
         <div className="section-header">📈 健康趨勢</div>
         <div style={{display:"flex",gap:8,marginBottom:16}}>
           {BTNS.map(t=>(
-            <button key={t.key} className="btn-secondary"
-              style={{flex:1,padding:"8px 4px",fontSize:12,background:trendItem===t.key?"rgba(46,204,138,0.2)":C.bgCard,borderColor:trendItem===t.key?C.green:C.border,color:trendItem===t.key?C.green:C.textMuted}}
-              onClick={()=>setTrendItem(t.key)}>{t.label}</button>
+            <button key={t.key} className={`btn-sm ${trendItem===t.key?"active":""}`}
+              style={{flex:1,padding:"8px 4px",fontSize:11}} onClick={()=>setTrendItem(t.key)}>{t.label}</button>
           ))}
         </div>
 
         {trendItem==="glucose" && (
           <div className="card">
-            <div className="card-title">近7次空腹血糖</div>
-            <LineChart data={gData} labels={days7.slice(-gData.length)} color={C.amber} min={80} max={140}
-              refLines={[{v:100,c:C.amber},{v:126,c:C.red}]}/>
-            <div style={{display:"flex",justifyContent:"space-between",marginTop:12}}>
-              {[["最低",Math.min(...gData),C.green],["平均",Math.round(gData.reduce((a,b)=>a+b,0)/gData.length),C.amber],["最高",Math.max(...gData),C.red]].map(([l,v,c])=>(
-                <div key={l} style={{textAlign:"center"}}>
-                  <div style={{fontSize:11,color:C.textMuted}}>{l}</div>
-                  <div style={{fontSize:20,fontWeight:700,color:c}}>{v}</div>
-                </div>
-              ))}
+            <div className="card-title">血糖趨勢</div>
+            <div style={{display:"flex",gap:12,marginBottom:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏠 日常</span></div>
+              <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.blue,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏥 醫院</span></div>
             </div>
+            <LineChart
+              datasets={[
+                {data:gDaily, color:C.green},
+                {data:gHosp, color:C.blue},
+              ]}
+              min={60} max={160}
+              refLines={[{v:70,label:"低血糖",c:C.blue},{v:100,label:"前期",c:C.amber},{v:126,label:"糖尿病",c:C.red}]}
+            />
           </div>
         )}
 
         {trendItem==="bp" && (
           <div className="card">
-            <div className="card-title">近7次血壓</div>
-            <LineChart data={bData} data2={bData2} labels={days7.slice(-bData.length)} color={C.green} color2={C.blue} min={55} max={145}
-              refLines={[{v:130,c:C.amber}]}/>
-            <div style={{display:"flex",gap:16,marginTop:8}}>
-              {[[C.green,"收縮壓"],[C.blue,"舒張壓"]].map(([c,l])=>(
-                <div key={l} style={{display:"flex",alignItems:"center",gap:6}}>
-                  <div style={{width:12,height:3,background:c,borderRadius:2}}/>
-                  <span style={{fontSize:11,color:C.textMuted}}>{l}</span>
-                </div>
-              ))}
+            <div className="card-title">血壓趨勢（收縮壓）</div>
+            <div style={{display:"flex",gap:12,marginBottom:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏠 日常</span></div>
+              <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.blue,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏥 醫院</span></div>
             </div>
+            <LineChart
+              datasets={[
+                {data:bpDaily.map(r=>({date:r.date,v:parseInt(r.systolic)})), color:C.green},
+                {data:bpHosp.map(r=>({date:r.date,v:parseInt(r.systolic)})), color:C.blue},
+              ]}
+              min={80} max={180}
+              refLines={[{v:120,label:"正常上限",c:C.green},{v:130,label:"高血壓",c:C.amber},{v:140,label:"高血壓2期",c:C.red}]}
+            />
+          </div>
+        )}
+
+        {trendItem==="weight" && (
+          <div className="card">
+            <div className="card-title">體重趨勢</div>
+            <LineChart datasets={[{data:wtData,color:C.green}]} min={60} max={90}
+              refLines={[{v:75,label:"目標",c:C.green}]}/>
           </div>
         )}
 
         {trendItem==="lab" && (
           <>
-            <div style={{fontSize:12,color:C.textMuted,marginBottom:12}}>
-              抽血日期：{labData.map(l=>String(l.date).slice(2,7)).join(" → ")}
-            </div>
-            {[
-              {key:"hba1c",label:"HbA1c",unit:"%",color:C.amber,ref:"4–6%"},
-              {key:"alt",label:"ALT",unit:"U/L",color:C.red,ref:"4–44"},
-              {key:"hdl",label:"HDL-C",unit:"mg/dL",color:C.green,ref:">40(男)"},
-              {key:"ldl",label:"LDL-C",unit:"mg/dL",color:C.blue,ref:"<130"},
-            ].map(item=>(
-              <div key={item.key} className="card" style={{marginBottom:10}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                  <span style={{fontSize:13,fontWeight:600,color:item.color}}>{item.label}</span>
-                  <span style={{fontSize:11,color:C.textMuted}}>參考：{item.ref} {item.unit}</span>
+            {labHistory.length === 0 ? (
+              <div className="empty-state">📋 尚無抽血資料<br/>請至「記錄」Tab 上傳抽血報告</div>
+            ) : (
+              [
+                {key:"hba1c",label:"HbA1c",unit:"%",color:C.amber,min:4,max:8,refs:[{v:5.7,label:"前期",c:C.amber},{v:6.5,label:"糖尿病",c:C.red}]},
+                {key:"alt",label:"ALT",unit:"U/L",color:C.red,min:0,max:100,refs:[{v:44,label:"上限",c:C.amber}]},
+                {key:"hdl",label:"HDL-C",unit:"mg/dL",color:C.green,min:20,max:80,refs:[{v:40,label:"男性下限",c:C.amber}]},
+                {key:"ldl",label:"LDL-C",unit:"mg/dL",color:C.blue,min:0,max:160,refs:[{v:130,label:"上限",c:C.amber}]},
+                {key:"uric_acid",label:"尿酸",unit:"mg/dL",color:C.purple,min:2,max:10,refs:[{v:7.6,label:"上限(男)",c:C.amber}]},
+                {key:"creatinine",label:"肌酸酐",unit:"mg/dL",color:C.blue,min:0,max:2,refs:[{v:1.3,label:"上限(男)",c:C.amber}]},
+              ].map(item=>(
+                <div key={item.key} className="card" style={{marginBottom:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                    <span style={{fontSize:13,fontWeight:600,color:item.color}}>{item.label}</span>
+                    <span style={{fontSize:11,color:C.textMuted}}>{item.unit}</span>
+                  </div>
+                  <LineChart
+                    datasets={[{data:labHistory.filter(r=>r[item.key]).map(r=>({date:r.date,v:parseFloat(r[item.key])})),color:item.color}]}
+                    min={item.min} max={item.max} refLines={item.refs} height={100}
+                  />
                 </div>
-                <div style={{display:"flex",alignItems:"flex-end",gap:12,height:60}}>
-                  {labData.map((l,i)=>{
-                    const v = parseFloat(l[item.key])||0;
-                    const maxV = Math.max(...labData.map(x=>parseFloat(x[item.key])||0))*1.2;
-                    const h = Math.max(20,(v/maxV)*55);
-                    return (
-                      <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-                        <div style={{fontSize:11,color:item.color,fontWeight:700}}>{v}</div>
-                        <div style={{width:"100%",height:h,background:`linear-gradient(to top,${item.color}99,${item.color}44)`,borderRadius:4}}/>
-                        <div style={{fontSize:9,color:C.textMuted}}>{String(l.date).slice(2,7)}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </>
         )}
       </div>
@@ -562,6 +581,18 @@ export default function HealthJournal() {
         {recordTab==="glucose" && (
           <div className="card">
             <div className="card-title">記錄血糖</div>
+            {/* 來源 */}
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:12,color:C.textMuted,marginBottom:8}}>來源</div>
+              <div className="grid-2">
+                {["日常","醫院"].map(s=>(
+                  <div key={s} className={`time-btn ${glucoseForm.source===s?"selected":""}`} onClick={()=>setGlucoseForm(f=>({...f,source:s}))}>
+                    {s==="日常"?"🏠 日常（Accu-Chek）":"🏥 醫院檢查"}
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* 時間點 */}
             <div style={{marginBottom:12}}>
               <div style={{fontSize:12,color:C.textMuted,marginBottom:8}}>時間點</div>
               <div className="grid-3">
@@ -570,9 +601,22 @@ export default function HealthJournal() {
                 ))}
               </div>
             </div>
+            {/* 數值+單位 */}
             <div style={{marginBottom:12}}>
-              <div style={{fontSize:12,color:C.textMuted,marginBottom:6}}>血糖值 (mg/dL)</div>
-              <input className="input-field" type="number" placeholder="例：104" value={glucoseForm.value} onChange={e=>setGlucoseForm(f=>({...f,value:e.target.value}))}/>
+              <div style={{fontSize:12,color:C.textMuted,marginBottom:6}}>血糖值</div>
+              <div style={{display:"flex",gap:8}}>
+                <input className="input-field" type="number" step="0.1" placeholder={glucoseForm.unit==="mmol/L"?"例：5.7":"例：104"}
+                  value={glucoseForm.value} onChange={e=>setGlucoseForm(f=>({...f,value:e.target.value}))} style={{flex:2}}/>
+                <select className="input-field" value={glucoseForm.unit} onChange={e=>setGlucoseForm(f=>({...f,unit:e.target.value}))} style={{flex:1}}>
+                  <option>mmol/L</option>
+                  <option>mg/dL</option>
+                </select>
+              </div>
+              {glucoseForm.value && (
+                <div style={{fontSize:11,color:C.green,marginTop:6}}>
+                  ≈ {toMgdl(glucoseForm.value, glucoseForm.unit)} mg/dL（台灣單位）
+                </div>
+              )}
             </div>
             <div style={{marginBottom:16}}>
               <div style={{fontSize:12,color:C.textMuted,marginBottom:6}}>備註（可選）</div>
@@ -585,22 +629,32 @@ export default function HealthJournal() {
         {recordTab==="bp" && (
           <div className="card">
             <div className="card-title">記錄血壓</div>
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:12,color:C.textMuted,marginBottom:8}}>來源</div>
+              <div className="grid-2">
+                {["日常","醫院"].map(s=>(
+                  <div key={s} className={`time-btn ${bpForm.source===s?"selected":""}`} onClick={()=>setBpForm(f=>({...f,source:s}))}>
+                    {s==="日常"?"🏠 日常（OMRON）":"🏥 醫院量測"}
+                  </div>
+                ))}
+              </div>
+            </div>
             <div className="grid-3" style={{marginBottom:12}}>
-              {[["收縮壓","118",bpForm.sys,v=>setBpForm(f=>({...f,sys:v}))],["舒張壓","76",bpForm.dia,v=>setBpForm(f=>({...f,dia:v}))],["心率","72",bpForm.pulse,v=>setBpForm(f=>({...f,pulse:v}))]].map(([l,p,v,set])=>(
+              {[["收縮壓","SYS",bpForm.sys,v=>setBpForm(f=>({...f,sys:v}))],["舒張壓","DIA",bpForm.dia,v=>setBpForm(f=>({...f,dia:v}))],["心率","PR",bpForm.pulse,v=>setBpForm(f=>({...f,pulse:v}))]].map(([l,p,v,set])=>(
                 <div key={l}>
                   <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>{l}</div>
                   <input className="input-field" type="number" placeholder={p} value={v} onChange={e=>set(e.target.value)}/>
                 </div>
               ))}
             </div>
-            <div style={{background:C.bg,borderRadius:10,padding:10,marginBottom:14,fontSize:12,color:C.textMuted}}>💡 建議安靜休息5分鐘後量測</div>
+            <div style={{background:C.bg,borderRadius:10,padding:10,marginBottom:14,fontSize:12,color:C.textMuted}}>💡 OMRON顯示HIGH表示舒張壓≥90，需注意</div>
             <button className="btn-primary" onClick={saveBP}>儲存到 Google Sheets</button>
           </div>
         )}
 
         {recordTab==="weight" && (
           <div className="card">
-            <div className="card-title">記錄體重</div>
+            <div className="card-title">記錄體重（小米體重計）</div>
             <div style={{marginBottom:16}}>
               <div style={{fontSize:12,color:C.textMuted,marginBottom:6}}>體重 (kg)</div>
               <input className="input-field" type="number" step="0.1" placeholder="例：75.2" value={weightForm.value} onChange={e=>setWeightForm({value:e.target.value})}/>
@@ -620,10 +674,10 @@ export default function HealthJournal() {
             </div>
             <div style={{border:`2px dashed ${C.border}`,borderRadius:12,padding:"24px 16px",textAlign:"center",marginBottom:12,cursor:"pointer"}}>
               <div style={{fontSize:32,marginBottom:8}}>📸</div>
-              <div style={{fontSize:14,color:C.textMuted}}>拍照 AI 自動分析營養成分</div>
+              <div style={{fontSize:14,color:C.textMuted}}>拍照 AI 自動分析</div>
               <div style={{fontSize:11,color:C.textMuted,marginTop:4}}>支援越南料理辨識</div>
             </div>
-            <input className="input-field" placeholder="或輸入食物名稱（例：越南河粉）" style={{marginBottom:12}}/>
+            <input className="input-field" placeholder="或輸入食物名稱" style={{marginBottom:12}}/>
             <button className="btn-primary" onClick={()=>showToast("✅ 飲食記錄已儲存")}>儲存</button>
           </div>
         )}
@@ -640,18 +694,10 @@ export default function HealthJournal() {
               </div>
             </div>
             <div className="grid-2" style={{marginBottom:12}}>
-              <div>
-                <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>時長（分鐘）</div>
-                <input className="input-field" type="number" placeholder="30"/>
-              </div>
-              <div>
-                <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>強度</div>
-                <select className="input-field"><option>輕度</option><option>中度</option><option>高強度</option></select>
-              </div>
+              <div><div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>時長（分鐘）</div><input className="input-field" type="number" placeholder="30"/></div>
+              <div><div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>強度</div><select className="input-field"><option>輕度</option><option>中度</option><option>高強度</option></select></div>
             </div>
-            <div style={{background:C.bg,borderRadius:10,padding:10,marginBottom:14,fontSize:12,color:C.green}}>
-              💡 飯後30分鐘走路15分鐘，可降低血糖約10-15 mg/dL
-            </div>
+            <div style={{background:C.bg,borderRadius:10,padding:10,marginBottom:14,fontSize:12,color:C.green}}>💡 飯後30分鐘走路15分鐘，可降血糖10-15 mg/dL</div>
             <button className="btn-primary" onClick={()=>showToast("✅ 運動記錄已儲存")}>儲存</button>
           </div>
         )}
@@ -660,23 +706,14 @@ export default function HealthJournal() {
           <div className="card">
             <div className="card-title">上傳抽血報告</div>
             <div className="grid-2" style={{marginBottom:12}}>
-              <div>
-                <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>醫院</div>
-                <input className="input-field" placeholder="台大醫院"/>
-              </div>
-              <div>
-                <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>國家</div>
-                <select className="input-field"><option>台灣</option><option>越南</option></select>
-              </div>
+              <div><div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>醫院</div><input className="input-field" placeholder="台大醫院"/></div>
+              <div><div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>國家</div><select className="input-field"><option>台灣</option><option>越南</option></select></div>
             </div>
-            <div style={{marginBottom:12}}>
-              <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>抽血日期</div>
-              <input className="input-field" type="date"/>
-            </div>
+            <div style={{marginBottom:12}}><div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>抽血日期</div><input className="input-field" type="date"/></div>
             <div style={{border:`2px dashed ${C.border}`,borderRadius:12,padding:"20px 16px",textAlign:"center",marginBottom:12,cursor:"pointer"}}>
               <div style={{fontSize:32,marginBottom:8}}>📄</div>
               <div style={{fontSize:14,color:C.textMuted}}>拍照上傳報告</div>
-              <div style={{fontSize:11,color:C.textMuted,marginTop:4}}>AI自動辨識 · 台灣/越南格式 · 單位自動換算</div>
+              <div style={{fontSize:11,color:C.textMuted,marginTop:4}}>AI自動辨識 · 單位自動換算</div>
             </div>
             <textarea className="input-field" rows={4} placeholder="或貼上報告文字..." style={{resize:"none",marginBottom:12}}/>
             <button className="btn-primary" onClick={()=>showToast("✅ 報告解析中...")}>解析並儲存</button>
@@ -706,36 +743,18 @@ export default function HealthJournal() {
           </div>
         </div>
         {aiReport ? (
-          <div style={{fontSize:13,color:C.text,lineHeight:1.8,whiteSpace:"pre-wrap"}}>{aiReport}</div>
+          <div style={{fontSize:13,lineHeight:1.8,whiteSpace:"pre-wrap"}}>{aiReport}</div>
         ) : (
-          <div style={{fontSize:13,color:C.textMuted,lineHeight:1.7}}>
-            根據你的健康數據與家族史，提供：<br/>
-            • 本週健康總評 · 重點關注項目<br/>
-            • 個人化飲食與運動建議<br/>
-            • 下次追蹤提醒
-          </div>
+          <div style={{fontSize:13,color:C.textMuted,lineHeight:1.7}}>根據你的健康數據與家族史，提供個人化分析：<br/>• 血糖趨勢評估 · 飲食運動建議<br/>• 重點關注項目 · 下次追蹤提醒</div>
         )}
       </div>
       <button className="btn-primary" style={{marginBottom:12}} onClick={generateAIReport} disabled={aiLoading}>
-        {aiLoading ? "⏳ AI 分析中..." : "🔍 產生本週AI健康週報"}
+        {aiLoading?"⏳ AI 分析中...":"🔍 產生本週AI健康週報"}
       </button>
       <div className="card">
-        <div className="card-title">T2D 風險評估</div>
-        {[
-          ["HbA1c 5.8%",70,C.amber],["空腹血糖 104",55,C.amber],
-          ["家族史 T2D",85,C.red],["HDL偏低",45,C.amber],["ALT輕微偏高",35,C.blue],
-        ].map(([l,r,c])=>(
-          <div key={l} style={{marginBottom:10}}>
-            <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-              <span style={{fontSize:12}}>{l}</span>
-              <span style={{fontSize:12,color:c}}>{r}%</span>
-            </div>
-            <div style={{height:6,background:C.bg,borderRadius:3,overflow:"hidden"}}>
-              <div style={{height:"100%",width:`${r}%`,background:c,borderRadius:3}}/>
-            </div>
-          </div>
-        ))}
-        <div style={{fontSize:11,color:C.textMuted,textAlign:"center",marginTop:4}}>⚠️ 僅供參考，不代表醫療診斷</div>
+        <div className="card-title">快速問 AI</div>
+        <textarea className="input-field" rows={3} placeholder="例：我今天血糖107，昨天吃了白飯，有影響嗎？" style={{resize:"none",marginBottom:10}}/>
+        <button className="btn-primary">發問</button>
       </div>
     </div>
   );
@@ -749,15 +768,13 @@ export default function HealthJournal() {
           <button className="btn-secondary" style={{marginBottom:16}} onClick={()=>setSelectedKnowledge(null)}>← 返回</button>
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
             <span style={{fontSize:36}}>{item.icon}</span>
-            <div>
-              <div style={{fontSize:18,fontWeight:700,color:item.color}}>{item.title}</div>
-            </div>
+            <div><div style={{fontSize:18,fontWeight:700,color:item.color}}>{item.title}</div></div>
           </div>
-          <div className="card"><div className="card-title">是什麼？</div><div style={{fontSize:14,lineHeight:1.7}}>{item.desc}</div></div>
+          <div className="card"><div className="card-title">說明</div><div style={{fontSize:14,lineHeight:1.8,color:C.text}}>{item.desc}</div></div>
           <div className="card">
             <div className="card-title">數值範圍</div>
             {item.levels.map(l=>(
-              <div key={l.label} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+              <div key={l.label} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
                 <span style={{fontSize:13}}>{l.label}</span>
                 <span style={{fontSize:13,fontWeight:600,color:l.color}}>{l.range}</span>
               </div>
@@ -767,17 +784,15 @@ export default function HealthJournal() {
             <div className="card-title">你的數值</div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span style={{fontSize:28,fontFamily:"'DM Serif Display',serif",color:item.color}}>{item.yourValue}</span>
-              <span className={`status-chip ${item.yourStatus==="ok"?"status-ok":"status-warn"}`}>
-                {item.yourStatus==="ok"?"✅ 正常":"⚠️ 需注意"}
-              </span>
+              <span className={`status-chip ${item.yourStatus==="ok"?"status-ok":"status-warn"}`}>{item.yourStatus==="ok"?"✅ 正常":"⚠️ 需注意"}</span>
             </div>
           </div>
           <div className="card">
             <div className="card-title">改善建議</div>
             {item.tips.map((tip,i)=>(
-              <div key={i} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
-                <span style={{color:C.green,fontWeight:700}}>{i+1}</span>
-                <span style={{fontSize:13,lineHeight:1.6}}>{tip}</span>
+              <div key={i} style={{display:"flex",gap:10,padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+                <span style={{color:C.green,fontWeight:700,minWidth:20}}>{i+1}</span>
+                <span style={{fontSize:13,lineHeight:1.7}}>{tip}</span>
               </div>
             ))}
           </div>
@@ -788,10 +803,10 @@ export default function HealthJournal() {
       <div className="fade-in" style={{padding:"16px 16px 80px"}}>
         <div className="section-header">📚 健康知識庫</div>
         <div style={{background:"rgba(255,179,71,0.08)",border:"1px solid rgba(255,179,71,0.25)",borderRadius:14,padding:14,marginBottom:16}}>
-          <div style={{fontSize:13,fontWeight:700,color:C.amber,marginBottom:6}}>📌 糖尿病前期專區（適合你）</div>
-          <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>HbA1c 5.8% + 家族史 T2D = 高風險群。<br/>好消息：糖尿病前期是可逆的！</div>
+          <div style={{fontSize:13,fontWeight:700,color:C.amber,marginBottom:6}}>📌 糖尿病前期專區</div>
+          <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>HbA1c 5.8% + 家族史 T2D = 高風險群<br/>好消息：糖尿病前期是可逆的，現在介入效果最好！</div>
         </div>
-        <div style={{fontSize:13,fontWeight:600,color:C.textMuted,marginBottom:10,letterSpacing:1}}>LABORATORY VALUES</div>
+        <div style={{fontSize:11,color:C.textMuted,letterSpacing:1.5,marginBottom:10}}>點擊查看詳細說明</div>
         {KNOWLEDGE_ITEMS.map(item=>(
           <div key={item.key} className="knowledge-card" style={{borderLeftColor:item.color}} onClick={()=>setSelectedKnowledge(item)}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -804,13 +819,35 @@ export default function HealthJournal() {
               </div>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <span className={`status-chip ${item.yourStatus==="ok"?"status-ok":"status-warn"}`}>{item.yourStatus==="ok"?"正常":"注意"}</span>
-                <span style={{color:C.textMuted}}>›</span>
+                <span style={{color:C.textMuted,fontSize:16}}>›</span>
               </div>
             </div>
           </div>
         ))}
       </div>
     );
+  };
+
+  const generateAIReport = async () => {
+    if (!apiKey) { setShowApiInput(true); return; }
+    setAiLoading(true);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000,
+          messages:[{role:"user",content:`你是個人健康顧問。用繁體中文分析：
+病患：張文彬，55歲，父親T2D家族史，越南工作
+HbA1c：${latestLab?.hba1c||5.8}%，血糖：${latestGlucose?.value_mgdl||104} mg/dL，ALT：45，HDL：38.5
+血壓：${latestBP?.systolic||118}/${latestBP?.diastolic||76} mmHg
+請提供：1.本週總評 2.三大重點 3.飲食建議3點 4.運動建議 5.鼓勵一句
+不用markdown符號`}]
+        })
+      });
+      const data = await res.json();
+      setAiReport(data.content?.map(b=>b.text||"").join("")||"分析失敗");
+      api.post("saveAIReport","",{content:data.content?.map(b=>b.text||"").join(""),reportType:"weekly"});
+    } catch(e) { setAiReport("請檢查API金鑰"); }
+    setAiLoading(false);
   };
 
   const TABS = [
