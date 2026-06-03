@@ -1,0 +1,19 @@
+{
+  "name": "我的健康日誌",
+  "short_name": "健康日誌",
+  "description": "個人健康管理APP - 血糖、血壓、體重、飲食追蹤",
+  "start_url": "/health-journal/",
+  "scope": "/health-journal/",
+  "display": "standalone",
+  "background_color": "#0d1f17",
+  "theme_color": "#0d1f17",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/health-journal/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
