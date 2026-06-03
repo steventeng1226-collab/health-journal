@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v1.6";
+const VERSION = "v1.7";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 const CLAUDE_API = "https://api.anthropic.com/v1/messages";
 
@@ -105,7 +105,7 @@ const styles=`
   .photo-preview img{width:100%;height:100%;object-fit:cover;}
   .photo-del{position:absolute;top:2px;right:2px;background:rgba(0,0,0,0.7);border:none;border-radius:50%;width:20px;height:20px;color:white;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:flex-end;justify-content:center;z-index:200;padding:0;}
-  .overlay-sheet{background:${C.bgCard};border-radius:20px 20px 0 0;width:100%;max-width:480px;padding:20px;max-height:90vh;overflow-y:auto;}
+  .overlay-sheet{background:${C.bgCard};border-radius:20px 20px 0 0;width:100%;max-width:480px;padding:20px 20px 40px;max-height:75vh;overflow-y:auto;}
 `;
 
 // Icons
@@ -155,13 +155,19 @@ export default function HealthJournal(){
   );
 
   // 提醒
-  const [reminders,setReminders]=useState([
+  const DEFAULT_REMINDERS=[
     {id:"R001",title:"洗牙",icon:"🦷",intervalDays:180,lastDate:"2025-12-03",nextDate:"2026-06-01"},
     {id:"R002",title:"HbA1c追蹤",icon:"🩸",intervalDays:90,lastDate:"2026-05-27",nextDate:"2026-08-27"},
     {id:"R003",title:"腎功能追蹤",icon:"🫘",intervalDays:180,lastDate:"2026-05-27",nextDate:"2026-11-27"},
     {id:"R004",title:"眼底檢查",icon:"👁️",intervalDays:365,lastDate:"2025-05-27",nextDate:"2026-05-27"},
     {id:"R005",title:"心電圖",icon:"💓",intervalDays:365,lastDate:"2025-05-27",nextDate:"2026-05-27"},
-  ]);
+  ];
+  const [reminders,setReminders]=useState(()=>{
+    try{
+      const saved=localStorage.getItem("hj_reminders");
+      return saved?JSON.parse(saved):DEFAULT_REMINDERS;
+    }catch(e){return DEFAULT_REMINDERS;}
+  });
   const [editReminder,setEditReminder]=useState(null);
 
   // 表單
@@ -324,27 +330,54 @@ ${textPart}
         body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content}]})
       });
       const data=await res.json();
+      console.log("API response:",JSON.stringify(data).slice(0,500));
+      // 檢查API錯誤
+      if(data.error){
+        throw new Error("API錯誤: "+data.error.message);
+      }
       const rawText=data.content?.map(b=>b.text||"").join("")||"{}";
+      console.log("Raw text:",rawText.slice(0,500));
       // 清理並解析JSON - 多重嘗試
       let parsed={};
       try{
-        // 嘗試1: 直接解析
-        const clean=rawText.replace(/```json|```/g,"").trim();
+        const clean=rawText.replace(/```json|```|\n/g,"").trim();
         parsed=JSON.parse(clean);
       }catch(e1){
         try{
-          // 嘗試2: 找{}區間
-          const match=rawText.match(/\{[\s\S]*\}/);
-          if(match)parsed=JSON.parse(match[0]);
+          const start=rawText.indexOf("{");
+          const end=rawText.lastIndexOf("}");
+          if(start>=0&&end>start){
+            parsed=JSON.parse(rawText.slice(start,end+1));
+          }
         }catch(e2){
-          console.log("JSON parse failed:",rawText.slice(0,200));
-          parsed={};
+          console.log("JSON parse failed:",rawText);
+          // 嘗試手動提取數值
+          const extract=(pattern)=>{
+            const m=rawText.match(pattern);
+            return m?parseFloat(m[1]):null;
+          };
+          parsed={
+            hba1c:extract(/hba1c["\s:]+([0-9.]+)/i),
+            glucose_ac:extract(/glucose[_\s]?ac["\s:]+([0-9.]+)/i)||extract(/glucose["\s:]+([0-9.]+)/i),
+            alt:extract(/alt["\s:]+([0-9.]+)/i)||extract(/sgpt["\s:]+([0-9.]+)/i),
+            hdl:extract(/hdl["\s:]+([0-9.]+)/i),
+            ldl:extract(/ldl["\s:]+([0-9.]+)/i),
+            tg:extract(/tg["\s:]+([0-9.]+)/i)||extract(/triglyceride["\s:]+([0-9.]+)/i),
+            cholesterol:extract(/cholesterol["\s:]+([0-9.]+)/i),
+            uric_acid:extract(/uric[_\s]?acid["\s:]+([0-9.]+)/i),
+            creatinine:extract(/creatinine["\s:]+([0-9.]+)/i),
+            tsh:extract(/tsh["\s:]+([0-9.]+)/i),
+            hb:extract(/hb["\s:]+([0-9.]+)/i)||extract(/hemoglobin["\s:]+([0-9.]+)/i),
+            wbc:extract(/wbc["\s:]+([0-9.]+)/i),
+            platelet:extract(/platelet["\s:]+([0-9.]+)/i),
+          };
         }
       }
-      // 過濾null值，只保留有數值的欄位
+      // 過濾null值
       Object.keys(parsed).forEach(k=>{
-        if(parsed[k]===null||parsed[k]==="null"||parsed[k]==="")delete parsed[k];
+        if(parsed[k]===null||parsed[k]===undefined||parsed[k]==="null"||parsed[k]==="")delete parsed[k];
       });
+      console.log("Parsed:",JSON.stringify(parsed));
 
       // 合併到表單
       setLabParsed(parsed);
@@ -384,13 +417,17 @@ ${textPart}
   };
 
   const updateReminderDate=(id,lastDate)=>{
-    setReminders(prev=>prev.map(r=>{
-      if(r.id!==id)return r;
-      const next=new Date(lastDate);
-      next.setDate(next.getDate()+r.intervalDays);
-      return{...r,lastDate,nextDate:next.toISOString().split("T")[0]};
-    }));
-    showToast("✅ 提醒已更新");setEditReminder(null);
+    setReminders(prev=>{
+      const updated=prev.map(r=>{
+        if(r.id!==id)return r;
+        const next=new Date(lastDate);
+        next.setDate(next.getDate()+r.intervalDays);
+        return{...r,lastDate,nextDate:next.toISOString().split("T")[0]};
+      });
+      localStorage.setItem("hj_reminders",JSON.stringify(updated));
+      return updated;
+    });
+    showToast("✅ 提醒已更新，下次版本更新後仍保留");setEditReminder(null);
   };
 
   const latestGlucose=glucoseHistory.length>0?glucoseHistory[glucoseHistory.length-1]:null;
