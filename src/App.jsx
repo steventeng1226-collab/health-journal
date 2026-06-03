@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v1.5";
+const VERSION = "v1.6";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 const CLAUDE_API = "https://api.anthropic.com/v1/messages";
 
@@ -281,33 +281,37 @@ export default function HealthJournal(){
       });
       // 加入文字
       const textPart=labInputText.trim()||"（請從圖片中辨識所有檢驗數值）";
-      content.push({type:"text",text:`請從以下醫療報告中提取所有檢驗數值，回傳純JSON格式，不要任何其他文字：
+      content.push({type:"text",text:`你是醫療報告解析助手。請從以下報告文字中提取數值，只回傳JSON，不要任何說明文字、不要markdown格式。
 
+欄位對應規則（嚴格按照以下key名稱）：
+- hba1c = HbA1c / 糖化血色素 / Hemoglobin A1c
+- glucose_ac = Glucose AC / 空腹血糖 / 飯前血糖 / Fasting Glucose
+- alt = ALT / SGPT / 丙胺酸轉胺酶
+- ast = AST / SGOT / 天門冬胺酸轉胺酶
+- hdl = HDL-C / HDL / 高密度脂蛋白
+- ldl = LDL-C / LDL / 低密度脂蛋白
+- tg = TG / Triglyceride / 三酸甘油酯
+- cholesterol = Total Cholesterol / 總膽固醇 / CHOL
+- uric_acid = Uric Acid / 尿酸
+- creatinine = Creatinine / 肌酸酐（血清值，不是尿液值）
+- gfr = GFR / eGFR / MDRD（取第一個數值）
+- upcr = UPCR / Protein/Creatinine Ratio / 蛋白肌酸酐比值
+- tsh = TSH / 甲狀腺促素
+- hb = Hb / Hemoglobin / 血紅素
+- wbc = WBC / 白血球
+- platelet = Platelet / PLT / 血小板
+- rbc = RBC / 紅血球
+- hct = Hct / 血球容積
+- mcv = MCV
+- mch = MCH
+- mchc = MCHC
+
+報告內容：
 ${textPart}
 
-回傳格式範例（只回傳JSON，沒有其他文字）：
-{
-  "date": "2026-05-27",
-  "hospital": "醫院名稱（若有）",
-  "hba1c": 5.8,
-  "glucose_ac": 104,
-  "alt": 45,
-  "ast": null,
-  "hdl": 38.5,
-  "ldl": 50.1,
-  "tg": 70,
-  "cholesterol": 96,
-  "uric_acid": 5.4,
-  "creatinine": 0.84,
-  "gfr": 102,
-  "upcr": 76.4,
-  "tsh": 1.979,
-  "hb": 14.4,
-  "wbc": 4.3,
-  "platelet": 137,
-  "note": "其他備註（若有）"
-}
-找不到的欄位填null，數值填數字不要加單位。若為越南單位（mmol/L等）請先換算成台灣單位（mg/dL）。`});
+請回傳（只有JSON，沒有其他文字）：
+{"date":"偵測到的日期或null","hospital":"偵測到的醫院名稱或null","hba1c":數值或null,"glucose_ac":數值或null,"alt":數值或null,"ast":數值或null,"hdl":數值或null,"ldl":數值或null,"tg":數值或null,"cholesterol":數值或null,"uric_acid":數值或null,"creatinine":數值或null,"gfr":數值或null,"upcr":數值或null,"tsh":數值或null,"hb":數值或null,"wbc":數值或null,"platelet":數值或null,"rbc":數值或null,"hct":數值或null,"mcv":數值或null,"mch":數值或null,"mchc":數值或null,"note":null}
+數值只填數字，不要單位。找不到填null。越南單位mmol/L請×18換算為mg/dL。`});
 
       const res=await fetch(CLAUDE_API,{
         method:"POST",
@@ -320,10 +324,27 @@ ${textPart}
         body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content}]})
       });
       const data=await res.json();
-      const text=data.content?.map(b=>b.text||"").join("")||"{}";
-      // 清理並解析JSON
-      const clean=text.replace(/```json|```/g,"").trim();
-      const parsed=JSON.parse(clean);
+      const rawText=data.content?.map(b=>b.text||"").join("")||"{}";
+      // 清理並解析JSON - 多重嘗試
+      let parsed={};
+      try{
+        // 嘗試1: 直接解析
+        const clean=rawText.replace(/```json|```/g,"").trim();
+        parsed=JSON.parse(clean);
+      }catch(e1){
+        try{
+          // 嘗試2: 找{}區間
+          const match=rawText.match(/\{[\s\S]*\}/);
+          if(match)parsed=JSON.parse(match[0]);
+        }catch(e2){
+          console.log("JSON parse failed:",rawText.slice(0,200));
+          parsed={};
+        }
+      }
+      // 過濾null值，只保留有數值的欄位
+      Object.keys(parsed).forEach(k=>{
+        if(parsed[k]===null||parsed[k]==="null"||parsed[k]==="")delete parsed[k];
+      });
 
       // 合併到表單
       setLabParsed(parsed);
