@@ -1,23 +1,31 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v1.8";
+const VERSION = "v1.9";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
-// Claude API 透過 Apps Script Proxy 呼叫（避免CORS問題）
+// Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
   const key = localStorage.getItem("hj_apikey") || "";
   if (!key) throw new Error("NO_API_KEY");
-  const res = await fetch(GAS_URL, {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
     body: JSON.stringify({
-      action: "claudeProxy",
-      apiKey: key,
-      model: "claude-sonnet-4-20250514",
+      model: "claude-haiku-4-5",
       max_tokens: maxTokens,
       messages: messages,
     })
   });
+  if (!res.ok) {
+    const err = await res.json().catch(()=>({}));
+    throw new Error(err?.error?.message || "HTTP "+res.status);
+  }
   const data = await res.json();
-  if (data.error) throw new Error(data.error.message || data.error);
+  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
   return data.content?.map(b => b.text || "").join("") || "";
 };
 
