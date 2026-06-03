@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v1.3";
+const VERSION = "v1.4";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 const CLAUDE_API = "https://api.anthropic.com/v1/messages";
 
@@ -122,6 +122,7 @@ const TrendIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 const RecordIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>;
 const AIIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 110 20A10 10 0 0112 2z"/><path d="M9 9h.01M15 9h.01M9.5 15a4 4 0 005 0"/></svg>;
 const BookIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>;
+const SettingIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>;
 
 const KNOWLEDGE_ITEMS=[
   {key:"hba1c",title:"HbA1c 糖化血色素",icon:"🩸",color:C.red,desc:"反映過去3個月的平均血糖水準，是診斷糖尿病前期的黃金指標。不受單次血糖波動影響。",levels:[{label:"正常",range:"< 5.7%",color:C.green},{label:"糖尿病前期⚠️",range:"5.7–6.4%",color:C.amber},{label:"糖尿病",range:"≥ 6.5%",color:C.red}],yourValue:"5.8%",yourStatus:"warn",tips:["每3個月追蹤一次","減少精緻碳水：白飯、麵包、含糖飲料","飯後30分鐘步行15分鐘效果最佳","體重每減1kg，HbA1c約可降0.1%"]},
@@ -265,8 +266,8 @@ export default function HealthJournal(){
 
   // AI 解析報告（文字）
   const parseLabText=async()=>{
-    const key=apiKey||localStorage.getItem("hj_apikey");
-    if(!key){setShowApiInput(true);return;}
+    const key=apiKey||localStorage.getItem("hj_apikey")||"";
+    if(!key){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");return;}
     if(!labInputText.trim()&&labPhotos.length===0){showToast("⚠️ 請先貼上報告文字或上傳照片");return;}
     setLabStep("parsing");
 
@@ -430,12 +431,13 @@ ${textPart}
         <div className="card-title">上傳抽血報告</div>
 
         {/* API Key */}
-        {showApiInput&&(
+        {!apiKey&&(
           <div className="card" style={{marginBottom:12,border:`1px solid ${C.amber}44`}}>
             <div style={{fontSize:12,color:C.amber,marginBottom:8}}>⚠️ 需要 Claude API 金鑰才能解析報告</div>
+            <div style={{fontSize:11,color:C.textMuted,marginBottom:8}}>前往「設定」Tab 輸入金鑰，或直接在下方輸入：</div>
             <input className="input-field" type="password" placeholder="sk-ant-..." value={apiKey}
               onChange={e=>setApiKey(e.target.value)} style={{marginBottom:8}}/>
-            <button className="btn-primary" onClick={()=>{localStorage.setItem("hj_apikey",apiKey);setShowApiInput(false);}}>儲存金鑰</button>
+            <button className="btn-primary" onClick={()=>{if(apiKey){localStorage.setItem("hj_apikey",apiKey);showToast("✅ API金鑰已儲存");}else{showToast("⚠️請先輸入金鑰");}}}>儲存金鑰</button>
           </div>
         )}
 
@@ -986,8 +988,8 @@ ${textPart}
 
   // ── AI分析 ─────────────────────────────────────────────
   const generateAIReport=async()=>{
-    const key=apiKey||localStorage.getItem("hj_apikey");
-    if(!key){setShowApiInput(true);return;}
+    const key=apiKey||localStorage.getItem("hj_apikey")||"";
+    if(!key){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");return;}
     setAiLoading(true);
     try{
       const res=await fetch(CLAUDE_API,{method:"POST",headers:{"Content-Type":"application/json"},
@@ -1008,11 +1010,16 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
   const AITab=()=>(
     <div className="fade-in" style={{padding:"16px 16px 80px"}}>
       <div className="section-header">🤖 AI 健康分析</div>
-      {showApiInput&&(
-        <div className="card" style={{marginBottom:12}}>
-          <div className="card-title">設定 Claude API 金鑰</div>
-          <input className="input-field" type="password" placeholder="sk-ant-..." value={apiKey} onChange={e=>setApiKey(e.target.value)} style={{marginBottom:10}}/>
-          <button className="btn-primary" onClick={()=>{localStorage.setItem("hj_apikey",apiKey);setShowApiInput(false);generateAIReport();}}>確認並分析</button>
+      {!apiKey&&(
+        <div className="card" style={{marginBottom:12,border:`1px solid ${C.amber}44`,cursor:"pointer"}} onClick={()=>setTab("setting")}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:24}}>⚙️</span>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,color:C.amber}}>尚未設定 API 金鑰</div>
+              <div style={{fontSize:11,color:C.textMuted}}>點此前往設定 → 輸入 Claude API Key</div>
+            </div>
+            <span style={{color:C.textMuted,marginLeft:"auto",fontSize:18}}>›</span>
+          </div>
         </div>
       )}
       <div className="ai-bubble" style={{marginBottom:16}}>
@@ -1106,12 +1113,121 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
     );
   };
 
+
+  // ── 設定 ───────────────────────────────────────────────
+  const SettingTab=()=>{
+    const [inputKey,setInputKey]=useState(apiKey);
+    const [newHospital,setNewHospital]=useState("");
+    const saved=!!localStorage.getItem("hj_apikey");
+    return(
+      <div className="fade-in" style={{padding:"16px 16px 80px"}}>
+        <div className="section-header">⚙️ 設定</div>
+
+        {/* API Key */}
+        <div className="card">
+          <div className="card-title">Claude API 金鑰</div>
+          <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.7}}>
+            至 <span style={{color:C.green}}>console.anthropic.com</span> 取得金鑰<br/>
+            格式：sk-ant-api03-...
+          </div>
+          {saved&&<div style={{fontSize:12,color:C.green,marginBottom:8,padding:"6px 10px",background:"rgba(46,204,138,0.1)",borderRadius:8}}>✅ 已儲存金鑰（輸入新金鑰可覆蓋）</div>}
+          <div style={{marginBottom:10}}>
+            <div className="field-label">API Key</div>
+            <input className="input-field" type="password"
+              placeholder="sk-ant-api03-..."
+              value={inputKey}
+              onChange={e=>setInputKey(e.target.value)}
+              style={{marginBottom:10}}
+            />
+            <button className="btn-primary" onClick={()=>{
+              if(!inputKey.trim()){showToast("⚠️ 請輸入API金鑰");return;}
+              if(!inputKey.startsWith("sk-")){showToast("⚠️ 格式不正確，應以sk-開頭");return;}
+              localStorage.setItem("hj_apikey",inputKey.trim());
+              setApiKey(inputKey.trim());
+              showToast("✅ API金鑰已儲存");
+            }}>儲存金鑰</button>
+          </div>
+          {apiKey&&(
+            <button style={{width:"100%",padding:"10px",background:"transparent",border:`1px solid ${C.red}44`,borderRadius:10,color:C.red,fontSize:13,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif",marginTop:6}}
+              onClick={()=>{localStorage.removeItem("hj_apikey");setApiKey("");setInputKey("");showToast("🗑️ 金鑰已清除");}}>
+              清除金鑰
+            </button>
+          )}
+        </div>
+
+        {/* 醫院管理 */}
+        <div className="card">
+          <div className="card-title">醫院清單管理</div>
+          <div style={{marginBottom:12}}>
+            {hospitalList.map((h,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                <span style={{fontSize:14}}>{h}</span>
+                <button style={{background:"transparent",border:"none",color:C.red,cursor:"pointer",fontSize:18,padding:"0 4px"}}
+                  onClick={()=>{
+                    const updated=hospitalList.filter((_,idx)=>idx!==i);
+                    setHospitalList(updated);
+                    localStorage.setItem("hj_hospitals",JSON.stringify(updated));
+                    showToast("🗑️ 已刪除");
+                  }}>×</button>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <input className="input-field" placeholder="新增醫院名稱" value={newHospital}
+              onChange={e=>setNewHospital(e.target.value)} style={{flex:1}}/>
+            <button className="btn-secondary" onClick={()=>{
+              if(!newHospital.trim())return;
+              const updated=[...hospitalList,newHospital.trim()];
+              setHospitalList(updated);
+              localStorage.setItem("hj_hospitals",JSON.stringify(updated));
+              setNewHospital("");
+              showToast("✅ 醫院已新增");
+            }}>新增</button>
+          </div>
+        </div>
+
+        {/* 個人資料 */}
+        <div className="card">
+          <div className="card-title">個人資料</div>
+          {[
+            {label:"姓名",val:"張文彬"},
+            {label:"年齡",val:"55歲"},
+            {label:"家族史",val:"父親 T2D"},
+            {label:"工作地點",val:"越南"},
+          ].map(item=>(
+            <div key={item.label} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+              <span style={{fontSize:13,color:C.textMuted}}>{item.label}</span>
+              <span style={{fontSize:13,color:C.text}}>{item.val}</span>
+            </div>
+          ))}
+          <div style={{fontSize:11,color:C.textMuted,marginTop:10}}>個人資料已內建到AI分析背景</div>
+        </div>
+
+        {/* APP資訊 */}
+        <div className="card">
+          <div className="card-title">APP 資訊</div>
+          {[
+            {label:"版本",val:VERSION},
+            {label:"後端",val:"Google Sheets"},
+            {label:"AI引擎",val:"Claude Sonnet"},
+            {label:"資料存儲",val:"localStorage + Sheets"},
+          ].map(item=>(
+            <div key={item.label} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+              <span style={{fontSize:13,color:C.textMuted}}>{item.label}</span>
+              <span style={{fontSize:13,color:C.green}}>{item.val}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   const TABS=[
     {key:"home",label:"首頁",icon:<HomeIcon/>},
     {key:"trend",label:"趨勢",icon:<TrendIcon/>},
     {key:"record",label:"記錄",icon:<RecordIcon/>},
     {key:"ai",label:"AI分析",icon:<AIIcon/>},
-    {key:"knowledge",label:"知識庫",icon:<BookIcon/>},
+    {key:"setting",label:"設定",icon:<SettingIcon/>},
   ];
 
   return(
@@ -1141,6 +1257,7 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
         {tab==="record"&&<RecordTab/>}
         {tab==="ai"&&<AITab/>}
         {tab==="knowledge"&&<KnowledgeTab/>}
+        {tab==="setting"&&<SettingTab/>}
         <div className="tab-bar">
           {TABS.map(t=>(
             <button key={t.key} className={`tab-btn ${tab===t.key?"active":""}`}
