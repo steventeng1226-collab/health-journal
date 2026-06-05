@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v2.4";
+const VERSION = "v2.5";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -261,6 +261,15 @@ export default function HealthJournal(){
   const [trendItem,setTrendItem]=useState("glucose");
   const [toast,setToast]=useState("");
   const [loading,setLoading]=useState(false);
+  const [isOnline,setIsOnline]=useState(navigator.onLine);
+
+  useEffect(()=>{
+    const handleOnline=()=>{setIsOnline(true);showToast("✅ 網路已恢復");loadData();};
+    const handleOffline=()=>{setIsOnline(false);showToast("⚠️ 離線中，資料暫存本地");};
+    window.addEventListener('online',handleOnline);
+    window.addEventListener('offline',handleOffline);
+    return()=>{window.removeEventListener('online',handleOnline);window.removeEventListener('offline',handleOffline);};
+  },[]);
   const [apiKey,setApiKey]=useState(localStorage.getItem("hj_apikey")||"");
 
   // 後端資料
@@ -918,6 +927,7 @@ ${textPart}
         )}
       </div>
       {loading&&<div style={{textAlign:"center",color:C.textMuted,fontSize:12,marginBottom:12}}><span className="spin">⟳</span> 載入中...</div>}
+      {!isOnline&&<div style={{background:"rgba(255,179,71,0.1)",border:"1px solid rgba(255,179,71,0.3)",borderRadius:10,padding:"8px 12px",marginBottom:10,fontSize:12,color:C.amber,textAlign:"center"}}>📴 離線模式 · 顯示本地快取資料</div>}
       <div style={{background:"rgba(255,179,71,0.1)",border:"1px solid rgba(255,179,71,0.3)",borderRadius:12,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
         <span style={{fontSize:20}}>⚠️</span>
         <div>
