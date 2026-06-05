@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v2.5";
+const VERSION = "v2.6";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -38,6 +38,12 @@ const api = {
     try { return (await fetch(GAS_URL,{method:"POST",body:JSON.stringify({action,sheet,data})})).json(); }
     catch(e){ return {error:e.toString()}; }
   },
+  // 刪除記錄
+  deleteRow: async (sheet, id) => {
+    try {
+      return (await fetch(GAS_URL,{method:"POST",body:JSON.stringify({action:"deleteRow",sheet,id})})).json();
+    } catch(e){ return {error:e.toString()}; }
+  },
   // 設定同步
   saveSetting: async (key, value) => {
     try {
@@ -62,7 +68,16 @@ const C = {
 
 const toMgdl=(v,unit)=>unit==="mmol/L"?Math.round(parseFloat(v)*18.016*10)/10:parseFloat(v);
 const fmtDate=(d)=>{if(!d)return"—";const s=String(d).slice(0,10);const p=s.split("-");return p.length===3?`${p[1]}/${p[2]}`:s;};
-const daysSince=(d)=>{if(!d)return"—";const diff=Math.floor((new Date()-new Date(String(d).slice(0,10)))/86400000);if(diff===0)return"今天";if(diff===1)return"昨天";return`${diff}天前`;};
+const daysSince=(d)=>{
+  if(!d)return"—";
+  const s=String(d).slice(0,10);
+  const [y,m,day]=s.split("-").map(Number);
+  const now=new Date();
+  const target=new Date(y,m-1,day);
+  const todayStart=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const diff=Math.floor((todayStart-target)/86400000);
+  if(diff===0)return"今天";if(diff===1)return"昨天";if(diff<0)return"未來";return`${diff}天前`;
+};
 const today=()=>new Date().toISOString().split("T")[0];
 
 const LAB_FIELDS = [
@@ -304,6 +319,10 @@ export default function HealthJournal(){
   const [imagingForm,setImagingForm]=useState({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
   const [imagingPhotos,setImagingPhotos]=useState([]);
   const imagingPhotoRef = React.useRef();
+  const [imagingHistory,setImagingHistory]=useState([]);
+  const [syncStatus,setSyncStatus]=useState("idle"); // idle|syncing|synced|error
+  const [lastSync,setLastSync]=useState(null);
+  const [submitting,setSubmitting]=useState(false); // 防重複提交
 
   // 表單
   const [glucoseForm,setGlucoseForm]=useState({value:"",unit:"mmol/L",timePoint:"空腹",source:"日常",note:""});
@@ -335,18 +354,23 @@ export default function HealthJournal(){
 
   const loadData=useCallback(async()=>{
     setLoading(true);
+    setSyncStatus("syncing");
     try{
-      const [lab,glu,bp,wt,settings]=await Promise.all([
+      const [lab,glu,bp,wt,settings,imaging]=await Promise.all([
         api.get("getLabHistory"),
         api.get("getAll",{sheet:"daily_glucose"}),
         api.get("getAll",{sheet:"daily_bp"}),
         api.get("getAll",{sheet:"daily_weight"}),
         api.loadSettings(),
+        api.get("getAll",{sheet:"imaging"}),
       ]);
       if(lab?.data)setLabHistory(lab.data);
       if(glu?.data)setGlucoseHistory(glu.data);
       if(bp?.data)setBpHistory(bp.data);
       if(wt?.data)setWeightHistory(wt.data);
+      if(imaging?.data)setImagingHistory(imaging.data);
+      setSyncStatus("synced");
+      setLastSync(new Date());
       // 從 Sheets 恢復設定
       if(settings?.data){
         const s=settings.data;
@@ -366,7 +390,7 @@ export default function HealthJournal(){
           localStorage.setItem("hj_track",JSON.stringify(t));
         }
       }
-    }catch(e){console.log("載入失敗");}
+    }catch(e){console.log("載入失敗:",e);setSyncStatus("error");}
     setLoading(false);
   },[]);
 
@@ -374,7 +398,9 @@ export default function HealthJournal(){
 
   // 儲存血糖
   const saveGlucose=async()=>{
+    if(submitting){return;}
     if(!glucoseForm.value){showToast("⚠️ 請輸入血糖值");return;}
+    setSubmitting(true);
     const mgdl=toMgdl(glucoseForm.value,glucoseForm.unit);
     const now=new Date();
     const r=await api.post("append","daily_glucose",{
@@ -385,10 +411,13 @@ export default function HealthJournal(){
     });
     if(r?.success){showToast(`✅ 血糖 ${mgdl} mg/dL 已儲存`);setGlucoseForm({value:"",unit:"mmol/L",timePoint:"空腹",source:"日常",note:""});loadData();}
     else showToast("❌ 儲存失敗，請檢查網路");
+    setSubmitting(false);
   };
 
   const saveBP=async()=>{
+    if(submitting){return;}
     if(!bpForm.sys||!bpForm.dia){showToast("⚠️ 請輸入血壓值");return;}
+    setSubmitting(true);
     const now=new Date();
     const r=await api.post("append","daily_bp",{
       date:now.toISOString().split("T")[0],time:now.toTimeString().slice(0,5),
@@ -397,13 +426,17 @@ export default function HealthJournal(){
     });
     if(r?.success){showToast("✅ 血壓已儲存");setBpForm({sys:"",dia:"",pulse:"",source:"日常"});loadData();}
     else showToast("❌ 儲存失敗");
+    setSubmitting(false);
   };
 
   const saveWeight=async()=>{
+    if(submitting){return;}
     if(!weightForm.value){showToast("⚠️ 請輸入體重");return;}
+    setSubmitting(true);
     const r=await api.post("append","daily_weight",{date:today(),value_kg:parseFloat(weightForm.value)});
     if(r?.success){showToast("✅ 體重已儲存");setWeightForm({value:""});loadData();}
     else showToast("❌ 儲存失敗");
+    setSubmitting(false);
   };
 
   // 照片處理
@@ -920,6 +953,11 @@ ${textPart}
               <span style={{fontSize:11,color:C.green,background:"rgba(46,204,138,0.12)",padding:"2px 7px",borderRadius:10}}>{VERSION}</span>
             </div>
             <div style={{fontSize:12,color:C.textMuted}}>{new Date().toLocaleDateString("zh-TW",{month:"long",day:"numeric",weekday:"short"})}</div>
+            <div style={{fontSize:10,display:"flex",alignItems:"center",gap:4,marginTop:2}}>
+              {syncStatus==="syncing"&&<><span style={{color:C.amber}} className="spin">⟳</span><span style={{color:C.textMuted}}>同步中</span></>}
+              {syncStatus==="synced"&&<><span style={{color:C.green}}>✓</span><span style={{color:C.textMuted}}>已同步 {lastSync?lastSync.toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit"}):""}</span></>}
+              {syncStatus==="error"&&<><span style={{color:C.red}}>✕</span><span style={{color:C.textMuted}}>同步失敗</span></>}
+            </div>
           </div>
         </div>
         {overdueReminders.length>0&&(
@@ -1190,6 +1228,99 @@ ${textPart}
   };
 
 
+
+  // ── 歷史記錄 Tab ──────────────────────────────────────
+  const HistoryTab = () => {
+    const [delConfirm, setDelConfirm] = useState(null);
+    const [deleting, setDeleting] = useState(false);
+
+    // 合併抽血和影像記錄，依日期排序
+    const allRecords = [
+      ...labHistory.map(r=>({...r, _type:"lab", _icon:"🩸", _label:"抽血檢查",
+        _summary:`HbA1c ${r.hba1c||"—"}% · 血糖 ${r.glucose_ac||"—"}`})),
+      ...imagingHistory.map(r=>({...r, _type:"imaging", _icon:"🔬", _label:r.type||"影像檢查",
+        _summary:r.finding?r.finding.slice(0,30)+(r.finding.length>30?"...":""):""})),
+    ].sort((a,b)=>new Date(b.date)-new Date(a.date));
+
+    const handleDelete = async (record) => {
+      setDeleting(true);
+      const sheet = record._type==="lab" ? "lab_reports" : "imaging";
+      const r = await api.deleteRow(sheet, record.id);
+      if(r?.success){
+        showToast("🗑️ 已刪除");
+        loadData();
+      } else showToast("❌ 刪除失敗");
+      setDeleting(false);
+      setDelConfirm(null);
+    };
+
+    return(
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontSize:14,fontWeight:600,color:C.text}}>檢查記錄</div>
+          <button className="btn-sm" onClick={loadData}>
+            <span className={loading?"spin":""}>⟳</span> 重新整理
+          </button>
+        </div>
+
+        {allRecords.length===0?(
+          <div className="empty-state">
+            📂 尚無記錄<br/>
+            請先在「📋抽血」或「🔬影像」新增記錄
+          </div>
+        ):(
+          allRecords.map(record=>(
+            <div key={record.id} className="card" style={{marginBottom:8,padding:"12px 14px"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
+                  <span style={{fontSize:24}}>{record._icon}</span>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
+                      <span style={{fontSize:14,fontWeight:600,color:C.text}}>
+                        {fmtDate(record.date)}
+                      </span>
+                      <span style={{fontSize:12,color:C.textMuted}}>{record.hospital}</span>
+                    </div>
+                    <div style={{fontSize:12,color:C.green}}>{record._label}</div>
+                    {record._summary&&(
+                      <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>{record._summary}</div>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={()=>setDelConfirm(record)}
+                  style={{background:"transparent",border:`1px solid ${C.red}44`,borderRadius:8,color:C.red,padding:"5px 10px",fontSize:12,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif",whiteSpace:"nowrap"}}>
+                  刪除
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+
+        {/* 刪除確認 overlay */}
+        {delConfirm&&(
+          <div className="overlay">
+            <div className="overlay-sheet">
+              <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>確認刪除</div>
+              <div style={{fontSize:14,color:C.textMuted,marginBottom:16,lineHeight:1.7}}>
+                確定要刪除這筆記錄嗎？<br/>
+                <span style={{color:C.text}}>{fmtDate(delConfirm.date)} {delConfirm.hospital} {delConfirm._label}</span><br/>
+                <span style={{color:C.red,fontSize:12}}>刪除後無法復原</span>
+              </div>
+              <div style={{display:"flex",gap:10}}>
+                <button className="btn-secondary" style={{flex:1}} onClick={()=>setDelConfirm(null)}>取消</button>
+                <button style={{flex:2,padding:"14px",background:C.red,border:"none",borderRadius:12,color:"white",fontWeight:700,fontSize:15,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}
+                  onClick={()=>handleDelete(delConfirm)} disabled={deleting}>
+                  {deleting?"刪除中...":"確認刪除"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // ── 飲食記錄 Tab ──────────────────────────────────────
   const MealTab = () => {
     const [mealType, setMealType] = useState("午餐");
@@ -1314,7 +1445,7 @@ ${mealText||"（請從圖片辨識食物）"}
 
   // ── 記錄 ───────────────────────────────────────────────
   const RecordTab=()=>{
-    const SUBS=[{key:"glucose",label:"🩸血糖"},{key:"bp",label:"💓血壓"},{key:"weight",label:"⚖️體重"},{key:"lab",label:"📋抽血"},{key:"imaging",label:"🔬影像"},{key:"meal",label:"🍱飲食"},{key:"exercise",label:"🏃運動"}];
+    const SUBS=[{key:"history",label:"📂歷史"},{key:"glucose",label:"🩸血糖"},{key:"bp",label:"💓血壓"},{key:"weight",label:"⚖️體重"},{key:"lab",label:"📋抽血"},{key:"imaging",label:"🔬影像"},{key:"meal",label:"🍱飲食"},{key:"exercise",label:"🏃運動"}];
     return(
       <div className="fade-in" style={{padding:"16px 16px 80px"}}>
         <div className="section-header">📝 記錄</div>
@@ -1326,6 +1457,10 @@ ${mealText||"（請從圖片辨識食物）"}
             </button>
           ))}
         </div>
+
+        {recordTab==="history"&&(
+          <HistoryTab/>
+        )}
 
         {recordTab==="glucose"&&(
           <div className="card">
