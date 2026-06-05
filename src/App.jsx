@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v2.7";
+const VERSION = "v2.8";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -67,24 +67,53 @@ const C = {
 };
 
 const toMgdl=(v,unit)=>unit==="mmol/L"?Math.round(parseFloat(v)*18.016*10)/10:parseFloat(v);
-// 日期工具 - 全部用字串切割，不用 new Date() 避免時區問題
+// 日期正規化 - 處理所有可能的格式
+const normalizeDate=(d)=>{
+  if(!d)return"";
+  // 如果是數字（Excel日期序號）
+  if(typeof d==="number"){
+    // Google Sheets Date 序號轉換
+    const excelEpoch=new Date(1899,11,30);
+    const ms=excelEpoch.getTime()+d*86400000;
+    const dt=new Date(ms);
+    const y=dt.getFullYear();
+    const m=String(dt.getMonth()+1).padStart(2,"0");
+    const day=String(dt.getDate()).padStart(2,"0");
+    return`${y}-${m}-${day}`;
+  }
+  const s=String(d);
+  // 已是 YYYY-MM-DD 格式
+  if(/^\d{4}-\d{2}-\d{2}/.test(s))return s.slice(0,10);
+  // Date 物件字串（含T的ISO格式）
+  if(s.includes("T")){
+    // 取 T 前面的日期，不做時區轉換
+    return s.split("T")[0];
+  }
+  // MM/DD/YYYY 或 YYYY/MM/DD
+  if(s.includes("/")){
+    const p=s.split("/");
+    if(p[0].length===4)return`${p[0]}-${p[1]?.padStart(2,"0")}-${p[2]?.padStart(2,"0")}`;
+    if(p[2]?.length===4)return`${p[2]}-${p[0]?.padStart(2,"0")}-${p[1]?.padStart(2,"0")}`;
+  }
+  return s.slice(0,10);
+};
 const fmtDate=(d)=>{
-  if(!d)return"—";
-  const s=String(d).slice(0,10); // 取 YYYY-MM-DD
+  const s=normalizeDate(d);
+  if(!s)return"—";
   const p=s.split("-");
-  if(p.length===3)return`${p[1]}/${p[2]}`; // → MM/DD
+  if(p.length===3)return`${p[1]}/${p[2]}`;
   return s;
 };
 const fmtDateFull=(d)=>{
-  if(!d)return"—";
-  const s=String(d).slice(0,10);
+  const s=normalizeDate(d);
+  if(!s)return"—";
   const p=s.split("-");
-  if(p.length===3)return`${p[0]}/${p[1]}/${p[2]}`; // → YYYY/MM/DD
+  if(p.length===3)return`${p[0]}/${p[1]}/${p[2]}`;
   return s;
 };
 const daysSince=(d)=>{
   if(!d)return"—";
-  const s=String(d).slice(0,10);
+  const s=normalizeDate(d);
   const p=s.split("-").map(Number);
   if(p.length!==3)return"—";
   // 用本地時間計算，不用UTC
