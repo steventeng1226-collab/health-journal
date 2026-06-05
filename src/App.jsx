@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v2.0";
+const VERSION = "v2.4";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -36,6 +36,18 @@ const api = {
   },
   post: async (action, sheet, data) => {
     try { return (await fetch(GAS_URL,{method:"POST",body:JSON.stringify({action,sheet,data})})).json(); }
+    catch(e){ return {error:e.toString()}; }
+  },
+  // 設定同步
+  saveSetting: async (key, value) => {
+    try {
+      return (await fetch(GAS_URL,{method:"POST",body:JSON.stringify({
+        action:"saveSetting", key, value: JSON.stringify(value)
+      })})).json();
+    } catch(e){ return {error:e.toString()}; }
+  },
+  loadSettings: async () => {
+    try { return (await fetch(`${GAS_URL}?action=getSettings`)).json(); }
     catch(e){ return {error:e.toString()}; }
   },
 };
@@ -149,6 +161,87 @@ const AIIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 const BookIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>;
 const SettingIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>;
 
+
+// ── 狀態判斷 ──────────────────────────────────────────
+const LAB_STATUS = {
+  hba1c:      {warn:5.7, alert:6.5, unit:"%", label:"HbA1c", low:null},
+  glucose_ac: {warn:100, alert:126, unit:"mg/dL", label:"空腹血糖", low:70},
+  alt:        {warn:44,  alert:80,  unit:"U/L", label:"ALT", low:null},
+  hdl:        {warn:40,  alert:35,  unit:"mg/dL", label:"HDL-C", low:null, reverse:true},
+  ldl:        {warn:130, alert:160, unit:"mg/dL", label:"LDL-C", low:null},
+  tg:         {warn:150, alert:200, unit:"mg/dL", label:"三酸甘油酯", low:null},
+  uric_acid:  {warn:7.6, alert:9.0, unit:"mg/dL", label:"尿酸", low:null},
+  creatinine: {warn:1.3, alert:2.0, unit:"mg/dL", label:"肌酸酐", low:null},
+  upcr:       {warn:30,  alert:300, unit:"mg/g", label:"UPCR", low:null},
+  tsh:        {warn:5.6, alert:10,  unit:"uIU/mL", label:"TSH", low:0.34},
+  cholesterol:{warn:200, alert:240, unit:"mg/dL", label:"總膽固醇", low:null},
+  hb:         {warn:13.7,alert:12,  unit:"g/dL", label:"血紅素", low:null, reverse:true},
+  wbc:        {warn:11.2,alert:15,  unit:"K/uL", label:"WBC", low:3.6},
+  platelet:   {warn:400, alert:500, unit:"K/uL", label:"血小板", low:130},
+  gfr:        {warn:60,  alert:30,  unit:"", label:"eGFR", low:null, reverse:true},
+  ast:        {warn:40,  alert:80,  unit:"U/L", label:"AST", low:null},
+  rbc:        {warn:5.7, alert:6.0, unit:"M/uL", label:"RBC", low:4.5},
+  hct:        {warn:49.6,alert:52,  unit:"%", label:"Hct", low:40.5},
+  mcv:        {warn:97,  alert:100, unit:"fL", label:"MCV", low:80},
+  mch:        {warn:33,  alert:35,  unit:"pg", label:"MCH", low:27},
+  mchc:       {warn:35.8,alert:37,  unit:"g/dL", label:"MCHC", low:32.5},
+};
+
+const getStatus = (key, val) => {
+  const s = LAB_STATUS[key];
+  if (!s || val===null || val===undefined || val==="") return null;
+  const v = parseFloat(val);
+  if (isNaN(v)) return null;
+  if (s.reverse) {
+    if (s.low && v < s.low) return "alert";
+    if (v < s.alert) return "alert";
+    if (v < s.warn) return "warn";
+    return "ok";
+  }
+  if (s.low && v < s.low) return "alert";
+  if (v >= s.alert) return "alert";
+  if (v >= s.warn) return "warn";
+  return "ok";
+};
+
+const StatusDot = ({status}) => {
+  const colors = {ok:C.green, warn:C.amber, alert:C.red};
+  const labels = {ok:"✅", warn:"⚠️", alert:"❌"};
+  if (!status) return null;
+  return <span style={{fontSize:12}}>{labels[status]}</span>;
+};
+
+// 預設追蹤項目
+const DEFAULT_TRACK = ["hba1c","glucose_ac","alt","hdl","upcr","ldl","uric_acid","creatinine"];
+
+// 所有可追蹤項目
+const ALL_TRACK_ITEMS = [
+  {key:"hba1c",label:"HbA1c"},
+  {key:"glucose_ac",label:"空腹血糖"},
+  {key:"alt",label:"ALT"},
+  {key:"hdl",label:"HDL-C"},
+  {key:"upcr",label:"UPCR"},
+  {key:"ldl",label:"LDL-C"},
+  {key:"uric_acid",label:"尿酸"},
+  {key:"creatinine",label:"肌酸酐"},
+  {key:"tsh",label:"TSH"},
+  {key:"cholesterol",label:"總膽固醇"},
+  {key:"tg",label:"三酸甘油酯"},
+  {key:"hb",label:"血紅素"},
+  {key:"wbc",label:"WBC"},
+  {key:"platelet",label:"血小板"},
+  {key:"gfr",label:"eGFR"},
+  {key:"ast",label:"AST"},
+  {key:"rbc",label:"RBC"},
+  {key:"hct",label:"Hct"},
+];
+
+// 影像檢查類型
+const IMAGING_TYPES = [
+  "腹部超音波","心臟超音波","頸動脈超音波",
+  "頭部CT","腹部CT","心臟CT","肺部CT",
+  "大腸鏡","胃鏡","X光","其他"
+];
 const KNOWLEDGE_ITEMS=[
   {key:"hba1c",title:"HbA1c 糖化血色素",icon:"🩸",color:C.red,desc:"反映過去3個月的平均血糖水準，是診斷糖尿病前期的黃金指標。不受單次血糖波動影響。",levels:[{label:"正常",range:"< 5.7%",color:C.green},{label:"糖尿病前期⚠️",range:"5.7–6.4%",color:C.amber},{label:"糖尿病",range:"≥ 6.5%",color:C.red}],yourValue:"5.8%",yourStatus:"warn",tips:["每3個月追蹤一次","減少精緻碳水：白飯、麵包、含糖飲料","飯後30分鐘步行15分鐘效果最佳","體重每減1kg，HbA1c約可降0.1%"]},
   {key:"glucose",title:"空腹血糖 Glucose AC",icon:"🍬",color:C.amber,desc:"空腹8小時後的血糖值。Accu-Chek顯示mmol/L，APP自動換算成mg/dL（×18）。",levels:[{label:"正常",range:"70–99 mg/dL",color:C.green},{label:"前期⚠️",range:"100–125 mg/dL",color:C.amber},{label:"糖尿病",range:"≥ 126 mg/dL",color:C.red}],yourValue:"104 mg/dL",yourStatus:"warn",tips:["晚餐後不吃宵夜","避免含糖飲料（包括果汁）","有氧運動可改善胰島素敏感性"]},
@@ -194,6 +287,14 @@ export default function HealthJournal(){
     }catch(e){return DEFAULT_REMINDERS;}
   });
   const [editReminder,setEditReminder]=useState(null);
+  const [trackItems,setTrackItems]=useState(()=>{
+    try{ const s=localStorage.getItem("hj_track"); return s?JSON.parse(s):DEFAULT_TRACK; }
+    catch(e){ return DEFAULT_TRACK; }
+  });
+  const [showTrackPicker,setShowTrackPicker]=useState(false);
+  const [imagingForm,setImagingForm]=useState({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
+  const [imagingPhotos,setImagingPhotos]=useState([]);
+  const imagingPhotoRef = React.useRef();
 
   // 表單
   const [glucoseForm,setGlucoseForm]=useState({value:"",unit:"mmol/L",timePoint:"空腹",source:"日常",note:""});
@@ -205,7 +306,7 @@ export default function HealthJournal(){
   const [labInputText,setLabInputText]=useState("");
   const [labPhotos,setLabPhotos]=useState([]); // [{dataUrl,file}]
   const [labParsed,setLabParsed]=useState({});
-  const [labForm,setLabForm]=useState({date:today(),hospital:"",country:"台灣",fasting:"空腹"});
+  const [labForm,setLabForm]=useState({date:"",hospital:"",country:"台灣",fasting:"空腹"});
   const [showPhotoWarning,setShowPhotoWarning]=useState(false);
   const [pendingPhotos,setPendingPhotos]=useState(null);
   const [aiReport,setAiReport]=useState(null);
@@ -220,21 +321,42 @@ export default function HealthJournal(){
     const updated=[name,...hospitalList].slice(0,10);
     setHospitalList(updated);
     localStorage.setItem("hj_hospitals",JSON.stringify(updated));
+    api.saveSetting("hospitals", updated); // 同步到Sheets
   };
 
   const loadData=useCallback(async()=>{
     setLoading(true);
     try{
-      const [lab,glu,bp,wt]=await Promise.all([
+      const [lab,glu,bp,wt,settings]=await Promise.all([
         api.get("getLabHistory"),
         api.get("getAll",{sheet:"daily_glucose"}),
         api.get("getAll",{sheet:"daily_bp"}),
         api.get("getAll",{sheet:"daily_weight"}),
+        api.loadSettings(),
       ]);
       if(lab?.data)setLabHistory(lab.data);
       if(glu?.data)setGlucoseHistory(glu.data);
       if(bp?.data)setBpHistory(bp.data);
       if(wt?.data)setWeightHistory(wt.data);
+      // 從 Sheets 恢復設定
+      if(settings?.data){
+        const s=settings.data;
+        if(s.hospitals){
+          const h=JSON.parse(s.hospitals);
+          setHospitalList(h);
+          localStorage.setItem("hj_hospitals",JSON.stringify(h));
+        }
+        if(s.reminders){
+          const r=JSON.parse(s.reminders);
+          setReminders(r);
+          localStorage.setItem("hj_reminders",JSON.stringify(r));
+        }
+        if(s.trackItems){
+          const t=JSON.parse(s.trackItems);
+          setTrackItems(t);
+          localStorage.setItem("hj_track",JSON.stringify(t));
+        }
+      }
     }catch(e){console.log("載入失敗");}
     setLoading(false);
   },[]);
@@ -290,9 +412,11 @@ export default function HealthJournal(){
     setLabPhotos(prev=>[...prev,...newPhotos].slice(0,5));
   };
 
+  const labPhotoInputRef2 = React.useRef();
   const confirmPhotos=()=>{
     setShowPhotoWarning(false);
-    if(pendingPhotos){handlePhotoChange(pendingPhotos);setPendingPhotos(null);}
+    setPendingPhotos(null);
+    setTimeout(()=>{ photoInputRef.current?.click(); }, 100);
   };
 
   // AI 解析報告（文字）
@@ -422,12 +546,42 @@ ${textPart}
       showToast("✅ 抽血報告已儲存");
       setLabStep("input");
       setLabInputText("");setLabPhotos([]);
-      setLabParsed({});setLabForm({date:today(),hospital:"",country:"台灣",fasting:"空腹"});
+      setLabParsed({});setLabForm({date:"",hospital:"",country:"台灣",fasting:"空腹"});
       loadData();
     }else{
       showToast("❌ 儲存失敗");
       setLabStep("confirm");
     }
+  };
+
+  const toggleTrack = (key) => {
+    setTrackItems(prev => {
+      const updated = prev.includes(key) ? prev.filter(k=>k!==key) : [...prev, key];
+      localStorage.setItem("hj_track", JSON.stringify(updated));
+      api.saveSetting("trackItems", updated); // 同步到Sheets
+      return updated;
+    });
+  };
+
+  const saveImaging = async () => {
+    if (!imagingForm.hospital) { showToast("⚠️ 請輸入醫院名稱"); return; }
+    if (!imagingForm.finding) { showToast("⚠️ 請輸入報告結論"); return; }
+    const r = await api.post("append", "imaging", {
+      date: imagingForm.date,
+      type: imagingForm.type,
+      hospital: imagingForm.hospital,
+      country: imagingForm.country,
+      finding: imagingForm.finding,
+      recommendation: imagingForm.recommendation,
+      nextDate: imagingForm.nextDate,
+      note: imagingForm.note,
+    });
+    if (r?.success) {
+      showToast("✅ 影像檢查記錄已儲存");
+      saveHospital(imagingForm.hospital);
+      setImagingForm({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
+      setImagingPhotos([]);
+    } else showToast("❌ 儲存失敗");
   };
 
   const updateReminderDate=(id,lastDate)=>{
@@ -439,9 +593,10 @@ ${textPart}
         return{...r,lastDate,nextDate:next.toISOString().split("T")[0]};
       });
       localStorage.setItem("hj_reminders",JSON.stringify(updated));
+      api.saveSetting("reminders", updated); // 同步到Sheets
       return updated;
     });
-    showToast("✅ 提醒已更新，下次版本更新後仍保留");setEditReminder(null);
+    showToast("✅ 提醒已更新並同步到雲端");setEditReminder(null);
   };
 
   const latestGlucose=glucoseHistory.length>0?glucoseHistory[glucoseHistory.length-1]:null;
@@ -451,52 +606,64 @@ ${textPart}
   const overdueReminders=reminders.filter(r=>new Date(r.nextDate)<=new Date());
 
   // ── 折線圖 ─────────────────────────────────────────────
-  const LineChart=({datasets,min=0,max=200,refLines=[],height=120})=>{
+  // 顏色規則：綠色=正常 紅色=超標 黃色=規格線
+  const LineChart=({datasets,min=0,max=200,refLines=[],height=120,statusKey=null})=>{
     const hasData=datasets&&datasets.some(d=>d.data.length>0);
     if(!hasData)return<div className="empty-state">📊 尚無資料<br/>請先記錄數值</div>;
     const W=320,H=height,P=26;
     const allDates=[...new Set(datasets.flatMap(d=>d.data.map(p=>p.date)))].sort();
-    const toY=v=>P+(1-(v-min)/(max-min))*(H-P*2);
+    const toY=v=>{const r=max-min;if(r===0)return P+(H-P*2)/2;return P+(1-(v-min)/r)*(H-P*2);};
     const toX=i=>allDates.length===1?W/2:P+(i/(allDates.length-1))*(W-P*2);
+    // 根據狀態決定點顏色
+    const getDotColor=(key,val)=>{
+      if(!key)return C.green;
+      const st=getStatus(key,val);
+      if(st==="alert")return C.red;
+      if(st==="warn")return C.amber;
+      return C.green;
+    };
     return(
-      <div style={{overflowX:"auto"}}>
-        <svg width="100%" viewBox={`0 0 ${W} ${H+28}`} style={{display:"block"}}>
-          {[0,0.25,0.5,0.75,1].map(f=>(
-            <line key={f} x1={P} y1={toY(min+f*(max-min))} x2={W-P} y2={toY(min+f*(max-min))} stroke={C.border} strokeWidth="1"/>
-          ))}
-          {[0,0.5,1].map(f=>(
-            <text key={f} x={P-3} y={toY(min+f*(max-min))+4} fontSize="8" fill={C.textMuted} textAnchor="end">{Math.round(min+f*(max-min))}</text>
-          ))}
-          {refLines.map(r=>(
-            <g key={r.label}>
-              <line x1={P} y1={toY(r.v)} x2={W-P} y2={toY(r.v)} stroke={r.c} strokeWidth="1.5" strokeDasharray="5,3"/>
-              <text x={W-P+2} y={toY(r.v)-2} fontSize="8" fill={r.c}>{r.label}</text>
-              <text x={P+2} y={toY(r.v)+9} fontSize="8" fill={r.c} opacity="0.7">{r.v}</text>
+      <svg width="100%" viewBox={`0 0 ${W} ${H+28}`} style={{display:"block",maxWidth:"100%"}}>
+        {[0,0.25,0.5,0.75,1].map(f=>(
+          <line key={f} x1={P} y1={toY(min+f*(max-min))} x2={W-P} y2={toY(min+f*(max-min))} stroke={C.border} strokeWidth="1"/>
+        ))}
+        {[0,0.5,1].map(f=>(
+          <text key={f} x={P-3} y={toY(min+f*(max-min))+4} fontSize="8" fill={C.textMuted} textAnchor="end">{Math.round(min+f*(max-min))}</text>
+        ))}
+        {/* 規格線統一用黃色 */}
+        {refLines.map(r=>(
+          <g key={r.label}>
+            <line x1={P} y1={toY(r.v)} x2={W-P} y2={toY(r.v)} stroke={C.amber} strokeWidth="1.5" strokeDasharray="5,3"/>
+            <text x={W-P+2} y={toY(r.v)-2} fontSize="8" fill={C.amber}>{r.label}</text>
+            <text x={P+2} y={toY(r.v)+9} fontSize="8" fill={C.amber} opacity="0.8">{r.v}</text>
+          </g>
+        ))}
+        {datasets.map((ds,di)=>{
+          if(ds.data.length===0)return null;
+          const pts=ds.data.map(p=>{const xi=allDates.indexOf(p.date);return`${toX(xi)},${toY(p.v)}`;}).join(" ");
+          // 線的顏色用最新值的狀態決定
+          const latestVal=ds.data[ds.data.length-1]?.v;
+          const lineColor=getDotColor(statusKey,latestVal);
+          return(
+            <g key={di}>
+              <polyline points={pts} fill="none" stroke={lineColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+              {ds.data.map((p,i)=>{
+                const xi=allDates.indexOf(p.date);
+                const dotColor=getDotColor(statusKey,p.v);
+                return(
+                  <g key={i}>
+                    <circle cx={toX(xi)} cy={toY(p.v)} r="4" fill={dotColor} stroke={C.bg} strokeWidth="2"/>
+                    <text x={toX(xi)} y={toY(p.v)-8} fontSize="10" fill={dotColor} textAnchor="middle" fontWeight="bold">{p.v}</text>
+                  </g>
+                );
+              })}
             </g>
-          ))}
-          {datasets.map((ds,di)=>{
-            if(ds.data.length===0)return null;
-            const pts=ds.data.map(p=>{const xi=allDates.indexOf(p.date);return`${toX(xi)},${toY(p.v)}`;}).join(" ");
-            return(
-              <g key={di}>
-                <polyline points={pts} fill="none" stroke={ds.color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                {ds.data.map((p,i)=>{
-                  const xi=allDates.indexOf(p.date);
-                  return(
-                    <g key={i}>
-                      <circle cx={toX(xi)} cy={toY(p.v)} r="4" fill={ds.color} stroke={C.bg} strokeWidth="2"/>
-                      <text x={toX(xi)} y={toY(p.v)-8} fontSize="10" fill={ds.color} textAnchor="middle" fontWeight="bold">{p.v}</text>
-                    </g>
-                  );
-                })}
-              </g>
-            );
-          })}
-          {allDates.map((d,i)=>(
-            <text key={i} x={toX(i)} y={H+14} fontSize="9" fill={C.textMuted} textAnchor="middle">{fmtDate(d)}</text>
-          ))}
-        </svg>
-      </div>
+          );
+        })}
+        {allDates.map((d,i)=>(
+          <text key={i} x={toX(i)} y={H+14} fontSize="9" fill={C.textMuted} textAnchor="middle">{fmtDate(d)}</text>
+        ))}
+      </svg>
     );
   };
 
@@ -590,10 +757,7 @@ ${textPart}
 
           {labPhotos.length===0&&(
             <div style={{border:`2px dashed ${C.border}`,borderRadius:12,padding:"20px",textAlign:"center",cursor:"pointer"}}
-              onClick={()=>{
-                setShowPhotoWarning(true);
-                setPendingPhotos(null);
-              }}>
+              onClick={()=>setShowPhotoWarning(true)}>
               <div style={{fontSize:32,marginBottom:8}}>📷</div>
               <div style={{fontSize:14,color:C.textMuted}}>點擊上傳報告照片</div>
               <div style={{fontSize:11,color:C.textMuted,marginTop:4}}>支援多張・台灣/越南格式</div>
@@ -604,7 +768,10 @@ ${textPart}
         </div>
 
         <button className="btn-primary"
-          onClick={parseLabText}
+          onClick={()=>{
+            if(!labForm.date){showToast("⚠️ 請先輸入抽血日期");return;}
+            parseLabText();
+          }}
           disabled={!labInputText.trim()&&labPhotos.length===0}>
           🤖 AI 自動解析報告
         </button>
@@ -638,7 +805,7 @@ ${textPart}
           <div className="card">
             <div className="card-title">基本資訊</div>
             {[
-              {key:"date",label:"抽血日期",type:"date"},
+              {key:"date",label:"抽血日期 ⚠️請確認",type:"date"},
               {key:"hospital",label:"醫院名稱",type:"hospital"},
               {key:"country",label:"國家",type:"select",options:["台灣","越南"]},
               {key:"fasting",label:"空腹狀態",type:"select",options:["空腹","非空腹","不確定"]},
@@ -815,6 +982,44 @@ ${textPart}
           ))}
         </div>
       </div>
+      {/* 最新抽血報告數值 */}
+      {latestLab && (
+        <div className="card">
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div className="card-title" style={{marginBottom:0}}>最新抽血報告</div>
+            <div style={{fontSize:11,color:C.textMuted}}>{latestLab.hospital} · {fmtDate(latestLab.date)}</div>
+          </div>
+          {[
+            {key:"hba1c",label:"HbA1c",unit:"%"},
+            {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL"},
+            {key:"alt",label:"ALT",unit:"U/L"},
+            {key:"hdl",label:"HDL-C",unit:"mg/dL"},
+            {key:"ldl",label:"LDL-C",unit:"mg/dL"},
+            {key:"tg",label:"三酸甘油酯",unit:"mg/dL"},
+            {key:"uric_acid",label:"尿酸",unit:"mg/dL"},
+            {key:"creatinine",label:"肌酸酐",unit:"mg/dL"},
+            {key:"upcr",label:"UPCR",unit:"mg/g"},
+            {key:"tsh",label:"TSH",unit:"uIU/mL"},
+            {key:"hb",label:"血紅素",unit:"g/dL"},
+            {key:"wbc",label:"WBC",unit:"K/uL"},
+            {key:"platelet",label:"血小板",unit:"K/uL"},
+          ].filter(f=>latestLab[f.key]!==null&&latestLab[f.key]!==undefined&&latestLab[f.key]!=="").map(f=>{
+            const st=getStatus(f.key,latestLab[f.key]);
+            const stColors={ok:C.green,warn:C.amber,alert:C.red};
+            return(
+              <div key={f.key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+                <span style={{fontSize:13,color:C.textMuted}}>{f.label}</span>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:14,fontWeight:600,color:st?stColors[st]:C.text}}>{latestLab[f.key]}</span>
+                  <span style={{fontSize:11,color:C.textMuted}}>{f.unit}</span>
+                  <StatusDot status={st}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <div className="card">
         <div className="card-title">定期健康提醒</div>
         {reminders.map(r=>{
@@ -878,8 +1083,9 @@ ${textPart}
               <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏠 日常</span></div>
               <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.blue,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏥 醫院</span></div>
             </div>
-            <LineChart datasets={[{data:gDaily,color:C.green},{data:gHosp,color:C.blue}]} min={60} max={160}
-              refLines={[{v:70,label:"低血糖",c:C.blue},{v:100,label:"前期線",c:C.amber},{v:126,label:"糖尿病",c:C.red}]}/>
+            <LineChart datasets={[{data:gDaily},{data:gHosp}]} min={60} max={160}
+              statusKey="glucose_ac"
+              refLines={[{v:70,label:"低血糖"},{v:100,label:"前期線"},{v:126,label:"糖尿病"}]}/>
           </div>
         )}
         {trendItem==="bp"&&(
@@ -889,14 +1095,15 @@ ${textPart}
               <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏠 日常</span></div>
               <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.blue,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏥 醫院</span></div>
             </div>
-            <LineChart datasets={[{data:bpDaily.map(r=>({date:r.date,v:parseInt(r.systolic)})),color:C.green},{data:bpHosp.map(r=>({date:r.date,v:parseInt(r.systolic)})),color:C.blue}]}
-              min={80} max={180} refLines={[{v:120,label:"正常上限",c:C.green},{v:130,label:"高血壓1",c:C.amber},{v:140,label:"高血壓2",c:C.red}]}/>
+            <LineChart datasets={[{data:bpDaily.map(r=>({date:r.date,v:parseInt(r.systolic)}))},{data:bpHosp.map(r=>({date:r.date,v:parseInt(r.systolic)}))}]}
+              min={80} max={180}
+              refLines={[{v:120,label:"正常上限"},{v:130,label:"高血壓1"},{v:140,label:"高血壓2"}]}/>
           </div>
         )}
         {trendItem==="weight"&&(
           <div className="card">
             <div className="card-title">體重趨勢</div>
-            <LineChart datasets={[{data:wtData,color:C.green}]} min={60} max={90} refLines={[{v:75,label:"目標",c:C.green}]}/>
+            <LineChart datasets={[{data:wtData}]} min={60} max={90} refLines={[{v:75,label:"目標"}]}/>
           </div>
         )}
         {trendItem==="lab"&&(
@@ -904,23 +1111,67 @@ ${textPart}
             {labHistory.length===0?(
               <div className="empty-state">📋 尚無抽血資料<br/>請至「記錄」→「📋抽血」上傳報告</div>
             ):(
-              [{key:"hba1c",label:"HbA1c",unit:"%",color:C.amber,min:4,max:8,refs:[{v:5.7,label:"前期",c:C.amber},{v:6.5,label:"糖尿病",c:C.red}]},
-               {key:"alt",label:"ALT",unit:"U/L",color:C.red,min:0,max:100,refs:[{v:44,label:"上限",c:C.amber}]},
-               {key:"hdl",label:"HDL-C",unit:"mg/dL",color:C.green,min:20,max:80,refs:[{v:40,label:"男性下限",c:C.amber}]},
-               {key:"ldl",label:"LDL-C",unit:"mg/dL",color:C.blue,min:0,max:160,refs:[{v:130,label:"上限",c:C.amber}]},
-               {key:"uric_acid",label:"尿酸",unit:"mg/dL",color:C.purple,min:2,max:10,refs:[{v:7.6,label:"上限(男)",c:C.amber}]},
-               {key:"creatinine",label:"肌酸酐",unit:"mg/dL",color:C.blue,min:0,max:2,refs:[{v:1.3,label:"上限(男)",c:C.amber}]},
-               {key:"tsh",label:"TSH",unit:"uIU/mL",color:C.green,min:0,max:8,refs:[{v:0.34,label:"下限",c:C.amber},{v:5.6,label:"上限",c:C.amber}]},
-              ].map(item=>(
-                <div key={item.key} className="card" style={{marginBottom:10}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                    <span style={{fontSize:13,fontWeight:600,color:item.color}}>{item.label}</span>
-                    <span style={{fontSize:11,color:C.textMuted}}>{item.unit}</span>
+              <>
+                {/* 追蹤項目選擇器 */}
+                <div className="card" style={{marginBottom:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                    <div className="card-title" style={{marginBottom:0}}>追蹤項目</div>
+                    <button className="btn-sm" onClick={()=>setShowTrackPicker(p=>!p)}>
+                      {showTrackPicker?"收起":"＋ 新增/移除"}
+                    </button>
                   </div>
-                  <LineChart datasets={[{data:labHistory.filter(r=>r[item.key]).map(r=>({date:r.date,v:parseFloat(r[item.key])})),color:item.color}]}
-                    min={item.min} max={item.max} refLines={item.refs} height={100}/>
+                  {showTrackPicker&&(
+                    <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                      {ALL_TRACK_ITEMS.map(item=>(
+                        <div key={item.key}
+                          onClick={()=>toggleTrack(item.key)}
+                          style={{padding:"5px 12px",borderRadius:20,fontSize:12,cursor:"pointer",
+                            background:trackItems.includes(item.key)?"rgba(46,204,138,0.15)":C.bg,
+                            border:`1px solid ${trackItems.includes(item.key)?C.green:C.border}`,
+                            color:trackItems.includes(item.key)?C.green:C.textMuted}}>
+                          {trackItems.includes(item.key)?"✓ ":""}{item.label}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))
+                {/* 趨勢圖 */}
+                {trackItems.map(key=>{
+                  const s=LAB_STATUS[key];
+                  if(!s)return null;
+                  const data=labHistory.filter(r=>r[key]!==null&&r[key]!==undefined&&r[key]!=="").map(r=>({date:r.date,v:parseFloat(r[key])}));
+                  if(data.length===0)return null;
+                  const vals=data.map(d=>d.v);
+                  const minV=Math.min(...vals);
+                  const maxV=Math.max(...vals);
+                  const pad=(maxV-minV)*0.3||1;
+                  const chartMin=Math.max(0,minV-pad);
+                  const chartMax=maxV+pad;
+                  const refs=[];
+                  if(s.warn)refs.push({v:s.warn,label:"警戒",c:C.amber});
+                  if(s.alert&&s.alert!==s.warn)refs.push({v:s.alert,label:"異常",c:C.red});
+                  if(s.low)refs.push({v:s.low,label:"下限",c:C.blue});
+                  const colors=[C.amber,C.green,C.red,C.blue,C.purple];
+                  const colorIdx=trackItems.indexOf(key)%colors.length;
+                  return(
+                    <div key={key} className="card" style={{marginBottom:10}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                        <span style={{fontSize:13,fontWeight:600,color:colors[colorIdx]}}>{s.label}</span>
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{fontSize:11,color:C.textMuted}}>{s.unit}</span>
+                          {data.length>0&&<StatusDot status={getStatus(key,data[data.length-1].v)}/>}
+                        </div>
+                      </div>
+                      <LineChart datasets={[{data}]}
+                        min={chartMin} max={chartMax} refLines={refs} height={100}
+                        statusKey={key}/>
+                      <div style={{fontSize:11,color:C.textMuted,marginTop:4,textAlign:"right"}}>
+                        最新：{data[data.length-1]?.v} {s.unit}
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
             )}
           </>
         )}
@@ -928,16 +1179,139 @@ ${textPart}
     );
   };
 
+
+  // ── 飲食記錄 Tab ──────────────────────────────────────
+  const MealTab = () => {
+    const [mealType, setMealType] = useState("午餐");
+    const [mealText, setMealText] = useState("");
+    const [mealPhoto, setMealPhoto] = useState(null);
+    const [mealAnalysis, setMealAnalysis] = useState(null);
+    const [analyzing, setAnalyzing] = useState(false);
+    const mealPhotoRef = React.useRef();
+
+    const analyzeMeal = async () => {
+      const key = localStorage.getItem("hj_apikey") || "";
+      if (!key) { showToast("⚠️ 請先在設定Tab輸入API金鑰"); setTab("setting"); return; }
+      if (!mealText && !mealPhoto) { showToast("⚠️ 請拍照或輸入食物名稱"); return; }
+      setAnalyzing(true);
+      try {
+        let content = [];
+        if (mealPhoto) {
+          const b64 = mealPhoto.split(",")[1];
+          const mime = mealPhoto.split(";")[0].split(":")[1];
+          content.push({type:"image",source:{type:"base64",media_type:mime,data:b64}});
+        }
+        content.push({type:"text",text:`請分析以下食物，用繁體中文回答，只回傳JSON：
+${mealText||"（請從圖片辨識食物）"}
+回傳格式：{"foods":"食物名稱列表","calories":總熱量數字,"carbs":碳水克數,"protein":蛋白質克數,"fat":脂肪克數,"gi":"低/中/高","advice":"一句血糖建議"}`});
+        const result = await callClaude(content, 500);
+        const clean = result.replace(/\`\`\`json|\`\`\`/g,"").trim();
+        const parsed = JSON.parse(clean.slice(clean.indexOf("{"), clean.lastIndexOf("}")+1));
+        setMealAnalysis(parsed);
+      } catch(e) {
+        showToast("❌ 分析失敗：" + e.message);
+      }
+      setAnalyzing(false);
+    };
+
+    const saveMeal = async () => {
+      const r = await api.post("append", "meals", {
+        date: today(),
+        mealType,
+        description: mealText || mealAnalysis?.foods || "",
+        calories: mealAnalysis?.calories || "",
+        carbs: mealAnalysis?.carbs || "",
+        protein: mealAnalysis?.protein || "",
+        fat: mealAnalysis?.fat || "",
+        gi: mealAnalysis?.gi || "",
+        aiAnalysis: mealAnalysis ? JSON.stringify(mealAnalysis) : "",
+      });
+      if (r?.success) {
+        showToast("✅ 飲食記錄已儲存");
+        setMealText(""); setMealPhoto(null); setMealAnalysis(null);
+      } else showToast("❌ 儲存失敗");
+    };
+
+    return (
+      <div className="card">
+        <div className="card-title">記錄飲食</div>
+        <div style={{display:"flex",gap:8,marginBottom:14}}>
+          {["早餐","午餐","晚餐","點心"].map(m=>(
+            <div key={m} onClick={()=>setMealType(m)}
+              style={{flex:1,textAlign:"center",padding:"10px 4px",
+                background:mealType===m?"rgba(46,204,138,0.15)":C.bg,
+                border:`1px solid ${mealType===m?C.green:C.border}`,
+                borderRadius:10,fontSize:12,color:mealType===m?C.green:C.textMuted,cursor:"pointer"}}>{m}</div>
+          ))}
+        </div>
+
+        {/* 拍照區域 */}
+        <div style={{marginBottom:12}}>
+          {mealPhoto ? (
+            <div style={{position:"relative",borderRadius:12,overflow:"hidden",marginBottom:8}}>
+              <img src={mealPhoto} style={{width:"100%",maxHeight:200,objectFit:"cover"}}/>
+              <button style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.6)",border:"none",borderRadius:20,color:"white",padding:"4px 10px",cursor:"pointer",fontSize:12}}
+                onClick={()=>setMealPhoto(null)}>✕ 移除</button>
+            </div>
+          ) : (
+            <div style={{border:`2px dashed ${C.border}`,borderRadius:12,padding:"20px",textAlign:"center",cursor:"pointer",marginBottom:8}}
+              onClick={()=>mealPhotoRef.current?.click()}>
+              <div style={{fontSize:32,marginBottom:8}}>📸</div>
+              <div style={{fontSize:14,color:C.textMuted}}>拍照或選擇圖片</div>
+              <div style={{fontSize:11,color:C.textMuted,marginTop:4}}>AI 自動辨識食物</div>
+            </div>
+          )}
+          <input ref={mealPhotoRef} type="file" accept="image/*" capture="environment" style={{display:"none"}}
+            onChange={async e=>{
+              if(e.target.files[0]){
+                const dataUrl=await new Promise(res=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.readAsDataURL(e.target.files[0]);});
+                setMealPhoto(dataUrl);
+              }
+              e.target.value="";
+            }}/>
+        </div>
+
+        <input className="input-field" placeholder="或輸入食物名稱（例：越南河粉、白飯+雞肉）"
+          value={mealText} onChange={e=>setMealText(e.target.value)} style={{marginBottom:12}}/>
+
+        {/* AI分析結果 */}
+        {mealAnalysis && (
+          <div style={{background:C.bg,borderRadius:10,padding:12,marginBottom:12,border:`1px solid ${C.borderBright}`}}>
+            <div style={{fontSize:12,fontWeight:600,color:C.green,marginBottom:8}}>🤖 AI 分析結果</div>
+            <div style={{fontSize:13,color:C.text,marginBottom:6}}>{mealAnalysis.foods}</div>
+            <div className="grid-3" style={{marginBottom:8}}>
+              {[["熱量",mealAnalysis.calories,"kcal"],[" 碳水",mealAnalysis.carbs,"g"],["蛋白質",mealAnalysis.protein,"g"]].map(([l,v,u])=>(
+                <div key={l} style={{textAlign:"center",background:C.bgCard2,borderRadius:8,padding:"6px 4px"}}>
+                  <div style={{fontSize:10,color:C.textMuted}}>{l}</div>
+                  <div style={{fontSize:16,fontWeight:700,color:C.green}}>{v}</div>
+                  <div style={{fontSize:10,color:C.textMuted}}>{u}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{fontSize:11,color:C.amber}}>GI值：{mealAnalysis.gi} · {mealAnalysis.advice}</div>
+          </div>
+        )}
+
+        <div style={{display:"flex",gap:8}}>
+          <button className="btn-secondary" style={{flex:1}} onClick={analyzeMeal} disabled={analyzing}>
+            {analyzing?"⏳ 分析中...":"🤖 AI分析"}
+          </button>
+          <button className="btn-primary" style={{flex:2}} onClick={saveMeal}>儲存</button>
+        </div>
+      </div>
+    );
+  };
+
   // ── 記錄 ───────────────────────────────────────────────
   const RecordTab=()=>{
-    const SUBS=[{key:"glucose",label:"🩸血糖"},{key:"bp",label:"💓血壓"},{key:"weight",label:"⚖️體重"},{key:"lab",label:"📋抽血"},{key:"meal",label:"🍱飲食"},{key:"exercise",label:"🏃運動"}];
+    const SUBS=[{key:"glucose",label:"🩸血糖"},{key:"bp",label:"💓血壓"},{key:"weight",label:"⚖️體重"},{key:"lab",label:"📋抽血"},{key:"imaging",label:"🔬影像"},{key:"meal",label:"🍱飲食"},{key:"exercise",label:"🏃運動"}];
     return(
       <div className="fade-in" style={{padding:"16px 16px 80px"}}>
         <div className="section-header">📝 記錄</div>
-        <div style={{display:"flex",gap:6,overflowX:"auto",marginBottom:16,paddingBottom:4}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:16}}>
           {SUBS.map(t=>(
             <button key={t.key} onClick={()=>setRecordTab(t.key)}
-              style={{whiteSpace:"nowrap",padding:"7px 14px",borderRadius:20,border:`1px solid ${recordTab===t.key?C.green:C.border}`,background:recordTab===t.key?"rgba(46,204,138,0.15)":C.bg,color:recordTab===t.key?C.green:C.textMuted,fontSize:12,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}>
+              style={{padding:"9px 4px",borderRadius:10,border:`1px solid ${recordTab===t.key?C.green:C.border}`,background:recordTab===t.key?"rgba(46,204,138,0.15)":C.bg,color:recordTab===t.key?C.green:C.textMuted,fontSize:12,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif",textAlign:"center",width:"100%"}}>
               {t.label}
             </button>
           ))}
@@ -1023,20 +1397,93 @@ ${textPart}
         {recordTab==="lab"&&<LabReportTab/>}
 
         {recordTab==="meal"&&(
+          <MealTab/>
+        )}
+
+        {recordTab==="imaging"&&(
           <div className="card">
-            <div className="card-title">記錄飲食</div>
-            <div style={{display:"flex",gap:8,marginBottom:14}}>
-              {["早餐","午餐","晚餐","點心"].map(m=>(
-                <div key={m} style={{flex:1,textAlign:"center",padding:"10px 4px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,fontSize:12,color:C.textMuted,cursor:"pointer"}}>{m}</div>
-              ))}
+            <div className="card-title">記錄影像檢查</div>
+            <div className="field-row">
+              <div className="field-label">檢查類型</div>
+              <select className="input-field" value={imagingForm.type} onChange={e=>setImagingForm(f=>({...f,type:e.target.value}))}>
+                {IMAGING_TYPES.map(t=><option key={t}>{t}</option>)}
+              </select>
             </div>
-            <div style={{border:`2px dashed ${C.border}`,borderRadius:12,padding:"24px 16px",textAlign:"center",marginBottom:12,cursor:"pointer"}}>
-              <div style={{fontSize:32,marginBottom:8}}>📸</div>
-              <div style={{fontSize:14,color:C.textMuted}}>拍照 AI 自動分析</div>
-              <div style={{fontSize:11,color:C.textMuted,marginTop:4}}>支援越南料理辨識</div>
+            <div className="field-row">
+              <div className="field-label">檢查日期</div>
+              <input className="input-field" type="date" value={imagingForm.date} onChange={e=>setImagingForm(f=>({...f,date:e.target.value}))}/>
             </div>
-            <input className="input-field" placeholder="或輸入食物名稱" style={{marginBottom:12}}/>
-            <button className="btn-primary" onClick={()=>showToast("✅ 飲食記錄已儲存")}>儲存</button>
+            <div className="field-row">
+              <div className="field-label">醫院名稱 <span className="field-required">必填</span></div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
+                {hospitalList.map(h=>(
+                  <button key={h} className={`btn-sm ${imagingForm.hospital===h?"active":""}`}
+                    onClick={()=>setImagingForm(f=>({...f,hospital:h}))}>{h}</button>
+                ))}
+              </div>
+              <input className="input-field" placeholder="或輸入新醫院" value={imagingForm.hospital} onChange={e=>setImagingForm(f=>({...f,hospital:e.target.value}))}/>
+            </div>
+            <div className="grid-2" style={{marginBottom:12}}>
+              <div>
+                <div className="field-label">國家</div>
+                <select className="input-field" value={imagingForm.country} onChange={e=>setImagingForm(f=>({...f,country:e.target.value}))}>
+                  <option>台灣</option><option>越南</option>
+                </select>
+              </div>
+              <div>
+                <div className="field-label">下次追蹤</div>
+                <input className="input-field" type="date" value={imagingForm.nextDate} onChange={e=>setImagingForm(f=>({...f,nextDate:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="field-row">
+              <div className="field-label">報告結論 <span className="field-required">必填</span></div>
+              <textarea className="input-field" rows={3} style={{resize:"none"}}
+                placeholder="例：輕度脂肪肝，膽囊無異常..."
+                value={imagingForm.finding} onChange={e=>setImagingForm(f=>({...f,finding:e.target.value}))}/>
+            </div>
+            <div className="field-row">
+              <div className="field-label">醫師建議</div>
+              <textarea className="input-field" rows={2} style={{resize:"none"}}
+                placeholder="例：建議減重，3個月後追蹤..."
+                value={imagingForm.recommendation} onChange={e=>setImagingForm(f=>({...f,recommendation:e.target.value}))}/>
+            </div>
+            {/* 代表性照片 */}
+            <div className="field-row">
+              <div className="field-label">代表性照片（選填，最多3張）</div>
+              <div style={{fontSize:12,color:C.amber,marginBottom:8,padding:"6px 10px",background:"rgba(255,179,71,0.08)",borderRadius:8}}>
+                ⚠️ 照片僅供留存參考，AI不會分析影像內容
+              </div>
+              {imagingPhotos.length>0&&(
+                <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                  {imagingPhotos.map((p,i)=>(
+                    <div key={i} className="photo-preview">
+                      <img src={p} alt={`影像${i+1}`}/>
+                      <button className="photo-del" onClick={()=>setImagingPhotos(prev=>prev.filter((_,idx)=>idx!==i))}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {imagingPhotos.length<3&&(
+                <div style={{border:`2px dashed ${C.border}`,borderRadius:10,padding:"16px",textAlign:"center",cursor:"pointer"}}
+                  onClick={()=>imagingPhotoRef.current?.click()}>
+                  <div style={{fontSize:24,marginBottom:4}}>📷</div>
+                  <div style={{fontSize:12,color:C.textMuted}}>點擊上傳照片</div>
+                </div>
+              )}
+              <input ref={imagingPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}}
+                onChange={async e=>{
+                  for(const file of Array.from(e.target.files).slice(0,3-imagingPhotos.length)){
+                    const dataUrl=await new Promise(res=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.readAsDataURL(file);});
+                    setImagingPhotos(prev=>[...prev,dataUrl].slice(0,3));
+                  }
+                  e.target.value="";
+                }}/>
+            </div>
+            <div className="field-row">
+              <div className="field-label">備註</div>
+              <input className="input-field" placeholder="其他備註" value={imagingForm.note} onChange={e=>setImagingForm(f=>({...f,note:e.target.value}))}/>
+            </div>
+            <button className="btn-primary" onClick={saveImaging}>儲存到 Google Sheets</button>
           </div>
         )}
 
@@ -1251,7 +1698,8 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
                     const updated=hospitalList.filter((_,idx)=>idx!==i);
                     setHospitalList(updated);
                     localStorage.setItem("hj_hospitals",JSON.stringify(updated));
-                    showToast("🗑️ 已刪除");
+                    api.saveSetting("hospitals", updated);
+                    showToast("🗑️ 已刪除並同步");
                   }}>×</button>
               </div>
             ))}
@@ -1264,8 +1712,9 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
               const updated=[...hospitalList,newHospital.trim()];
               setHospitalList(updated);
               localStorage.setItem("hj_hospitals",JSON.stringify(updated));
+              api.saveSetting("hospitals", updated);
               setNewHospital("");
-              showToast("✅ 醫院已新增");
+              showToast("✅ 醫院已新增並同步");
             }}>新增</button>
           </div>
         </div>
