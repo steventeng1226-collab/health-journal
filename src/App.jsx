@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v2.6";
+const VERSION = "v2.7";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -67,16 +67,44 @@ const C = {
 };
 
 const toMgdl=(v,unit)=>unit==="mmol/L"?Math.round(parseFloat(v)*18.016*10)/10:parseFloat(v);
-const fmtDate=(d)=>{if(!d)return"—";const s=String(d).slice(0,10);const p=s.split("-");return p.length===3?`${p[1]}/${p[2]}`:s;};
+// 日期工具 - 全部用字串切割，不用 new Date() 避免時區問題
+const fmtDate=(d)=>{
+  if(!d)return"—";
+  const s=String(d).slice(0,10); // 取 YYYY-MM-DD
+  const p=s.split("-");
+  if(p.length===3)return`${p[1]}/${p[2]}`; // → MM/DD
+  return s;
+};
+const fmtDateFull=(d)=>{
+  if(!d)return"—";
+  const s=String(d).slice(0,10);
+  const p=s.split("-");
+  if(p.length===3)return`${p[0]}/${p[1]}/${p[2]}`; // → YYYY/MM/DD
+  return s;
+};
 const daysSince=(d)=>{
   if(!d)return"—";
   const s=String(d).slice(0,10);
-  const [y,m,day]=s.split("-").map(Number);
+  const p=s.split("-").map(Number);
+  if(p.length!==3)return"—";
+  // 用本地時間計算，不用UTC
   const now=new Date();
-  const target=new Date(y,m-1,day);
-  const todayStart=new Date(now.getFullYear(),now.getMonth(),now.getDate());
-  const diff=Math.floor((todayStart-target)/86400000);
-  if(diff===0)return"今天";if(diff===1)return"昨天";if(diff<0)return"未來";return`${diff}天前`;
+  const todayStr=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
+  const todayP=todayStr.split("-").map(Number);
+  // 計算天數差（純數字比較，不涉及時區）
+  const toNum=(pp)=>pp[0]*10000+pp[1]*100+pp[2];
+  const targetNum=toNum(p);
+  const todayNum=toNum(todayP);
+  if(targetNum===todayNum)return"今天";
+  if(todayNum-targetNum===1)return"昨天";
+  if(targetNum>todayNum)return"未來";
+  // 計算實際天數
+  const target=new Date(p[0],p[1]-1,p[2]);
+  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const diff=Math.floor((today-target)/86400000);
+  if(diff<30)return`${diff}天前`;
+  if(diff<365)return`${Math.floor(diff/30)}個月前`;
+  return`${Math.floor(diff/365)}年前`;
 };
 const today=()=>new Date().toISOString().split("T")[0];
 
