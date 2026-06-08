@@ -1034,46 +1034,56 @@ ${textPart}
             ))}
           </div>
 
-          {/* 數值確認 */}
+          {/* 數值確認 - 動態顯示所有解析到的欄位 */}
           <div className="card">
-            <div className="card-title">解析數值（可修改）</div>
-            {[
-              {key:"hba1c",label:"HbA1c",unit:"%",color:C.amber},
-              {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL",color:C.amber},
-              {key:"alt",label:"ALT",unit:"U/L",color:C.red},
-              {key:"ast",label:"AST",unit:"U/L",color:C.red},
-              {key:"hdl",label:"HDL-C",unit:"mg/dL",color:C.green},
-              {key:"ldl",label:"LDL-C",unit:"mg/dL",color:C.blue},
-              {key:"tg",label:"三酸甘油酯",unit:"mg/dL",color:C.purple},
-              {key:"cholesterol",label:"總膽固醇",unit:"mg/dL",color:C.blue},
-              {key:"uric_acid",label:"尿酸",unit:"mg/dL",color:C.blue},
-              {key:"creatinine",label:"肌酸酐",unit:"mg/dL",color:C.blue},
-              {key:"gfr",label:"eGFR",unit:"",color:C.green},
-              {key:"upcr",label:"UPCR",unit:"mg/g",color:C.amber},
-              {key:"tsh",label:"TSH",unit:"uIU/mL",color:C.green},
-              {key:"hb",label:"血紅素 Hb",unit:"g/dL",color:C.red},
-              {key:"wbc",label:"WBC",unit:"",color:C.blue},
-              {key:"platelet",label:"血小板",unit:"",color:C.purple},
-            ].map(f=>{
-              const val=labParsed[f.key];
-              const hasParsed=val!==null&&val!==undefined&&val!=="";
-              return(
-                <div key={f.key} className={`confirm-field ${hasParsed?"filled":""}`}>
+            <div className="card-title">
+              解析數值（可修改）
+              <span style={{fontSize:11,color:C.green,marginLeft:8}}>
+                共 {Object.keys(labParsed).filter(k=>labParsed[k]!==null&&labParsed[k]!==undefined&&labParsed[k]!=="").length} 筆
+              </span>
+            </div>
+            {/* 動態顯示所有有數值的欄位 */}
+            {Object.keys(labParsed)
+              .filter(k=>!["date","hospital","note"].includes(k) && labParsed[k]!==null && labParsed[k]!==undefined && labParsed[k]!=="")
+              .map(key=>{
+                const s=LAB_STATUS[key];
+                const label=s?.label||key;
+                const unit=s?.unit||"";
+                const color=C.green;
+                return(
+                  <div key={key} className="confirm-field filled">
+                    <div>
+                      <div style={{fontSize:12,color:C.green}}>{label}</div>
+                      {unit&&<div style={{fontSize:11,color:C.textMuted}}>{unit}</div>}
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <input style={{width:90,background:"transparent",border:`1px solid ${color}44`,borderRadius:6,padding:"4px 8px",color:C.text,fontSize:14,fontWeight:700,textAlign:"right",fontFamily:"monospace",outline:"none"}}
+                        type="number" value={labParsed[key]||""} onChange={e=>setLabParsed(p=>({...p,[key]:e.target.value}))}/>
+                    </div>
+                  </div>
+                );
+              })
+            }
+            {/* 常用欄位補充輸入（未偵測到的） */}
+            <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
+              <div style={{fontSize:11,color:C.textMuted,marginBottom:8}}>未偵測到的欄位可手動輸入：</div>
+              {[
+                {key:"hba1c",label:"HbA1c",unit:"%"},
+                {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL"},
+                {key:"tsh",label:"TSH",unit:"uIU/mL"},
+                {key:"upcr",label:"UPCR",unit:"mg/g"},
+              ].filter(f=>!labParsed[f.key])
+              .map(f=>(
+                <div key={f.key} className="confirm-field">
                   <div>
-                    <div style={{fontSize:12,color:hasParsed?f.color:C.textMuted}}>{f.label}</div>
-                    {hasParsed&&<div style={{fontSize:11,color:C.textMuted}}>{f.unit}</div>}
+                    <div style={{fontSize:12,color:C.textMuted}}>{f.label}</div>
+                    <div style={{fontSize:11,color:C.textMuted}}>{f.unit}</div>
                   </div>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    {hasParsed?(
-                      <input style={{width:80,background:"transparent",border:`1px solid ${f.color}44`,borderRadius:6,padding:"4px 8px",color:f.color,fontSize:14,fontWeight:700,textAlign:"right",fontFamily:"monospace",outline:"none"}}
-                        type="number" value={labParsed[f.key]||""} onChange={e=>setLabParsed(p=>({...p,[f.key]:e.target.value}))}/>
-                    ):(
-                      <span style={{fontSize:12,color:C.textMuted}}>未偵測到</span>
-                    )}
-                  </div>
+                  <input style={{width:90,background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 8px",color:C.text,fontSize:14,textAlign:"right",fontFamily:"monospace",outline:"none"}}
+                    type="number" placeholder="輸入" onChange={e=>{if(e.target.value)setLabParsed(p=>({...p,[f.key]:parseFloat(e.target.value)}));}}/>
                 </div>
-              );
-            })}
+              ))}
+            </div>
             <div style={{marginTop:12}}>
               <div className="field-label">備註</div>
               <textarea className="input-field" rows={2} style={{resize:"none"}}
