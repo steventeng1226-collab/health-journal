@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v3.1";
+const VERSION = "v3.2";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -265,6 +265,28 @@ const LAB_STATUS = {
   mcv:        {warn:97,  alert:100, unit:"fL", label:"MCV", low:80},
   mch:        {warn:33,  alert:35,  unit:"pg", label:"MCH", low:27},
   mchc:       {warn:35.8,alert:37,  unit:"g/dL", label:"MCHC", low:32.5},
+  // 擴充欄位
+  alp:        {warn:120, alert:200, unit:"U/L",   label:"ALP", low:null},
+  ggt:        {warn:60,  alert:100, unit:"U/L",   label:"GGT", low:null},
+  ldh:        {warn:248, alert:300, unit:"U/L",   label:"LDH", low:null},
+  tbil:       {warn:1.2, alert:2.0, unit:"mg/dL", label:"總膽紅素", low:null},
+  dbil:       {warn:0.3, alert:0.5, unit:"mg/dL", label:"直接膽紅素", low:null},
+  tp:         {warn:8.3, alert:9.0, unit:"g/dL",  label:"總蛋白", low:6.4},
+  alb:        {warn:5.2, alert:5.5, unit:"g/dL",  label:"白蛋白", low:3.5},
+  bun:        {warn:23,  alert:30,  unit:"mg/dL", label:"BUN", low:null},
+  na:         {warn:145, alert:150, unit:"mEq/L",  label:"鈉 Na", low:136},
+  k:          {warn:5.1, alert:5.5, unit:"mEq/L",  label:"鉀 K", low:3.5},
+  cl:         {warn:106, alert:110, unit:"mEq/L",  label:"氯 Cl", low:98},
+  ca:         {warn:10.5,alert:11,  unit:"mg/dL", label:"鈣 Ca", low:8.5},
+  mg:         {warn:2.5, alert:3.0, unit:"mg/dL", label:"鎂 Mg", low:1.7},
+  phos:       {warn:4.5, alert:5.0, unit:"mg/dL", label:"磷 Phos", low:2.5},
+  crp:        {warn:1.0, alert:3.0, unit:"mg/L",  label:"CRP", low:null},
+  amy:        {warn:100, alert:150, unit:"U/L",   label:"澱粉酶 AMY", low:null},
+  lip:        {warn:60,  alert:100, unit:"U/L",   label:"脂肪酶 LIP", low:null},
+  ck:         {warn:200, alert:400, unit:"U/L",   label:"CK", low:null},
+  fe:         {warn:170, alert:200, unit:"ug/dL", label:"鐵 Fe", low:60},
+  uibc:       {warn:370, alert:400, unit:"ug/dL", label:"UIBC", low:null},
+  fe_sat:     {warn:50,  alert:60,  unit:"%",     label:"鐵飽和度", low:15},
 };
 
 const getStatus = (key, val) => {
@@ -543,37 +565,73 @@ export default function HealthJournal(){
       });
       // 加入文字
       const textPart=labInputText.trim()||"（請從圖片中辨識所有檢驗數值）";
-      content.push({type:"text",text:`你是醫療報告解析助手。請從以下報告文字中提取數值，只回傳JSON，不要任何說明文字、不要markdown格式。
+      content.push({type:"text",text:`你是醫療報告解析助手。請從以下報告中提取所有檢驗數值，只回傳JSON，不要任何說明文字、不要markdown格式。
 
-欄位對應規則（嚴格按照以下key名稱）：
-- hba1c = HbA1c / 糖化血色素 / Hemoglobin A1c
-- glucose_ac = Glucose AC / 空腹血糖 / 飯前血糖 / Fasting Glucose
-- alt = ALT / SGPT / 丙胺酸轉胺酶
-- ast = AST / SGOT / 天門冬胺酸轉胺酶
-- hdl = HDL-C / HDL / 高密度脂蛋白
-- ldl = LDL-C / LDL / 低密度脂蛋白
-- tg = TG / Triglyceride / 三酸甘油酯
-- cholesterol = Total Cholesterol / 總膽固醇 / CHOL
-- uric_acid = Uric Acid / 尿酸
-- creatinine = Creatinine / 肌酸酐（血清值，不是尿液值）
-- gfr = GFR / eGFR / MDRD（取第一個數值）
-- upcr = UPCR / Protein/Creatinine Ratio / 蛋白肌酸酐比值
-- tsh = TSH / 甲狀腺促素
-- hb = Hb / Hemoglobin / 血紅素
-- wbc = WBC / 白血球
-- platelet = Platelet / PLT / 血小板
-- rbc = RBC / 紅血球
-- hct = Hct / 血球容積
-- mcv = MCV
-- mch = MCH
-- mchc = MCHC
+重要規則：
+1. 抓取報告中出現的所有數值，不要遺漏
+2. key名稱用以下對應（小寫英文）：
+   hba1c=HbA1c/糖化血色素
+   glucose_ac=Glucose AC/空腹血糖/GLU（空腹）
+   alt=ALT/SGPT
+   ast=AST/SGOT
+   alp=ALP/鹼性磷酸酶
+   ggt=GGT/麩胺轉移酶
+   ldh=LDH
+   tbil=Total Bilirubin/總膽紅素/TBILC
+   dbil=Direct Bilirubin/直接膽紅素/DBILC
+   tp=Total Protein/總蛋白/TP
+   alb=Albumin/白蛋白/ALB
+   glob=Globulin/球蛋白/GLO
+   ag_ratio=A/G Ratio
+   hdl=HDL-C/HDL/高密度脂蛋白
+   ldl=LDL-C/LDL/低密度脂蛋白
+   tg=TG/Triglyceride/三酸甘油酯
+   cholesterol=Total Cholesterol/總膽固醇/CHOL
+   chol_hdl=CHOL/HDL-C比值
+   uric_acid=Uric Acid/尿酸/UA
+   creatinine=Creatinine/肌酸酐/CRE（血清，非尿液）
+   gfr=GFR/eGFR/MDRD（取第一個數值）
+   bun=BUN/血中尿素氮
+   upcr=UPCR/Protein Creatinine Ratio
+   urine_creatinine=Urine Creatinine/尿液肌酸酐
+   urine_protein=Urine Protein/尿液蛋白
+   tsh=TSH/甲狀腺促素
+   ft3=Free T3
+   ft4=Free T4
+   na=Sodium/鈉/Na
+   k=Potassium/鉀/K
+   cl=Chloride/氯/Cl
+   ca=Calcium/鈣/Ca
+   mg=Magnesium/鎂/MG
+   phos=Phosphorus/磷/PHOS
+   crp=CRP/C反應蛋白
+   amy=Amylase/澱粉酶/AMY
+   lip=Lipase/脂肪酶/LIP
+   ck=CK/肌酸激酶
+   fe=Iron/鐵/FE
+   uibc=UIBC
+   tibc=TIBC
+   fe_sat=Iron Saturation/鐵飽和度/FE_sat
+   hb=Hb/Hemoglobin/血紅素
+   wbc=WBC/白血球
+   rbc=RBC/紅血球
+   hct=Hct/血球容積
+   mcv=MCV
+   mch=MCH
+   mchc=MCHC
+   rdw_cv=RDW-CV
+   rdw_sd=RDW-SD
+   platelet=Platelet/PLT/血小板
+   mpv=MPV
+3. 數值只填數字，不要單位
+4. 找不到的欄位填null
+5. 越南單位mmol/L請×18換算為mg/dL
 
 報告內容：
 ${textPart}
 
-請回傳（只有JSON，沒有其他文字）：
-{"date":"偵測到的日期或null","hospital":"偵測到的醫院名稱或null","hba1c":數值或null,"glucose_ac":數值或null,"alt":數值或null,"ast":數值或null,"hdl":數值或null,"ldl":數值或null,"tg":數值或null,"cholesterol":數值或null,"uric_acid":數值或null,"creatinine":數值或null,"gfr":數值或null,"upcr":數值或null,"tsh":數值或null,"hb":數值或null,"wbc":數值或null,"platelet":數值或null,"rbc":數值或null,"hct":數值或null,"mcv":數值或null,"mch":數值或null,"mchc":數值或null,"note":null}
-數值只填數字，不要單位。找不到填null。越南單位mmol/L請×18換算為mg/dL。`});
+只回傳JSON格式，包含所有找到的欄位（有值的填數值，沒有的填null）：
+{"date":null,"hospital":null,"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"bun":null,"upcr":null,"urine_creatinine":null,"urine_protein":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"note":null}`});
 
       const rawText = await callClaude([{role:"user",content}], 1200);
       console.log("Raw text:",rawText.slice(0,500));
@@ -1317,30 +1375,74 @@ ${textPart}
       setDelConfirm(null);
     };
 
-    // 抽血報告完整數值欄位
+    // 抽血報告完整數值欄位 - 依分類排列
     const LAB_DISPLAY = [
-      {key:"hba1c",label:"HbA1c",unit:"%"},
-      {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL"},
-      {key:"alt",label:"ALT",unit:"U/L"},
-      {key:"ast",label:"AST",unit:"U/L"},
-      {key:"hdl",label:"HDL-C",unit:"mg/dL"},
-      {key:"ldl",label:"LDL-C",unit:"mg/dL"},
-      {key:"tg",label:"三酸甘油酯",unit:"mg/dL"},
-      {key:"cholesterol",label:"總膽固醇",unit:"mg/dL"},
-      {key:"uric_acid",label:"尿酸",unit:"mg/dL"},
-      {key:"creatinine",label:"肌酸酐",unit:"mg/dL"},
-      {key:"gfr",label:"eGFR",unit:""},
-      {key:"upcr",label:"UPCR",unit:"mg/g"},
-      {key:"tsh",label:"TSH",unit:"uIU/mL"},
-      {key:"hb",label:"血紅素 Hb",unit:"g/dL"},
-      {key:"wbc",label:"WBC",unit:"K/uL"},
-      {key:"rbc",label:"RBC",unit:"M/uL"},
-      {key:"hct",label:"Hct",unit:"%"},
-      {key:"platelet",label:"血小板",unit:"K/uL"},
-      {key:"mcv",label:"MCV",unit:"fL"},
-      {key:"mch",label:"MCH",unit:"pg"},
-      {key:"mchc",label:"MCHC",unit:"g/dL"},
+      // 血糖
+      {key:"hba1c",label:"HbA1c",unit:"%",group:"血糖"},
+      {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL",group:"血糖"},
+      {key:"glucose_pc",label:"飯後血糖",unit:"mg/dL",group:"血糖"},
+      // 肝功能
+      {key:"alt",label:"ALT",unit:"U/L",group:"肝功能"},
+      {key:"ast",label:"AST",unit:"U/L",group:"肝功能"},
+      {key:"alp",label:"ALP",unit:"U/L",group:"肝功能"},
+      {key:"ggt",label:"GGT",unit:"U/L",group:"肝功能"},
+      {key:"ldh",label:"LDH",unit:"U/L",group:"肝功能"},
+      {key:"tbil",label:"總膽紅素",unit:"mg/dL",group:"肝功能"},
+      {key:"dbil",label:"直接膽紅素",unit:"mg/dL",group:"肝功能"},
+      {key:"tp",label:"總蛋白",unit:"g/dL",group:"肝功能"},
+      {key:"alb",label:"白蛋白",unit:"g/dL",group:"肝功能"},
+      {key:"glob",label:"球蛋白",unit:"g/dL",group:"肝功能"},
+      {key:"ag_ratio",label:"A/G比值",unit:"",group:"肝功能"},
+      // 腎功能
+      {key:"creatinine",label:"肌酸酐",unit:"mg/dL",group:"腎功能"},
+      {key:"gfr",label:"eGFR",unit:"",group:"腎功能"},
+      {key:"bun",label:"BUN",unit:"mg/dL",group:"腎功能"},
+      {key:"upcr",label:"UPCR",unit:"mg/g",group:"腎功能"},
+      {key:"urine_creatinine",label:"尿液肌酸酐",unit:"mg/dL",group:"腎功能"},
+      {key:"urine_protein",label:"尿液蛋白",unit:"mg/dL",group:"腎功能"},
+      // 血脂
+      {key:"hdl",label:"HDL-C",unit:"mg/dL",group:"血脂"},
+      {key:"ldl",label:"LDL-C",unit:"mg/dL",group:"血脂"},
+      {key:"tg",label:"三酸甘油酯",unit:"mg/dL",group:"血脂"},
+      {key:"cholesterol",label:"總膽固醇",unit:"mg/dL",group:"血脂"},
+      {key:"chol_hdl",label:"膽固醇/HDL",unit:"",group:"血脂"},
+      // 尿酸/鐵
+      {key:"uric_acid",label:"尿酸",unit:"mg/dL",group:"其他生化"},
+      {key:"fe",label:"鐵 Fe",unit:"ug/dL",group:"其他生化"},
+      {key:"uibc",label:"UIBC",unit:"ug/dL",group:"其他生化"},
+      {key:"tibc",label:"TIBC",unit:"ug/dL",group:"其他生化"},
+      {key:"fe_sat",label:"鐵飽和度",unit:"%",group:"其他生化"},
+      // 甲狀腺
+      {key:"tsh",label:"TSH",unit:"uIU/mL",group:"甲狀腺"},
+      {key:"ft3",label:"Free T3",unit:"",group:"甲狀腺"},
+      {key:"ft4",label:"Free T4",unit:"",group:"甲狀腺"},
+      // 電解質
+      {key:"na",label:"鈉 Na",unit:"mEq/L",group:"電解質"},
+      {key:"k",label:"鉀 K",unit:"mEq/L",group:"電解質"},
+      {key:"cl",label:"氯 Cl",unit:"mEq/L",group:"電解質"},
+      {key:"ca",label:"鈣 Ca",unit:"mg/dL",group:"電解質"},
+      {key:"mg",label:"鎂 Mg",unit:"mg/dL",group:"電解質"},
+      {key:"phos",label:"磷 Phos",unit:"mg/dL",group:"電解質"},
+      // 發炎/胰臟
+      {key:"crp",label:"CRP",unit:"mg/L",group:"其他生化"},
+      {key:"amy",label:"澱粉酶 AMY",unit:"U/L",group:"其他生化"},
+      {key:"lip",label:"脂肪酶 LIP",unit:"U/L",group:"其他生化"},
+      {key:"ck",label:"CK",unit:"U/L",group:"其他生化"},
+      // CBC血液
+      {key:"wbc",label:"WBC",unit:"K/uL",group:"血液CBC"},
+      {key:"rbc",label:"RBC",unit:"M/uL",group:"血液CBC"},
+      {key:"hb",label:"血紅素 Hb",unit:"g/dL",group:"血液CBC"},
+      {key:"hct",label:"Hct",unit:"%",group:"血液CBC"},
+      {key:"mcv",label:"MCV",unit:"fL",group:"血液CBC"},
+      {key:"mch",label:"MCH",unit:"pg",group:"血液CBC"},
+      {key:"mchc",label:"MCHC",unit:"g/dL",group:"血液CBC"},
+      {key:"rdw_cv",label:"RDW-CV",unit:"%",group:"血液CBC"},
+      {key:"rdw_sd",label:"RDW-SD",unit:"fL",group:"血液CBC"},
+      {key:"platelet",label:"血小板",unit:"K/uL",group:"血液CBC"},
+      {key:"mpv",label:"MPV",unit:"fL",group:"血液CBC"},
     ];
+    // 依分組顯示
+    const groups = [...new Set(LAB_DISPLAY.map(f=>f.group))];
 
     return(
       <div>
@@ -1391,18 +1493,27 @@ ${textPart}
                           {record.fasting&&<span className="status-chip status-ok">{record.fasting}</span>}
                           {record.doctor&&<span style={{fontSize:11,color:C.textMuted}}>醫師：{record.doctor}</span>}
                         </div>
-                        {/* 數值列表 */}
-                        {LAB_DISPLAY.filter(f=>record[f.key]!==null&&record[f.key]!==undefined&&record[f.key]!=="").map(f=>{
-                          const st=getStatus(f.key,record[f.key]);
-                          const stColors={ok:C.green,warn:C.amber,alert:C.red};
+                        {/* 數值列表 - 依分組顯示 */}
+                        {groups.map(group=>{
+                          const groupFields=LAB_DISPLAY.filter(f=>f.group===group&&record[f.key]!==null&&record[f.key]!==undefined&&record[f.key]!=="");
+                          if(groupFields.length===0)return null;
                           return(
-                            <div key={f.key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
-                              <span style={{fontSize:12,color:C.textMuted}}>{f.label}</span>
-                              <div style={{display:"flex",alignItems:"center",gap:6}}>
-                                <span style={{fontSize:13,fontWeight:600,color:st?stColors[st]:C.text}}>{record[f.key]}</span>
-                                <span style={{fontSize:11,color:C.textMuted}}>{f.unit}</span>
-                                <StatusDot status={st}/>
-                              </div>
+                            <div key={group} style={{marginBottom:8}}>
+                              <div style={{fontSize:10,color:C.green,letterSpacing:1,marginBottom:4,marginTop:8}}>{group.toUpperCase()}</div>
+                              {groupFields.map(f=>{
+                                const st=getStatus(f.key,record[f.key]);
+                                const stColors={ok:C.green,warn:C.amber,alert:C.red};
+                                return(
+                                  <div key={f.key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:`1px solid ${C.border}`}}>
+                                    <span style={{fontSize:12,color:C.textMuted}}>{f.label}</span>
+                                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                      <span style={{fontSize:13,fontWeight:600,color:st?stColors[st]:C.text}}>{record[f.key]}</span>
+                                      <span style={{fontSize:11,color:C.textMuted}}>{f.unit}</span>
+                                      <StatusDot status={st}/>
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           );
                         })}
