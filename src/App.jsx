@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v3.8";
+const VERSION = "v3.9";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -498,7 +498,7 @@ export default function HealthJournal(){
       source:glucoseForm.source,note:glucoseForm.note,
     });
     if(r?.success){showToast(`✅ 血糖 ${mgdl} mg/dL 已儲存`);setGlucoseForm({value:"",unit:"mmol/L",timePoint:"空腹",source:"日常",note:""});loadData();}
-    else showToast("❌ 儲存失敗，請檢查網路");
+    else showToast("❌ 血糖儲存失敗：" + (r?.error || "請檢查網路連線"));
     setSubmitting(false);
   };
 
@@ -724,6 +724,11 @@ ${textPart}
       if(e.message==="NO_API_KEY"){
         showToast("⚠️ 請先在設定Tab輸入API金鑰");
         setTab("setting");
+      }else if(e.message.includes("401")){
+        showToast("❌ API金鑰無效，請至設定Tab重新輸入");
+        setTab("setting");
+      }else if(e.message.includes("429")){
+        showToast("❌ API使用量超限，請稍後再試");
       }else{
         showToast("❌ 解析失敗："+e.message);
       }
@@ -754,7 +759,7 @@ ${textPart}
       setLabParsed({});setLabForm({date:"",hospital:"",country:"台灣",fasting:"空腹"});
       loadData();
     }else{
-      showToast("❌ 儲存失敗："+JSON.stringify(r));
+      showToast("❌ 儲存失敗：" + (r?.error || "請確認網路連線和Apps Script部署"));
       setLabStep("confirm");
     }
   };
@@ -1425,7 +1430,8 @@ ${textPart}
           loadData();
           setDelConfirm(null);
         } else {
-          showToast("❌ 刪除失敗：" + (r?.error||"未知錯誤"));
+          const errMsg = r?.error||"未知錯誤";
+          showToast("❌ 刪除失敗：" + errMsg);
           console.log("Delete error:", r);
         }
       } catch(e) {
@@ -2023,9 +2029,16 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
       if(e.message==="NO_API_KEY"){
         showToast("⚠️ 請先在設定Tab輸入API金鑰");
         setTab("setting");
+      }else if(e.message.includes("401")){
+        showToast("❌ API金鑰無效，請至設定Tab重新輸入");
+        setAiReport("❌ API金鑰無效");
+        setTab("setting");
+      }else if(e.message.includes("429")){
+        showToast("❌ API使用量超限，請稍後再試");
+        setAiReport("❌ API使用量超限");
       }else{
         setAiReport("❌ 分析失敗："+e.message);
-        showToast("❌ "+e.message);
+        showToast("❌ AI分析失敗："+e.message);
       }
     }
     setAiLoading(false);
@@ -2239,10 +2252,15 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
             更新 Google Sheets 欄位（新版本後執行一次）
           </div>
           <button className="btn-primary" style={{marginBottom:8}} onClick={async()=>{
-            showToast("⏳ 更新欄位中...");
-            const r = await api.get("updateLabColumns");
-            if(r?.success) showToast("✅ "+r.message);
-            else showToast("❌ "+(r?.error||"失敗"));
+            showToast("⏳ 更新欄位中，請稍候...");
+            try {
+              const r = await api.get("updateLabColumns");
+              if(r?.success) showToast("✅ "+r.message);
+              else if(r?.error) showToast("❌ 錯誤："+r.error);
+              else showToast("❌ 未知錯誤，請確認Code.gs已更新並重新部署");
+            } catch(e) {
+              showToast("❌ 連線失敗："+e.message);
+            }
           }}>
             🔧 更新 lab_reports 欄位
           </button>
