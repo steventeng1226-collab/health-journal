@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v3.6";
+const VERSION = "v3.7";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -735,21 +735,26 @@ ${textPart}
   const saveLabReport=async()=>{
     if(!labForm.hospital){showToast("⚠️ 請輸入醫院名稱");return;}
     setLabStep("saving");
-    const data={...labForm,...labParsed,...labForm};
-    // labForm 優先（使用者手動修改的）
-    LAB_FIELDS.forEach(f=>{
-      if(labForm[f.key]!==undefined&&labForm[f.key]!=="")data[f.key]=labForm[f.key];
-    });
+    // 合併所有資料：labParsed（AI解析）+ labForm（使用者輸入）
+    // labForm 優先覆蓋
+    const data={...labParsed,...labForm};
+    // 確保基本欄位都有
+    if(!data.createdAt) data.createdAt=new Date().toISOString();
+    if(!data.id) data.id="LAB"+Date.now();
+
+    // 先更新 Sheets 欄位（確保新欄位存在）
+    await api.get("updateLabColumns");
+
     const r=await api.post("append","lab_reports",data);
     if(r?.success){
       saveHospital(labForm.hospital);
-      showToast("✅ 抽血報告已儲存");
+      showToast(`✅ 抽血報告已儲存（${Object.keys(data).filter(k=>data[k]!==null&&data[k]!==undefined&&data[k]!=="").length}筆數據）`);
       setLabStep("input");
       setLabInputText("");setLabPhotos([]);
       setLabParsed({});setLabForm({date:"",hospital:"",country:"台灣",fasting:"空腹"});
       loadData();
     }else{
-      showToast("❌ 儲存失敗");
+      showToast("❌ 儲存失敗："+JSON.stringify(r));
       setLabStep("confirm");
     }
   };
