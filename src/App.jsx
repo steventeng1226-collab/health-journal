@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v3.7";
+const VERSION = "v3.8";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1554,7 +1554,8 @@ ${textPart}
                           {record.fasting&&<span className="status-chip status-ok">{record.fasting}</span>}
                           {record.doctor&&<span style={{fontSize:11,color:C.textMuted}}>醫師：{record.doctor}</span>}
                         </div>
-                        {/* 數值列表 - 依分組顯示 */}
+                        {/* 數值列表 - 先顯示LAB_DISPLAY定義的，再顯示其他有值的欄位 */}
+                        {/* 已知欄位依分組顯示 */}
                         {groups.map(group=>{
                           const groupFields=LAB_DISPLAY.filter(f=>f.group===group&&record[f.key]!==null&&record[f.key]!==undefined&&record[f.key]!=="");
                           if(groupFields.length===0)return null;
@@ -1578,6 +1579,37 @@ ${textPart}
                             </div>
                           );
                         })}
+                        {/* 額外欄位（不在LAB_DISPLAY但有值的）*/}
+                        {(()=>{
+                          const knownKeys=new Set(LAB_DISPLAY.map(f=>f.key));
+                          const skipKeys=new Set(['id','date','hospital','country','doctor','fasting','note','extra_data','source_country','createdAt']);
+                          const extraFields=Object.keys(record).filter(k=>
+                            !knownKeys.has(k)&&!skipKeys.has(k)&&
+                            record[k]!==null&&record[k]!==undefined&&record[k]!==""&&
+                            !isNaN(parseFloat(record[k]))
+                          );
+                          if(extraFields.length===0)return null;
+                          return(
+                            <div style={{marginBottom:8}}>
+                              <div style={{fontSize:10,color:C.green,letterSpacing:1,marginBottom:4,marginTop:8}}>其他檢驗</div>
+                              {extraFields.map(k=>{
+                                const s=LAB_STATUS[k];
+                                const st=getStatus(k,record[k]);
+                                const stColors={ok:C.green,warn:C.amber,alert:C.red};
+                                return(
+                                  <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:`1px solid ${C.border}`}}>
+                                    <span style={{fontSize:12,color:C.textMuted}}>{s?.label||k.toUpperCase()}</span>
+                                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                      <span style={{fontSize:13,fontWeight:600,color:st?stColors[st]:C.text}}>{record[k]}</span>
+                                      <span style={{fontSize:11,color:C.textMuted}}>{s?.unit||""}</span>
+                                      <StatusDot status={st}/>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
                         {record.note&&(
                           <div style={{marginTop:8,fontSize:11,color:C.textMuted}}>備註：{record.note}</div>
                         )}
