@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v3.2";
+const VERSION = "v3.3";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1368,11 +1368,20 @@ ${textPart}
     const handleDelete = async (record) => {
       setDeleting(true);
       const sheet = record._type==="lab" ? "lab_reports" : "imaging";
-      const r = await api.deleteRow(sheet, record.id);
-      if(r?.success){ showToast("🗑️ 已刪除"); loadData(); }
-      else showToast("❌ 刪除失敗");
+      try {
+        const r = await api.deleteRow(sheet, record.id);
+        if(r?.success){
+          showToast("🗑️ 已刪除");
+          loadData();
+          setDelConfirm(null);
+        } else {
+          showToast("❌ 刪除失敗：" + (r?.error||"未知錯誤"));
+          console.log("Delete error:", r);
+        }
+      } catch(e) {
+        showToast("❌ 刪除失敗：" + e.message);
+      }
       setDeleting(false);
-      setDelConfirm(null);
     };
 
     // 抽血報告完整數值欄位 - 依分類排列
