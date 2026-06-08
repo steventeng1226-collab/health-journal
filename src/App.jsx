@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v3.0";
+const VERSION = "v3.1";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1298,26 +1298,49 @@ ${textPart}
   const HistoryTab = () => {
     const [delConfirm, setDelConfirm] = useState(null);
     const [deleting, setDeleting] = useState(false);
+    const [expanded, setExpanded] = useState(null);
 
-    // 合併抽血和影像記錄，依日期排序
     const allRecords = [
       ...labHistory.map(r=>({...r, _type:"lab", _icon:"🩸", _label:"抽血檢查",
         _summary:`HbA1c ${r.hba1c||"—"}% · 血糖 ${r.glucose_ac||"—"}`})),
       ...imagingHistory.map(r=>({...r, _type:"imaging", _icon:"🔬", _label:r.type||"影像檢查",
         _summary:r.finding?r.finding.slice(0,30)+(r.finding.length>30?"...":""):""})),
-    ].sort((a,b)=>new Date(b.date)-new Date(a.date));
+    ].sort((a,b)=>String(b.date).localeCompare(String(a.date)));
 
     const handleDelete = async (record) => {
       setDeleting(true);
       const sheet = record._type==="lab" ? "lab_reports" : "imaging";
       const r = await api.deleteRow(sheet, record.id);
-      if(r?.success){
-        showToast("🗑️ 已刪除");
-        loadData();
-      } else showToast("❌ 刪除失敗");
+      if(r?.success){ showToast("🗑️ 已刪除"); loadData(); }
+      else showToast("❌ 刪除失敗");
       setDeleting(false);
       setDelConfirm(null);
     };
+
+    // 抽血報告完整數值欄位
+    const LAB_DISPLAY = [
+      {key:"hba1c",label:"HbA1c",unit:"%"},
+      {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL"},
+      {key:"alt",label:"ALT",unit:"U/L"},
+      {key:"ast",label:"AST",unit:"U/L"},
+      {key:"hdl",label:"HDL-C",unit:"mg/dL"},
+      {key:"ldl",label:"LDL-C",unit:"mg/dL"},
+      {key:"tg",label:"三酸甘油酯",unit:"mg/dL"},
+      {key:"cholesterol",label:"總膽固醇",unit:"mg/dL"},
+      {key:"uric_acid",label:"尿酸",unit:"mg/dL"},
+      {key:"creatinine",label:"肌酸酐",unit:"mg/dL"},
+      {key:"gfr",label:"eGFR",unit:""},
+      {key:"upcr",label:"UPCR",unit:"mg/g"},
+      {key:"tsh",label:"TSH",unit:"uIU/mL"},
+      {key:"hb",label:"血紅素 Hb",unit:"g/dL"},
+      {key:"wbc",label:"WBC",unit:"K/uL"},
+      {key:"rbc",label:"RBC",unit:"M/uL"},
+      {key:"hct",label:"Hct",unit:"%"},
+      {key:"platelet",label:"血小板",unit:"K/uL"},
+      {key:"mcv",label:"MCV",unit:"fL"},
+      {key:"mch",label:"MCH",unit:"pg"},
+      {key:"mchc",label:"MCHC",unit:"g/dL"},
+    ];
 
     return(
       <div>
@@ -1329,40 +1352,96 @@ ${textPart}
         </div>
 
         {allRecords.length===0?(
-          <div className="empty-state">
-            📂 尚無記錄<br/>
-            請先在「📋抽血」或「🔬影像」新增記錄
-          </div>
+          <div className="empty-state">📂 尚無記錄<br/>請先在「📋抽血」或「🔬影像」新增記錄</div>
         ):(
-          allRecords.map(record=>(
-            <div key={record.id} className="card" style={{marginBottom:8,padding:"12px 14px"}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
-                  <span style={{fontSize:24}}>{record._icon}</span>
-                  <div style={{flex:1}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
-                      <span style={{fontSize:14,fontWeight:600,color:C.text}}>
-                        {fmtDate(record.date)}
-                      </span>
-                      <span style={{fontSize:12,color:C.textMuted}}>{record.hospital}</span>
+          allRecords.map(record=>{
+            const isExpanded = expanded===record.id;
+            return(
+              <div key={record.id} className="card" style={{marginBottom:8,padding:"12px 14px"}}>
+                {/* 標題列 - 點擊展開/收合 */}
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer"}}
+                  onClick={()=>setExpanded(isExpanded?null:record.id)}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
+                    <span style={{fontSize:24}}>{record._icon}</span>
+                    <div style={{flex:1}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
+                        <span style={{fontSize:14,fontWeight:600,color:C.text}}>{fmtDate(record.date)}</span>
+                        <span style={{fontSize:12,color:C.textMuted}}>{record.hospital}</span>
+                        {record.fasting&&<span style={{fontSize:10,color:C.textMuted}}>({record.fasting})</span>}
+                      </div>
+                      <div style={{fontSize:12,color:C.green}}>{record._label}</div>
+                      {!isExpanded&&record._summary&&(
+                        <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>{record._summary}</div>
+                      )}
                     </div>
-                    <div style={{fontSize:12,color:C.green}}>{record._label}</div>
-                    {record._summary&&(
-                      <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>{record._summary}</div>
-                    )}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{color:C.textMuted,fontSize:18}}>{isExpanded?"▲":"▼"}</span>
                   </div>
                 </div>
-                <button
-                  onClick={()=>setDelConfirm(record)}
-                  style={{background:"transparent",border:`1px solid ${C.red}44`,borderRadius:8,color:C.red,padding:"5px 10px",fontSize:12,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif",whiteSpace:"nowrap"}}>
-                  刪除
-                </button>
+
+                {/* 展開的完整數值 */}
+                {isExpanded&&(
+                  <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
+                    {record._type==="lab"?(
+                      <>
+                        {/* 基本資訊 */}
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+                          {record.country&&<span className="status-chip status-ok">{record.country}</span>}
+                          {record.fasting&&<span className="status-chip status-ok">{record.fasting}</span>}
+                          {record.doctor&&<span style={{fontSize:11,color:C.textMuted}}>醫師：{record.doctor}</span>}
+                        </div>
+                        {/* 數值列表 */}
+                        {LAB_DISPLAY.filter(f=>record[f.key]!==null&&record[f.key]!==undefined&&record[f.key]!=="").map(f=>{
+                          const st=getStatus(f.key,record[f.key]);
+                          const stColors={ok:C.green,warn:C.amber,alert:C.red};
+                          return(
+                            <div key={f.key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
+                              <span style={{fontSize:12,color:C.textMuted}}>{f.label}</span>
+                              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                <span style={{fontSize:13,fontWeight:600,color:st?stColors[st]:C.text}}>{record[f.key]}</span>
+                                <span style={{fontSize:11,color:C.textMuted}}>{f.unit}</span>
+                                <StatusDot status={st}/>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {record.note&&(
+                          <div style={{marginTop:8,fontSize:11,color:C.textMuted}}>備註：{record.note}</div>
+                        )}
+                      </>
+                    ):(
+                      // 影像檢查展開
+                      <>
+                        {record.finding&&(
+                          <div style={{marginBottom:8}}>
+                            <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>報告結論</div>
+                            <div style={{fontSize:13,color:C.text,lineHeight:1.7}}>{record.finding}</div>
+                          </div>
+                        )}
+                        {record.recommendation&&(
+                          <div style={{marginBottom:8}}>
+                            <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>醫師建議</div>
+                            <div style={{fontSize:13,color:C.text,lineHeight:1.7}}>{record.recommendation}</div>
+                          </div>
+                        )}
+                        {record.nextDate&&(
+                          <div style={{fontSize:12,color:C.amber}}>下次追蹤：{fmtDate(record.nextDate)}</div>
+                        )}
+                      </>
+                    )}
+                    {/* 刪除按鈕 */}
+                    <button onClick={()=>setDelConfirm(record)}
+                      style={{marginTop:12,width:"100%",padding:"8px",background:"transparent",border:`1px solid ${C.red}44`,borderRadius:8,color:C.red,fontSize:12,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}>
+                      🗑️ 刪除這筆記錄
+                    </button>
+                  </div>
+                )}
               </div>
-            </div>
-          ))
+            );
+          })
         )}
 
-        {/* 刪除確認 overlay */}
         {delConfirm&&(
           <div className="overlay">
             <div className="overlay-sheet">
