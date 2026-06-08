@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v3.3";
+const VERSION = "v3.4";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -2146,6 +2146,25 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
             </div>
           ))}
           <div style={{fontSize:11,color:C.textMuted,marginTop:10}}>以上背景已自動帶入每次AI分析</div>
+        </div>
+
+        {/* 維護工具 */}
+        <div className="card">
+          <div className="card-title">維護工具</div>
+          <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.6}}>
+            更新 Google Sheets 欄位（新版本後執行一次）
+          </div>
+          <button className="btn-primary" style={{marginBottom:8}} onClick={async()=>{
+            showToast("⏳ 更新欄位中...");
+            const r = await api.get("updateLabColumns");
+            if(r?.success) showToast("✅ "+r.message);
+            else showToast("❌ "+(r?.error||"失敗"));
+          }}>
+            🔧 更新 lab_reports 欄位
+          </button>
+          <div style={{fontSize:11,color:C.textMuted}}>
+            自動新增所有缺少的欄位，不影響現有資料
+          </div>
         </div>
 
         {/* APP資訊 */}
