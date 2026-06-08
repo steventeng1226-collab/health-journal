@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v3.5";
+const VERSION = "v3.6";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -628,6 +628,39 @@ export default function HealthJournal(){
 3. 數值只填數字，不要單位
 4. 找不到的欄位填null
 5. 越南單位mmol/L請×18換算為mg/dL
+6. 支援多種報告格式：
+   - 台灣醫院文字格式：「ALT: 45 U/L」
+   - DxC 700 AU 機器格式：「ALT 43」「CRE 0.82」
+   - 表格格式：Test Name / Result 欄位
+7. DxC 700 AU 特殊欄位對應：
+   amy=AMY（澱粉酶）
+   ck=CK（肌酸激酶）
+   ggt=GGT
+   fe=FE（鐵）
+   lip=LIP（脂肪酶）
+   tp=TP（總蛋白）
+   ldh=LDH
+   k=K（鉀）
+   ag_ratio=A/G（白球蛋白比值）
+   alb=ALB（白蛋白）
+   crp=CRP
+   mg=MG（鎂）
+   uibc=UIBC
+   na=Na（鈉）
+   tibc=TIBC
+   alp=ALP
+   dbil=DBILC/Direct Bilirubin
+   phos=PHOS（磷）
+   tbil=TBILC/Total Bilirubin
+   bun=BUN
+   ca=CA（鈣）
+   cl=Cl/CL（氯）
+   glob=GLO/Globulin（球蛋白）
+   fe_sat=FE_sat（鐵飽和度）
+   creatinine=CRE/Creatinine（肌酸酐）
+   uric_acid=UA/Uric Acid（尿酸）
+   glucose_ac=GLU/Glucose（血糖）
+   cholesterol=CHOL/Cholesterol（膽固醇）
 
 報告內容：
 ${textPart}
