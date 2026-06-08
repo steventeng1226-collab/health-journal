@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v3.4";
+const VERSION = "v3.5";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -258,7 +258,8 @@ const LAB_STATUS = {
   hb:         {warn:13.7,alert:12,  unit:"g/dL", label:"血紅素", low:null, reverse:true},
   wbc:        {warn:11.2,alert:15,  unit:"K/uL", label:"WBC", low:3.6},
   platelet:   {warn:400, alert:500, unit:"K/uL", label:"血小板", low:130},
-  gfr:        {warn:60,  alert:30,  unit:"", label:"eGFR", low:null, reverse:true},
+  gfr:        {warn:60,  alert:30,  unit:"", label:"eGFR(CKD-EPI)", low:null, reverse:true},
+  gfr2:       {warn:60,  alert:30,  unit:"", label:"eGFR(MDRD)", low:null, reverse:true},
   ast:        {warn:40,  alert:80,  unit:"U/L", label:"AST", low:null},
   rbc:        {warn:5.7, alert:6.0, unit:"M/uL", label:"RBC", low:4.5},
   hct:        {warn:49.6,alert:52,  unit:"%", label:"Hct", low:40.5},
@@ -565,7 +566,7 @@ export default function HealthJournal(){
       });
       // 加入文字
       const textPart=labInputText.trim()||"（請從圖片中辨識所有檢驗數值）";
-      content.push({type:"text",text:`你是醫療報告解析助手。請從以下報告中提取所有檢驗數值，只回傳JSON，不要任何說明文字、不要markdown格式。
+      content.push({type:"text",text:`你是醫療報告解析助手。任務：從以下報告提取所有數值，回傳純JSON，禁止任何說明文字。
 
 重要規則：
 1. 抓取報告中出現的所有數值，不要遺漏
@@ -587,14 +588,15 @@ export default function HealthJournal(){
    ldl=LDL-C/LDL/低密度脂蛋白
    tg=TG/Triglyceride/三酸甘油酯
    cholesterol=Total Cholesterol/總膽固醇/CHOL
-   chol_hdl=CHOL/HDL-C比值
+   chol_hdl=CHOL/HDL-C比值/膽固醇HDL比值
    uric_acid=Uric Acid/尿酸/UA
    creatinine=Creatinine/肌酸酐/CRE（血清，非尿液）
-   gfr=GFR/eGFR/MDRD（取第一個數值）
+   gfr=GFR（取第一個數值，通常是CKD-EPI公式）
+   gfr2=eGFR(MDRD)/第二個eGFR數值
    bun=BUN/血中尿素氮
    upcr=UPCR/Protein Creatinine Ratio
-   urine_creatinine=Urine Creatinine/尿液肌酸酐
-   urine_protein=Urine Protein/尿液蛋白
+   urine_creatinine=Urine Creatinine/尿液肌酸酐/CREA(Random Urine)
+   urine_protein=Urine Protein/尿液蛋白/Micro-Total Protein/Total Protein(Urine)
    tsh=TSH/甲狀腺促素
    ft3=Free T3
    ft4=Free T4
@@ -616,13 +618,13 @@ export default function HealthJournal(){
    wbc=WBC/白血球
    rbc=RBC/紅血球
    hct=Hct/血球容積
-   mcv=MCV
-   mch=MCH
-   mchc=MCHC
-   rdw_cv=RDW-CV
-   rdw_sd=RDW-SD
+   mcv=MCV（平均紅血球容積）
+   mch=MCH（平均紅血球血色素）
+   mchc=MCHC（平均紅血球血色素濃度）
+   rdw_cv=RDW-CV（紅血球分布寬度CV）
+   rdw_sd=RDW-SD（紅血球分布寬度SD）
    platelet=Platelet/PLT/血小板
-   mpv=MPV
+   mpv=MPV（平均血小板容積）
 3. 數值只填數字，不要單位
 4. 找不到的欄位填null
 5. 越南單位mmol/L請×18換算為mg/dL
@@ -631,7 +633,7 @@ export default function HealthJournal(){
 ${textPart}
 
 只回傳JSON格式，包含所有找到的欄位（有值的填數值，沒有的填null）：
-{"date":null,"hospital":null,"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"bun":null,"upcr":null,"urine_creatinine":null,"urine_protein":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"note":null}`});
+{"date":null,"hospital":null,"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"gfr2":null,"bun":null,"upcr":null,"urine_creatinine":null,"urine_protein":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"note":null}`});
 
       const rawText = await callClaude([{role:"user",content}], 1200);
       console.log("Raw text:",rawText.slice(0,500));
@@ -1404,11 +1406,13 @@ ${textPart}
       {key:"ag_ratio",label:"A/G比值",unit:"",group:"肝功能"},
       // 腎功能
       {key:"creatinine",label:"肌酸酐",unit:"mg/dL",group:"腎功能"},
-      {key:"gfr",label:"eGFR",unit:"",group:"腎功能"},
+      {key:"gfr",label:"eGFR(CKD-EPI)",unit:"",group:"腎功能"},
+      {key:"gfr2",label:"eGFR(MDRD)",unit:"",group:"腎功能"},
       {key:"bun",label:"BUN",unit:"mg/dL",group:"腎功能"},
       {key:"upcr",label:"UPCR",unit:"mg/g",group:"腎功能"},
       {key:"urine_creatinine",label:"尿液肌酸酐",unit:"mg/dL",group:"腎功能"},
       {key:"urine_protein",label:"尿液蛋白",unit:"mg/dL",group:"腎功能"},
+      {key:"urine_protein2",label:"尿蛋白(隨機)",unit:"mg/dL",group:"腎功能"},
       // 血脂
       {key:"hdl",label:"HDL-C",unit:"mg/dL",group:"血脂"},
       {key:"ldl",label:"LDL-C",unit:"mg/dL",group:"血脂"},
