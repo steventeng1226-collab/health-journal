@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v2.8";
+const VERSION = "v3.0";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -67,35 +67,43 @@ const C = {
 };
 
 const toMgdl=(v,unit)=>unit==="mmol/L"?Math.round(parseFloat(v)*18.016*10)/10:parseFloat(v);
-// 日期正規化 - 處理所有可能的格式
+// 日期正規化 - 處理所有格式，正確轉換時區
 const normalizeDate=(d)=>{
   if(!d)return"";
-  // 如果是數字（Excel日期序號）
   if(typeof d==="number"){
-    // Google Sheets Date 序號轉換
-    const excelEpoch=new Date(1899,11,30);
-    const ms=excelEpoch.getTime()+d*86400000;
-    const dt=new Date(ms);
+    const dt=new Date(Math.round((d-25569)*86400*1000));
     const y=dt.getFullYear();
     const m=String(dt.getMonth()+1).padStart(2,"0");
     const day=String(dt.getDate()).padStart(2,"0");
     return`${y}-${m}-${day}`;
   }
-  const s=String(d);
-  // 已是 YYYY-MM-DD 格式
-  if(/^\d{4}-\d{2}-\d{2}/.test(s))return s.slice(0,10);
-  // Date 物件字串（含T的ISO格式）
+  const s=String(d).trim();
+  // 純 YYYY-MM-DD → 直接回傳
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s))return s;
+  // ISO 格式含 T 和 Z（UTC時間）→ 轉本地時區
+  if(s.includes("T")&&s.includes("Z")){
+    // 加上本地時區偏移再取日期，避免UTC-1天問題
+    const dt=new Date(s);
+    // 用本地時間的年月日
+    const y=dt.getFullYear();
+    const m=String(dt.getMonth()+1).padStart(2,"0");
+    const day=String(dt.getDate()).padStart(2,"0");
+    return`${y}-${m}-${day}`;
+  }
+  // ISO 含T但不含Z
   if(s.includes("T")){
-    // 取 T 前面的日期，不做時區轉換
     return s.split("T")[0];
   }
-  // MM/DD/YYYY 或 YYYY/MM/DD
+  // YYYY/MM/DD
   if(s.includes("/")){
     const p=s.split("/");
-    if(p[0].length===4)return`${p[0]}-${p[1]?.padStart(2,"0")}-${p[2]?.padStart(2,"0")}`;
-    if(p[2]?.length===4)return`${p[2]}-${p[0]?.padStart(2,"0")}-${p[1]?.padStart(2,"0")}`;
+    if(p.length===3){
+      if(p[0].length===4)return`${p[0]}-${p[1].padStart(2,"0")}-${p[2].slice(0,2).padStart(2,"0")}`;
+      if(p[2].length===4)return`${p[2]}-${p[0].padStart(2,"0")}-${p[1].padStart(2,"0")}`;
+    }
   }
-  return s.slice(0,10);
+  if(s.length>=10)return s.slice(0,10);
+  return s;
 };
 const fmtDate=(d)=>{
   const s=normalizeDate(d);
