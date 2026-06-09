@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.1";
+const VERSION = "v4.2";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -294,6 +294,15 @@ const LAB_STATUS = {
   mo_pct:     {warn:12.5,alert:15,  unit:"%",     label:"單核球%", low:4.5},
   eo_pct:     {warn:7.9, alert:10,  unit:"%",     label:"嗜酸性球%", low:null},
   ba_pct:     {warn:1.4, alert:2.0, unit:"%",     label:"嗜鹼性球%", low:null},
+  // 白血球絕對值
+  ne_abs:     {warn:7.6, alert:10,  unit:"G/L",   label:"嗜中性球#", low:1.7},
+  ly_abs:     {warn:3.2, alert:4.0, unit:"G/L",   label:"淋巴球#",   low:1.0},
+  mo_abs:     {warn:1.1, alert:1.5, unit:"G/L",   label:"單核球#",   low:0.3},
+  eo_abs:     {warn:0.5, alert:0.7, unit:"G/L",   label:"嗜酸性球#", low:null},
+  ba_abs:     {warn:0.1, alert:0.2, unit:"G/L",   label:"嗜鹼性球#", low:null},
+  // 病毒篩檢
+  hbsag:      {warn:null,alert:null,unit:"",       label:"HBsAg",     low:null},
+  anti_hcv:   {warn:null,alert:null,unit:"",       label:"Anti-HCV",  low:null},
 };
 
 const getStatus = (key, val) => {
@@ -691,17 +700,24 @@ export default function HealthJournal(){
    cholesterol=CHOL/Total Cholesterol（若mmol/L請×38.67）
    hb=HGB/Hemoglobin（若g/L請÷10）
    mchc=MCHC（若g/L請÷10）
-   ne_pct=NE%/Neutrophil%/嗜中性球%
-   ly_pct=LY%/Lymphocyte%/淋巴球%
-   mo_pct=MO%/Monocyte%/單核球%
-   eo_pct=EO%/Eosinophil%/嗜酸性球%
-   ba_pct=BA%/Basophil%/嗜鹼性球%
+   ne_pct=NE%/Neutrophil%/嗜中性球%（百分比）
+   ly_pct=LY%/Lymphocyte%/淋巴球%（百分比）
+   mo_pct=MO%/Monocyte%/單核球%（百分比）
+   eo_pct=EO%/Eosinophil%/嗜酸性球%（百分比）
+   ba_pct=BA%/Basophil%/嗜鹼性球%（百分比）
+   ne_abs=NE#/Neutrophil#/嗜中性球絕對值（G/L或10^3/uL）
+   ly_abs=LY#/Lymphocyte#/淋巴球絕對值
+   mo_abs=MO#/Monocyte#/單核球絕對值
+   eo_abs=EO#/Eosinophil#/嗜酸性球絕對值
+   ba_abs=BA#/Basophil#/嗜鹼性球絕對值
+   hbsag=HBsAg（陰性填0，陽性填1）
+   anti_hcv=Anti-HCV（陰性填0，陽性填1）
 
 報告內容：
 ${textPart}
 
 只回傳JSON格式，包含所有找到的欄位（有值的填數值，沒有的填null）：
-{"date":null,"hospital":null,"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"gfr2":null,"bun":null,"upcr":null,"urine_creatinine":null,"urine_protein":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"ne_pct":null,"ly_pct":null,"mo_pct":null,"eo_pct":null,"ba_pct":null,"note":null}`});
+{"date":null,"hospital":null,"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"gfr2":null,"bun":null,"upcr":null,"urine_creatinine":null,"urine_protein":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"ne_pct":null,"ly_pct":null,"mo_pct":null,"eo_pct":null,"ba_pct":null,"ne_abs":null,"ly_abs":null,"mo_abs":null,"eo_abs":null,"ba_abs":null,"hbsag":null,"anti_hcv":null,"note":null}`});
 
       const rawText = await callClaude([{role:"user",content}], 1200);
       console.log("Raw text:",rawText.slice(0,500));
