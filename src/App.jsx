@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v3.9";
+const VERSION = "v4.0";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -288,6 +288,12 @@ const LAB_STATUS = {
   fe:         {warn:170, alert:200, unit:"ug/dL", label:"鐵 Fe", low:60},
   uibc:       {warn:370, alert:400, unit:"ug/dL", label:"UIBC", low:null},
   fe_sat:     {warn:50,  alert:60,  unit:"%",     label:"鐵飽和度", low:15},
+  // 白血球分類
+  ne_pct:     {warn:76.6,alert:85,  unit:"%",     label:"嗜中性球%", low:43.7},
+  ly_pct:     {warn:43.5,alert:50,  unit:"%",     label:"淋巴球%", low:16.0},
+  mo_pct:     {warn:12.5,alert:15,  unit:"%",     label:"單核球%", low:4.5},
+  eo_pct:     {warn:7.9, alert:10,  unit:"%",     label:"嗜酸性球%", low:null},
+  ba_pct:     {warn:1.4, alert:2.0, unit:"%",     label:"嗜鹼性球%", low:null},
 };
 
 const getStatus = (key, val) => {
@@ -337,6 +343,8 @@ const ALL_TRACK_ITEMS = [
   {key:"ast",label:"AST"},
   {key:"rbc",label:"RBC"},
   {key:"hct",label:"Hct"},
+  {key:"ne_pct",label:"嗜中性球%"},
+  {key:"ly_pct",label:"淋巴球%"},
 ];
 
 // 影像檢查類型
@@ -627,46 +635,73 @@ export default function HealthJournal(){
    mpv=MPV（平均血小板容積）
 3. 數值只填數字，不要單位
 4. 找不到的欄位填null
-5. 越南單位mmol/L請×18換算為mg/dL
+5. 單位換算規則（非常重要，必須正確換算）：
+
+   血糖/葡萄糖 mmol/L → mg/dL：×18.016
+   膽固醇/HDL/LDL/TG mmol/L → mg/dL：×38.67
+   肌酸酐 μmol/L或umol/L → mg/dL：÷88.4
+   尿酸 μmol/L或umol/L → mg/dL：÷59.48
+   尿素/BUN mmol/L → mg/dL：×2.8（注意：越南報告的Urea mmol/L換算BUN）
+   鈣 mmol/L → mg/dL：×4.008
+   磷 mmol/L → mg/dL：×3.097
+   鎂 mmol/L → mg/dL：×2.431
+   血紅素/Hb g/L → g/dL：÷10
+   MCHC g/L → g/dL：÷10
+   總膽紅素 μmol/L → mg/dL：÷17.1
+   直接膽紅素 μmol/L → mg/dL：÷17.1
+   白蛋白 g/L → g/dL：÷10
+   總蛋白 g/L → g/dL：÷10
+   電解質 Na/K/Cl mmol/L = mEq/L（不需換算）
+   HCT：若為小數（0.453）請×100轉成百分比（45.3）
+   WBC/RBC/PLT：G/L = 10³/μL（不需換算數值）
+
 6. 支援多種報告格式：
-   - 台灣醫院文字格式：「ALT: 45 U/L」
-   - DxC 700 AU 機器格式：「ALT 43」「CRE 0.82」
-   - 表格格式：Test Name / Result 欄位
-7. DxC 700 AU 特殊欄位對應：
-   amy=AMY（澱粉酶）
-   ck=CK（肌酸激酶）
-   ggt=GGT
-   fe=FE（鐵）
-   lip=LIP（脂肪酶）
-   tp=TP（總蛋白）
+   台灣格式：「ALT: 45 U/L」
+   越南格式：「ALT(GPT): 54 U/L」「Creatinine: 69.5 μmol/L」
+   DxC 700 AU：「ALT 43」「CRE 0.82」
+
+7. 欄位對應（補充）：
+   amy=AMY/Amylase
+   ck=CK
+   ggt=GGT/Gamma-GT
+   fe=FE/Iron/Sắt
+   lip=LIP/Lipase
+   tp=TP/Total Protein/Protein toàn phần（若g/L請÷10）
    ldh=LDH
-   k=K（鉀）
-   ag_ratio=A/G（白球蛋白比值）
-   alb=ALB（白蛋白）
+   k=K/Potassium/Kali
+   ag_ratio=A/G Ratio
+   alb=ALB/Albumin（若g/L請÷10）
    crp=CRP
-   mg=MG（鎂）
+   mg=MG/Magnesium（若mmol/L請×2.431）
    uibc=UIBC
-   na=Na（鈉）
+   na=Na/Sodium/Natri
    tibc=TIBC
    alp=ALP
-   dbil=DBILC/Direct Bilirubin
-   phos=PHOS（磷）
-   tbil=TBILC/Total Bilirubin
-   bun=BUN
-   ca=CA（鈣）
-   cl=Cl/CL（氯）
-   glob=GLO/Globulin（球蛋白）
-   fe_sat=FE_sat（鐵飽和度）
-   creatinine=CRE/Creatinine（肌酸酐）
-   uric_acid=UA/Uric Acid（尿酸）
-   glucose_ac=GLU/Glucose（血糖）
-   cholesterol=CHOL/Cholesterol（膽固醇）
+   dbil=DBILC/Direct Bilirubin（若μmol/L請÷17.1）
+   phos=PHOS/Phosphorus（若mmol/L請×3.097）
+   tbil=TBILC/Total Bilirubin（若μmol/L請÷17.1）
+   bun=BUN/Urea（Urea mmol/L請×2.8換算BUN mg/dL）
+   ca=CA/Calcium（若mmol/L請×4.008）
+   cl=Cl/Chloride
+   glob=GLO/Globulin（若g/L請÷10）
+   fe_sat=FE_sat/Iron Saturation
+   creatinine=CRE/Creatinine（若μmol/L請÷88.4）
+   uric_acid=UA/Uric Acid（若μmol/L請÷59.48）
+   glucose_ac=GLU/Glucose/HbA1c旁的血糖（若mmol/L請×18.016）
+   cholesterol=CHOL/Total Cholesterol（若mmol/L請×38.67）
+   hb=HGB/Hemoglobin（若g/L請÷10）
+   mchc=MCHC（若g/L請÷10）
+   ne_pct=NE%/Neutrophil%/嗜中性球%
+   ly_pct=LY%/Lymphocyte%/淋巴球%
+   mo_pct=MO%/Monocyte%/單核球%
+   eo_pct=EO%/Eosinophil%/嗜酸性球%
+   ba_pct=BA%/Basophil%/嗜鹼性球%
 
 報告內容：
 ${textPart}
 
 只回傳JSON格式，包含所有找到的欄位（有值的填數值，沒有的填null）：
-{"date":null,"hospital":null,"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"gfr2":null,"bun":null,"upcr":null,"urine_creatinine":null,"urine_protein":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"note":null}`});
+{"date":null,"hospital":null,"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"gfr2":null,"bun":null,"upcr":null,"urine_creatinine":null,"urine_protein":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"ne_pct":null,"ly_pct":null,"mo_pct":null,"eo_pct":null,"ba_pct":null,"note":null}`});
 
       const rawText = await callClaude([{role:"user",content}], 1200);
       console.log("Raw text:",rawText.slice(0,500));
