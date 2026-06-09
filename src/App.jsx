@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.7";
+const VERSION = "v4.8";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -2673,7 +2673,8 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
     {key:"home",label:"首頁",icon:<HomeIcon/>},
     {key:"trend",label:"趨勢",icon:<TrendIcon/>},
     {key:"record",label:"記錄",icon:<RecordIcon/>},
-    {key:"ai",label:"AI分析",icon:<AIIcon/>},
+    {key:"ai",label:"AI",icon:<AIIcon/>},
+    {key:"knowledge",label:"知識",icon:<span style={{fontSize:18}}>📚</span>},
     {key:"setting",label:"設定",icon:<SettingIcon/>},
   ];
 
