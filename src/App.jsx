@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.0";
+const VERSION = "v4.1";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1573,7 +1573,14 @@ ${textPart}
                         <span style={{fontSize:12,color:C.textMuted}}>{record.hospital}</span>
                         {record.fasting&&<span style={{fontSize:10,color:C.textMuted}}>({record.fasting})</span>}
                       </div>
-                      <div style={{fontSize:12,color:C.green}}>{record._label}</div>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <div style={{fontSize:12,color:C.green}}>{record._label}</div>
+                        {record._type==="lab"&&(
+                          <div style={{fontSize:10,color:C.textMuted,background:C.bg,borderRadius:10,padding:"1px 6px"}}>
+                            {Object.keys(record).filter(k=>!['id','date','hospital','country','doctor','fasting','note','extra_data','source_country','createdAt','_type','_icon','_label','_summary'].includes(k)&&record[k]!==null&&record[k]!==undefined&&record[k]!=="").length}筆
+                          </div>
+                        )}
+                      </div>
                       {!isExpanded&&record._summary&&(
                         <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>{record._summary}</div>
                       )}
