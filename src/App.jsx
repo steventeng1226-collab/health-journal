@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.2";
+const VERSION = "v4.6";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -330,7 +330,7 @@ const StatusDot = ({status}) => {
 };
 
 // 預設追蹤項目
-const DEFAULT_TRACK = ["hba1c","glucose_ac","alt","hdl","upcr","ldl","uric_acid","creatinine"];
+const DEFAULT_TRACK = ["hba1c","glucose_ac","alt","hdl","upcr","ldl","uric_acid","creatinine","crp","ggt","ck","bun","na","k","cl","mg","ca"];
 
 // 所有可追蹤項目
 const ALL_TRACK_ITEMS = [
@@ -354,6 +354,15 @@ const ALL_TRACK_ITEMS = [
   {key:"hct",label:"Hct"},
   {key:"ne_pct",label:"嗜中性球%"},
   {key:"ly_pct",label:"淋巴球%"},
+  {key:"crp",label:"CRP發炎"},
+  {key:"ggt",label:"GGT"},
+  {key:"ck",label:"CK肌肉"},
+  {key:"bun",label:"BUN"},
+  {key:"na",label:"鈉 Na"},
+  {key:"k",label:"鉀 K"},
+  {key:"cl",label:"氯 Cl"},
+  {key:"mg",label:"鎂 Mg"},
+  {key:"ca",label:"鈣 Ca"},
 ];
 
 // 影像檢查類型
@@ -421,6 +430,18 @@ export default function HealthJournal(){
     catch(e){ return DEFAULT_TRACK; }
   });
   const [showTrackPicker,setShowTrackPicker]=useState(false);
+  const [trendAiKey,setTrendAiKey]=useState(null);
+  const [labInfoKey,setLabInfoKey]=useState(null);
+  const [kbNotes,setKbNotes]=useState(()=>{
+    try{const s=localStorage.getItem("hj_kb");return s?JSON.parse(s):[];}
+    catch(e){return[];}
+  });
+  const [kbForm,setKbForm]=useState({title:"",category:"飲食",content:"",photo:null});
+  const [kbAiLoading,setKbAiLoading]=useState(false);
+  const [showKbForm,setShowKbForm]=useState(false);
+  const kbPhotoRef=React.useRef();
+  const [trendAiResult,setTrendAiResult]=useState({});
+  const [trendAiLoading,setTrendAiLoading]=useState(false);
   const [imagingForm,setImagingForm]=useState({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
   const [imagingPhotos,setImagingPhotos]=useState([]);
   const imagingPhotoRef = React.useRef();
@@ -473,7 +494,11 @@ export default function HealthJournal(){
       if(glu?.data)setGlucoseHistory(glu.data);
       if(bp?.data)setBpHistory(bp.data);
       if(wt?.data)setWeightHistory(wt.data);
-      if(imaging?.data)setImagingHistory(imaging.data);
+      if(imaging?.data){
+        // 過濾空白列（id為空的）
+        const validImaging = imaging.data.filter(r => r.id && r.date && r.type);
+        setImagingHistory(validImaging);
+      }
       setSyncStatus("synced");
       setLastSync(new Date());
       // 從 Sheets 恢復設定
@@ -865,6 +890,228 @@ ${textPart}
   const latestWeight=weightHistory.length>0?weightHistory[weightHistory.length-1]:null;
   const latestLab=labHistory.length>0?labHistory[labHistory.length-1]:null;
   const overdueReminders=reminders.filter(r=>new Date(r.nextDate)<=new Date());
+
+
+
+// ── 檢驗項目說明資料庫 ────────────────────────────────
+const LAB_INFO = {
+  hba1c: {
+    name:"HbA1c（糖化血色素）",
+    desc:"反映過去2-3個月的平均血糖水平，是糖尿病診斷和控制的重要指標。",
+    range:"正常 <5.7%　糖尿病前期 5.7-6.4%　糖尿病 ≥6.5%",
+    meaning:"數值越高代表長期血糖控制越差，與心血管、腎臟、視網膜等併發症風險相關。",
+    improve:"減少精緻澱粉和甜食、規律運動、維持體重、睡眠充足",
+    related:"與空腹血糖、體重、三酸甘油酯密切相關",
+  },
+  glucose_ac: {
+    name:"空腹血糖（Fasting Glucose）",
+    desc:"禁食8小時後測量的血糖值，反映身體基礎血糖調節能力。",
+    range:"正常 70-99 mg/dL　前期 100-125　糖尿病 ≥126",
+    meaning:"空腹血糖偏高代表胰島素阻抗或胰臟功能下降，是T2D最早期指標之一。",
+    improve:"規律運動、減重、低GI飲食、避免睡前進食",
+    related:"與HbA1c、體重、三酸甘油酯、HDL相關",
+  },
+  alt: {
+    name:"ALT（丙胺酸轉胺酶）",
+    desc:"主要存在於肝細胞中，肝細胞受損時釋放入血液，是最敏感的肝功能指標。",
+    range:"正常 男性 <44 U/L　女性 <32 U/L",
+    meaning:"升高常見於脂肪肝、病毒性肝炎、藥物影響、過度飲酒。輕度升高（1-3倍）需追蹤。",
+    improve:"減重（尤其腹部脂肪）、戒酒、避免不必要藥物、規律運動",
+    related:"與體重、血脂、GGT密切相關",
+  },
+  ast: {
+    name:"AST（天門冬胺酸轉胺酶）",
+    desc:"存在於肝臟、心臟、肌肉中，比ALT更廣泛，特異性較低。",
+    range:"正常 <40 U/L",
+    meaning:"AST/ALT比值>2可能提示酒精性肝病。運動後AST也可能上升。",
+    improve:"同ALT改善方法",
+    related:"與ALT、CK、LDH相關",
+  },
+  hdl: {
+    name:"HDL-C（高密度脂蛋白）",
+    desc:"俗稱「好的膽固醇」，負責將血管中多餘膽固醇運回肝臟代謝清除。",
+    range:"正常 男性 >40 mg/dL　女性 >50 mg/dL",
+    meaning:"HDL越高越好，偏低代表心血管保護力不足，與T2D、代謝症候群相關。",
+    improve:"有氧運動（最有效）、戒菸、減少反式脂肪、適量飲酒（若無禁忌）",
+    related:"與三酸甘油酯呈反比，與體重、運動量相關",
+  },
+  ldl: {
+    name:"LDL-C（低密度脂蛋白）",
+    desc:"俗稱「壞的膽固醇」，過多時會沉積在血管壁形成動脈硬化斑塊。",
+    range:"正常 <130 mg/dL　T2D患者建議 <100 mg/dL",
+    meaning:"LDL偏高是心肌梗塞、腦中風的主要危險因子，T2D患者需嚴格控制。",
+    improve:"減少飽和脂肪和膽固醇、增加纖維攝取、規律運動",
+    related:"與總膽固醇、飲食脂肪攝取相關",
+  },
+  tg: {
+    name:"三酸甘油酯（Triglyceride）",
+    desc:"血液中最主要的脂肪形式，由飲食攝取或肝臟合成，儲存在脂肪細胞中。",
+    range:"正常 <150 mg/dL　邊緣 150-199　偏高 200-499",
+    meaning:"偏高與精緻糖、酒精攝取過多、肥胖、T2D密切相關，增加心血管風險。",
+    improve:"減少精緻糖和酒精、減重、增加omega-3攝取（魚油）",
+    related:"與HDL呈反比，與血糖、體重密切相關",
+  },
+  cholesterol: {
+    name:"總膽固醇（Total Cholesterol）",
+    desc:"血液中所有膽固醇的總和，包含HDL、LDL和其他成分。",
+    range:"正常 <200 mg/dL　邊緣 200-239　偏高 ≥240",
+    meaning:"需配合HDL/LDL比例分析，單純總膽固醇高不一定危險。",
+    improve:"均衡飲食、規律運動",
+    related:"HDL+LDL+其他脂蛋白的總和",
+  },
+  uric_acid: {
+    name:"尿酸（Uric Acid）",
+    desc:"嘌呤代謝的最終產物，由腎臟排出，過高會沉積在關節形成痛風。",
+    range:"正常 男性 3.4-7.6 mg/dL　女性 2.3-6.6",
+    meaning:"偏高與痛風、腎結石、代謝症候群、心血管疾病風險相關。",
+    improve:"多喝水（每天2L以上）、減少紅肉/海鮮/啤酒、減重",
+    related:"與腎功能、體重、飲食習慣相關",
+  },
+  creatinine: {
+    name:"肌酸酐（Creatinine）",
+    desc:"肌肉代謝產物，幾乎完全由腎臟過濾排出，是腎功能的重要指標。",
+    range:"正常 男性 0.7-1.3 mg/dL　女性 0.6-1.1",
+    meaning:"升高代表腎臟過濾功能下降，需配合eGFR一起判斷。",
+    improve:"多喝水、控制血糖血壓（T2D腎臟保護最重要）、避免腎毒性藥物",
+    related:"與eGFR、BUN、UPCR共同評估腎功能",
+  },
+  gfr: {
+    name:"eGFR（估算腎絲球過濾率）",
+    desc:"估算腎臟每分鐘能過濾多少血液，是腎功能最直接的評估指標。",
+    range:"正常 ≥60 mL/min/1.73m²　CKD分期依數值而定",
+    meaning:"數值越低代表腎功能越差，<60持續3個月以上為慢性腎臟病。",
+    improve:"控制血糖、血壓、體重，避免NSAID類止痛藥",
+    related:"與肌酸酐、UPCR、血壓、血糖密切相關",
+  },
+  upcr: {
+    name:"UPCR（尿液蛋白/肌酸酐比值）",
+    desc:"偵測尿液中是否有異常蛋白質，是糖尿病腎病變最早期的敏感指標。",
+    range:"正常 <30 mg/g　微量蛋白尿 30-300　顯性蛋白尿 >300",
+    meaning:"T2D患者UPCR偏高是腎臟早期損傷的警訊，需積極控制血糖血壓。",
+    improve:"嚴格控制血糖（HbA1c<7%）、血壓（<130/80）、ACEI/ARB藥物",
+    related:"與HbA1c、血壓、eGFR密切相關",
+  },
+  tsh: {
+    name:"TSH（甲狀腺促素）",
+    desc:"腦下垂體分泌的激素，調控甲狀腺功能，是甲狀腺疾病的第一線篩檢。",
+    range:"正常 0.34-5.60 uIU/mL",
+    meaning:"偏高=甲狀腺功能低下（疲倦、體重增加）；偏低=甲亢（心跳快、消瘦）。",
+    improve:"甲狀腺疾病需醫師治療，不能自行處理",
+    related:"T2D患者甲狀腺疾病風險較高，建議每年追蹤",
+  },
+  crp: {
+    name:"CRP（C反應蛋白）",
+    desc:"肝臟在急性發炎、感染、組織損傷時大量分泌的蛋白質，是發炎指標。",
+    range:"正常 <1.0 mg/L　輕度發炎 1-3　中度 3-10",
+    meaning:"慢性低度發炎（CRP 1-3）與T2D、心血管疾病、代謝症候群密切相關。",
+    improve:"規律運動、減重、地中海飲食、充足睡眠、戒菸",
+    related:"與血糖、血脂、體重、生活習慣相關",
+  },
+  ggt: {
+    name:"GGT（麩胺轉移酶）",
+    desc:"存在於肝臟、膽管、腎臟中，對脂肪肝和酒精性肝病特別敏感。",
+    range:"正常 男性 <60 U/L　女性 <45 U/L",
+    meaning:"GGT是脂肪肝最敏感的指標之一，飲酒後特別顯著升高。",
+    improve:"戒酒、減重（減少腹部脂肪）、規律運動",
+    related:"與ALT、體重、脂肪肝、飲酒習慣相關",
+  },
+  bun: {
+    name:"BUN（血中尿素氮）",
+    desc:"蛋白質代謝產物，由腎臟排出，反映腎功能和蛋白質攝取量。",
+    range:"正常 7-23 mg/dL",
+    meaning:"偏高可能是腎功能下降或高蛋白飲食；偏低可能是蛋白質攝取不足。",
+    improve:"適量蛋白質攝取、多喝水、控制血糖血壓",
+    related:"與肌酸酐、eGFR共同評估腎功能",
+  },
+  hb: {
+    name:"血紅素 Hb（Hemoglobin）",
+    desc:"紅血球中攜帶氧氣的蛋白質，反映貧血狀態。",
+    range:"正常 男性 13.7-17.0 g/dL",
+    meaning:"偏低代表貧血，可能影響疲勞感和運動能力；與T2D腎臟病變相關。",
+    improve:"補充鐵質、維生素B12、葉酸，治療潛在疾病",
+    related:"與RBC、HCT、MCV相關",
+  },
+  wbc: {
+    name:"WBC（白血球）",
+    desc:"免疫系統的主要細胞，負責對抗感染和異物。",
+    range:"正常 3.6-11.2 x10³/uL",
+    meaning:"偏高可能是感染、發炎、壓力；偏低可能是免疫抑制或骨髓問題。",
+    improve:"維持規律作息、均衡飲食、避免過度疲勞",
+    related:"與CRP、感染狀態相關",
+  },
+  platelet: {
+    name:"血小板（Platelet）",
+    desc:"負責血液凝固和止血的小細胞片段。",
+    range:"正常 130-400 x10³/uL",
+    meaning:"偏低增加出血風險；偏高增加血栓風險。T2D患者血小板功能常有異常。",
+    improve:"均衡飲食、避免NSAID類藥物（影響血小板功能）",
+    related:"與凝血功能、肝功能相關",
+  },
+};
+
+// ── 趨勢分析函數 ──────────────────────────────────────
+const analyzeTrend = (key, data) => {
+  if (!data || data.length < 2) return null;
+  const s = LAB_STATUS[key];
+  if (!s) return null;
+  const last = data[data.length-1]?.v;
+  const prev = data[data.length-2]?.v;
+  const first = data[0]?.v;
+  if (last===undefined || prev===undefined) return null;
+  const lastStatus = getStatus(key, last);
+  const prevStatus = getStatus(key, prev);
+  const diff = last - prev;
+  const diffPct = prev !== 0 ? ((diff/prev)*100).toFixed(1) : 0;
+  const isReverse = s.reverse; // HDL/eGFR 等越高越好
+
+  // 趨勢方向
+  let direction, color, icon, message;
+
+  if (Math.abs(diffPct) < 3) {
+    direction = "stable";
+    icon = "➡️";
+    color = C.textMuted;
+    message = "持平";
+  } else if ((!isReverse && diff > 0) || (isReverse && diff < 0)) {
+    direction = "worse";
+    icon = lastStatus === "alert" ? "🔴" : lastStatus === "warn" ? "⚠️" : "📈";
+    color = lastStatus === "alert" ? C.red : lastStatus === "warn" ? C.amber : C.textMuted;
+    message = `上升 ${Math.abs(diffPct)}%`;
+  } else {
+    direction = "better";
+    icon = lastStatus === "ok" ? "✅" : "📉";
+    color = lastStatus === "ok" ? C.green : C.amber;
+    message = `下降 ${Math.abs(diffPct)}%`;
+  }
+
+  // 建議文字
+  const suggestions = {
+    hba1c: {worse:"減少精緻澱粉、增加運動", better:"繼續維持良好飲食習慣", stable:"維持目前生活方式"},
+    glucose_ac: {worse:"注意睡前飲食、減少甜食", better:"血糖控制改善中", stable:"維持空腹規律"},
+    alt: {worse:"注意飲酒、避免油膩食物", better:"肝功能改善中", stable:"定期追蹤"},
+    hdl: {worse:"增加有氧運動、減少反式脂肪", better:"好膽固醇上升中", stable:"持續運動維持"},
+    ldl: {worse:"減少飽和脂肪、增加纖維攝取", better:"壞膽固醇下降中", stable:"定期追蹤"},
+    tg: {worse:"減少精緻糖和酒精", better:"三酸甘油酯改善中", stable:"定期追蹤"},
+    uric_acid: {worse:"多喝水、減少紅肉和海鮮", better:"尿酸下降中", stable:"定期追蹤"},
+    creatinine: {worse:"注意腎臟健康、多補充水分", better:"腎功能指標改善", stable:"定期追蹤"},
+    upcr: {worse:"注意腎臟早期病變", better:"蛋白尿指標改善", stable:"定期追蹤"},
+    crp: {worse:"注意發炎來源、改善生活習慣", better:"發炎指標下降", stable:"定期追蹤"},
+    ggt: {worse:"注意脂肪肝或飲酒影響", better:"肝膽指標改善", stable:"定期追蹤"},
+    ck: {worse:"避免過度激烈運動", better:"肌肉壓力減少", stable:"定期追蹤"},
+    bun: {worse:"注意腎功能或蛋白質攝取", better:"腎功能指標改善", stable:"定期追蹤"},
+    na: {worse:"注意電解質平衡", better:"鈉值趨於正常", stable:"維持均衡飲食"},
+    k: {worse:"注意電解質平衡", better:"鉀值趨於正常", stable:"維持均衡飲食"},
+    mg: {worse:"考慮補充鎂", better:"鎂值改善", stable:"維持均衡飲食"},
+    ca: {worse:"注意鈣質攝取", better:"鈣值改善", stable:"維持均衡飲食"},
+  };
+
+  const suggest = suggestions[key]?.[direction] || "定期追蹤";
+
+  // 近幾次數值
+  const recent = data.slice(-3).map(d => d.v);
+
+  return { direction, icon, color, message, suggest, recent, last, lastStatus, diffPct };
+};
 
   // ── 折線圖 ─────────────────────────────────────────────
   // 顏色規則：綠色=正常 紅色=超標 黃色=規格線
@@ -1393,9 +1640,11 @@ ${textPart}
                 <div className="card" style={{marginBottom:10}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                     <div className="card-title" style={{marginBottom:0}}>追蹤項目</div>
-                    <button className="btn-sm" onClick={()=>setShowTrackPicker(p=>!p)}>
-                      {showTrackPicker?"收起":"＋ 新增/移除"}
-                    </button>
+                    <div style={{display:"flex",gap:6}}>
+                      <button className="btn-sm" onClick={()=>setShowTrackPicker(p=>!p)}>
+                        {showTrackPicker?"收起":"＋ 新增/移除"}
+                      </button>
+                    </div>
                   </div>
                   {showTrackPicker&&(
                     <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
@@ -1434,17 +1683,91 @@ ${textPart}
                     <div key={key} className="card" style={{marginBottom:10}}>
                       <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
                         <span style={{fontSize:13,fontWeight:600,color:colors[colorIdx]}}>{s.label}</span>
-                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
                           <span style={{fontSize:11,color:C.textMuted}}>{s.unit}</span>
                           {data.length>0&&<StatusDot status={getStatus(key,data[data.length-1].v)}/>}
+                          {/* 上下移動按鈕 */}
+                          <div style={{display:"flex",gap:2}}>
+                            <button onClick={()=>{
+                              const idx=trackItems.indexOf(key);
+                              if(idx>0){
+                                const updated=[...trackItems];
+                                [updated[idx-1],updated[idx]]=[updated[idx],updated[idx-1]];
+                                setTrackItems(updated);
+                                localStorage.setItem("hj_track",JSON.stringify(updated));
+                                api.saveSetting("trackItems",updated);
+                              }
+                            }} style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,color:C.textMuted,padding:"1px 6px",cursor:"pointer",fontSize:11}}>↑</button>
+                            <button onClick={()=>{
+                              const idx=trackItems.indexOf(key);
+                              if(idx<trackItems.length-1){
+                                const updated=[...trackItems];
+                                [updated[idx],updated[idx+1]]=[updated[idx+1],updated[idx]];
+                                setTrackItems(updated);
+                                localStorage.setItem("hj_track",JSON.stringify(updated));
+                                api.saveSetting("trackItems",updated);
+                              }
+                            }} style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,color:C.textMuted,padding:"1px 6px",cursor:"pointer",fontSize:11}}>↓</button>
+                          </div>
                         </div>
                       </div>
                       <LineChart datasets={[{data}]}
                         min={chartMin} max={chartMax} refLines={refs} height={100}
                         statusKey={key}/>
-                      <div style={{fontSize:11,color:C.textMuted,marginTop:4,textAlign:"right"}}>
-                        最新：{data[data.length-1]?.v} {s.unit}
-                      </div>
+                      {/* 趨勢分析說明 */}
+                      {(()=>{
+                        const trend = analyzeTrend(key, data);
+                        if (!trend) return null;
+                        return (
+                          <div style={{marginTop:8,padding:"8px 10px",background:C.bg,borderRadius:8,border:`1px solid ${C.border}`}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                              <div style={{fontSize:12,color:trend.color,fontWeight:600}}>
+                                {trend.icon} {trend.message}
+                                <span style={{fontSize:11,color:C.textMuted,marginLeft:6}}>
+                                  近{trend.recent.length}次：{trend.recent.join(" → ")}
+                                </span>
+                              </div>
+                            </div>
+                            <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>
+                              💡 {trend.suggest}
+                            </div>
+                            {/* AI 深度分析 */}
+                            {trendAiResult[key] ? (
+                              <div style={{fontSize:11,color:C.text,lineHeight:1.7,padding:"6px 8px",background:"rgba(46,204,138,0.05)",borderRadius:6,border:`1px solid ${C.green}22`}}>
+                                🤖 {trendAiResult[key]}
+                                <button onClick={()=>setTrendAiResult(p=>({...p,[key]:null}))}
+                                  style={{display:"block",marginTop:4,fontSize:10,color:C.textMuted,background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}>
+                                  收起
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                disabled={trendAiLoading && trendAiKey===key}
+                                onClick={async()=>{
+                                  const apiKey=localStorage.getItem("hj_apikey")||"";
+                                  if(!apiKey){showToast("⚠️ 請先在設定Tab輸入API金鑰");return;}
+                                  setTrendAiKey(key);
+                                  setTrendAiLoading(true);
+                                  try{
+                                    const recentData=data.slice(-5).map(d=>`${fmtDate(d.date)}:${d.v}${s.unit}`).join(", ");
+                                    const prompt=`你是健康顧問，用2-3句繁體中文分析這個趨勢，針對55歲男性T2D前期患者。
+指標：${s.label}（正常範圍：${s.low||0}-${s.warn} ${s.unit}）
+近期數值：${recentData}
+請給出：1.趨勢評估 2.一個具體行動建議。不超過60字。`;
+                                    const result=await callClaude([{role:"user",content:prompt}],300);
+                                    setTrendAiResult(p=>({...p,[key]:result}));
+                                  }catch(e){
+                                    showToast("❌ AI分析失敗："+e.message);
+                                  }
+                                  setTrendAiLoading(false);
+                                }}
+                                style={{fontSize:11,color:C.green,background:"transparent",border:`1px solid ${C.green}44`,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}>
+                                {trendAiLoading && trendAiKey===key ? "⏳ 分析中..." : "🤖 AI深度分析"}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
