@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.8";
+const VERSION = "v4.9";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -367,9 +367,9 @@ const ALL_TRACK_ITEMS = [
 
 // 影像檢查類型
 const IMAGING_TYPES = [
-  "腹部超音波","心臟超音波","頸動脈超音波",
-  "頭部CT","腹部CT","心臟CT","肺部CT",
-  "大腸鏡","胃鏡","X光","其他"
+  "腹部超音波","心臟超音波","頸動脈超音波","甲狀腺超音波",
+  "頭部CT","腹部CT","心臟CT","肺部CT","冠狀動脈CT",
+  "大腸鏡","胃鏡","X光","骨密度","眼底檢查","其他"
 ];
 const KNOWLEDGE_ITEMS=[
   {key:"hba1c",title:"HbA1c 糖化血色素",icon:"🩸",color:C.red,desc:"反映過去3個月的平均血糖水準，是診斷糖尿病前期的黃金指標。不受單次血糖波動影響。",levels:[{label:"正常",range:"< 5.7%",color:C.green},{label:"糖尿病前期⚠️",range:"5.7–6.4%",color:C.amber},{label:"糖尿病",range:"≥ 6.5%",color:C.red}],yourValue:"5.8%",yourStatus:"warn",tips:["每3個月追蹤一次","減少精緻碳水：白飯、麵包、含糖飲料","飯後30分鐘步行15分鐘效果最佳","體重每減1kg，HbA1c約可降0.1%"]},
@@ -852,6 +852,10 @@ ${textPart}
   const saveImaging = async () => {
     if (!imagingForm.hospital) { showToast("⚠️ 請輸入醫院名稱"); return; }
     if (!imagingForm.finding) { showToast("⚠️ 請輸入報告結論"); return; }
+    // 壓縮照片存入 driveUrl 欄位（base64格式，最多3張用|||分隔）
+    const photoData = imagingPhotos.length > 0
+      ? imagingPhotos.map(p => p.data || p).join('|||')
+      : '';
     const r = await api.post("append", "imaging", {
       date: imagingForm.date,
       type: imagingForm.type,
@@ -860,13 +864,15 @@ ${textPart}
       finding: imagingForm.finding,
       recommendation: imagingForm.recommendation,
       nextDate: imagingForm.nextDate,
+      driveUrl: photoData,
       note: imagingForm.note,
     });
     if (r?.success) {
-      showToast("✅ 影像檢查記錄已儲存");
+      showToast("✅ 影像檢查記錄已儲存" + (imagingPhotos.length>0?`（含${imagingPhotos.length}張照片）`:""));
       saveHospital(imagingForm.hospital);
       setImagingForm({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
       setImagingPhotos([]);
+      loadData();
     } else showToast("❌ 儲存失敗");
   };
 
@@ -1047,6 +1053,24 @@ const LAB_INFO = {
     improve:"均衡飲食、避免NSAID類藥物（影響血小板功能）",
     related:"與凝血功能、肝功能相關",
   },
+};
+
+
+// ── 圖片壓縮工具 ──────────────────────────────────────
+const compressImage = (dataUrl, maxWidth=800, quality=0.7) => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.src = dataUrl;
+  });
 };
 
 // ── 趨勢分析函數 ──────────────────────────────────────
@@ -2004,6 +2028,30 @@ const analyzeTrend = (key, data) => {
                     ):(
                       // 影像檢查展開
                       <>
+                        {/* 照片顯示 */}
+                        {record.driveUrl&&(()=>{
+                          const photos = record.driveUrl.split('|||').filter(p=>p&&p.startsWith('data:'));
+                          if(photos.length===0)return null;
+                          return(
+                            <div style={{marginBottom:12}}>
+                              <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>📷 影像照片（{photos.length}張）</div>
+                              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                                {photos.map((photo,i)=>(
+                                  <div key={i} style={{position:"relative"}}>
+                                    <img src={photo} alt={`影像${i+1}`}
+                                      style={{width:100,height:100,objectFit:"cover",borderRadius:8,cursor:"pointer",border:`1px solid ${C.border}`}}
+                                      onClick={()=>{
+                                        // 點擊放大顯示
+                                        const w=window.open();
+                                        w.document.write(`<img src="${photo}" style="max-width:100%;max-height:100vh;">`);
+                                      }}/>
+                                    <div style={{position:"absolute",bottom:2,right:2,fontSize:9,color:"white",background:"rgba(0,0,0,0.6)",borderRadius:4,padding:"1px 4px"}}>🔍點放大</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
                         {record.finding&&(
                           <div style={{marginBottom:8}}>
                             <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>報告結論</div>
@@ -2352,10 +2400,14 @@ ${mealText||"（請從圖片辨識食物）"}
               )}
               <input ref={imagingPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}}
                 onChange={async e=>{
+                  showToast("⏳ 壓縮圖片中...");
                   for(const file of Array.from(e.target.files).slice(0,3-imagingPhotos.length)){
                     const dataUrl=await new Promise(res=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.readAsDataURL(file);});
-                    setImagingPhotos(prev=>[...prev,dataUrl].slice(0,3));
+                    const compressed=await compressImage(dataUrl, 800, 0.7);
+                    const kb=Math.round(compressed.length*0.75/1024);
+                    setImagingPhotos(prev=>[...prev,{data:compressed,size:kb}].slice(0,3));
                   }
+                  showToast("✅ 圖片壓縮完成");
                   e.target.value="";
                 }}/>
             </div>
