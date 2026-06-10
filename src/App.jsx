@@ -303,6 +303,25 @@ const LAB_STATUS = {
   // 病毒篩檢
   hbsag:      {warn:null,alert:null,unit:"",       label:"HBsAg",     low:null},
   anti_hcv:   {warn:null,alert:null,unit:"",       label:"Anti-HCV",  low:null},
+  anti_hbs:   {warn:null,alert:null,unit:"",       label:"Anti-HBs",  low:null},
+  // 腫瘤標記
+  cea:        {warn:5.0, alert:10,  unit:"ng/mL",  label:"CEA",       low:null},
+  afp:        {warn:7.0, alert:20,  unit:"ng/mL",  label:"AFP",       low:null},
+  psa:        {warn:4.0, alert:10,  unit:"ng/mL",  label:"PSA",       low:null},
+  // 免疫
+  asto:       {warn:null,alert:null,unit:"",        label:"ASTO",      low:null},
+  rf:         {warn:null,alert:null,unit:"",        label:"RF類風濕因子",low:null},
+  // 尿液分析（定性）
+  urine_glucose:      {warn:null,alert:null,unit:"",label:"尿糖",      low:null},
+  urine_bilirubin:    {warn:null,alert:null,unit:"",label:"尿膽紅素",  low:null},
+  urine_ketone:       {warn:null,alert:null,unit:"",label:"尿酮體",    low:null},
+  urine_nitrite:      {warn:null,alert:null,unit:"",label:"亞硝酸鹽",  low:null},
+  urine_urobilinogen: {warn:null,alert:null,unit:"",label:"尿膽素原",  low:null},
+  urine_blood:        {warn:null,alert:null,unit:"",label:"尿潛血",    low:null},
+  urine_leukocyte:    {warn:null,alert:null,unit:"",label:"尿白血球",  low:null},
+  // 尿液定量
+  urine_sg:   {warn:1.030,alert:1.035,unit:"",     label:"尿比重",    low:1.003},
+  urine_ph:   {warn:8.0, alert:9.0,  unit:"",      label:"尿液pH",    low:4.5},
 };
 
 const getStatus = (key, val) => {
@@ -367,20 +386,94 @@ const ALL_TRACK_ITEMS = [
 
 // 影像檢查類型
 const IMAGING_TYPES = [
-  "腹部超音波","心臟超音波","頸動脈超音波","甲狀腺超音波",
-  "頭部CT","腹部CT","心臟CT","肺部CT","冠狀動脈CT",
-  "大腸鏡","胃鏡","X光","骨密度","眼底檢查","其他"
+  "腹部超音波","心臟超音波","頸動脈超音波",
+  "頭部CT","腹部CT","心臟CT","肺部CT",
+  "大腸鏡","胃鏡","X光","其他"
 ];
 const KNOWLEDGE_ITEMS=[
-  {key:"hba1c",title:"HbA1c 糖化血色素",icon:"🩸",color:C.red,desc:"反映過去3個月的平均血糖水準，是診斷糖尿病前期的黃金指標。不受單次血糖波動影響。",levels:[{label:"正常",range:"< 5.7%",color:C.green},{label:"糖尿病前期⚠️",range:"5.7–6.4%",color:C.amber},{label:"糖尿病",range:"≥ 6.5%",color:C.red}],yourValue:"5.8%",yourStatus:"warn",tips:["每3個月追蹤一次","減少精緻碳水：白飯、麵包、含糖飲料","飯後30分鐘步行15分鐘效果最佳","體重每減1kg，HbA1c約可降0.1%"]},
-  {key:"glucose",title:"空腹血糖 Glucose AC",icon:"🍬",color:C.amber,desc:"空腹8小時後的血糖值。Accu-Chek顯示mmol/L，APP自動換算成mg/dL（×18）。",levels:[{label:"正常",range:"70–99 mg/dL",color:C.green},{label:"前期⚠️",range:"100–125 mg/dL",color:C.amber},{label:"糖尿病",range:"≥ 126 mg/dL",color:C.red}],yourValue:"104 mg/dL",yourStatus:"warn",tips:["晚餐後不吃宵夜","避免含糖飲料（包括果汁）","有氧運動可改善胰島素敏感性"]},
-  {key:"alt",title:"ALT 丙胺酸轉胺酶",icon:"🫀",color:C.amber,desc:"肝細胞損傷時釋放的酵素，是肝功能最敏感的指標。輕微偏高常見於脂肪肝。",levels:[{label:"正常",range:"4–44 U/L",color:C.green},{label:"輕微偏高",range:"45–80 U/L",color:C.amber},{label:"明顯異常",range:"> 80 U/L",color:C.red}],yourValue:"45 U/L",yourStatus:"warn",tips:["減重5-10%可顯著改善脂肪肝","避免過量飲酒","多吃十字花科蔬菜"]},
-  {key:"hdl",title:"HDL 好膽固醇",icon:"💚",color:C.green,desc:"負責將血管中多餘膽固醇運回肝臟代謝，數值越高越保護心血管。",levels:[{label:"理想(男)",range:"> 40 mg/dL",color:C.green},{label:"偏低⚠️",range:"< 40 mg/dL",color:C.amber}],yourValue:"38.5 mg/dL",yourStatus:"warn",tips:["規律有氧運動是提升HDL最有效方法","攝取健康脂肪：橄欖油、堅果","減少反式脂肪"]},
-  {key:"ldl",title:"LDL 壞膽固醇",icon:"⚠️",color:C.blue,desc:"容易沉積在血管壁造成動脈硬化，是心血管疾病主要風險因子。",levels:[{label:"理想",range:"< 100 mg/dL",color:C.green},{label:"正常",range:"100–129 mg/dL",color:C.green},{label:"偏高",range:"130–159 mg/dL",color:C.amber},{label:"高",range:"≥ 160 mg/dL",color:C.red}],yourValue:"50.1 mg/dL",yourStatus:"ok",tips:["維持現有飲食習慣","減少飽和脂肪：紅肉、全脂乳品","增加膳食纖維：燕麥、豆類"]},
-  {key:"uricAcid",title:"尿酸 Uric Acid",icon:"🔬",color:C.blue,desc:"嘌呤代謝產物，過高會在關節沉積引起痛風，也與腎功能相關。",levels:[{label:"正常(男)",range:"4.4–7.6 mg/dL",color:C.green},{label:"偏高",range:"7.6–9.0 mg/dL",color:C.amber},{label:"高風險",range:"≥ 9.0 mg/dL",color:C.red}],yourValue:"5.4 mg/dL",yourStatus:"ok",tips:["每天喝水2000ml以上","限制內臟類食物","避免啤酒和含糖飲料"]},
-  {key:"creatinine",title:"肌酸酐 Creatinine",icon:"🫘",color:C.blue,desc:"腎臟過濾排出的代謝物，是評估腎功能的基本指標。",levels:[{label:"正常(男)",range:"0.7–1.3 mg/dL",color:C.green},{label:"輕度異常",range:"1.3–2.0 mg/dL",color:C.amber}],yourValue:"0.84 mg/dL",yourStatus:"ok",tips:["多喝水保護腎臟","控制血糖","避免長期服用止痛藥"]},
-  {key:"upcr",title:"UPCR 尿蛋白肌酸酐比值",icon:"💧",color:C.amber,desc:"偵測早期腎臟損傷的敏感指標，正常腎臟不應讓蛋白質漏出。",levels:[{label:"正常",range:"< 30 mg/g",color:C.green},{label:"微量蛋白尿",range:"30–300 mg/g",color:C.amber},{label:"大量蛋白尿",range:"≥ 300 mg/g",color:C.red}],yourValue:"76.40 mg/g",yourStatus:"warn",tips:["控制血糖是保護腎臟最重要的事","控制血壓（目標<130/80）","每6個月複查"]},
-  {key:"tsh",title:"TSH 甲狀腺促素",icon:"🦋",color:C.green,desc:"腦下垂體分泌用來控制甲狀腺功能的激素，你的數值完全正常。",levels:[{label:"正常",range:"0.34–5.60 uIU/mL",color:C.green},{label:"偏低(亢進)",range:"< 0.34",color:C.amber},{label:"偏高(低下)",range:"> 5.60",color:C.amber}],yourValue:"1.979 uIU/mL",yourStatus:"ok",tips:["甲狀腺功能完全正常","每年追蹤一次即可"]},
+  // 🩸 血糖
+  {key:"hba1c",group:"🩸 血糖",title:"HbA1c 糖化血色素",icon:"🩸",color:C.red,fullName:"Glycated Hemoglobin",desc:"反映過去2-3個月的平均血糖水準，不受單次波動影響，是糖尿病診斷與追蹤的黃金指標。",range:"正常 < 5.7%　糖尿病前期 5.7–6.4%　糖尿病 ≥ 6.5%",high:"長期血糖偏高，增加心血管、腎臟、視網膜等併發症風險。",low:"通常無問題，過低（<4%）可能代表溶血性貧血。",tips:["每3個月追蹤一次","減少精緻澱粉：白飯、麵包、含糖飲料","飯後30分鐘散步15分鐘","體重每減1kg，HbA1c約可降0.1%"],related:"與空腹血糖、體重、三酸甘油酯密切相關"},
+  {key:"glucose_ac",group:"🩸 血糖",title:"空腹血糖",icon:"🍬",color:C.amber,fullName:"Fasting Glucose (AC)",desc:"禁食8小時後測量的血糖值，反映身體基礎血糖調節能力。",range:"正常 70–99 mg/dL　前期 100–125　糖尿病 ≥ 126",high:"胰島素阻抗或胰臟功能下降，T2D最早期指標之一。",low:"< 70 mg/dL 為低血糖，需立即補充糖分。",tips:["晚餐後不吃宵夜","避免含糖飲料包含果汁","有氧運動改善胰島素敏感性"],related:"與HbA1c、體重、三酸甘油酯相關"},
+  {key:"glucose_pc",group:"🩸 血糖",title:"飯後血糖",icon:"🍚",color:C.amber,fullName:"Postprandial Glucose (PC)",desc:"餐後2小時測量，評估飯後血糖代謝能力，比空腹血糖更早反映血糖異常。",range:"正常 < 140 mg/dL　前期 140–199　糖尿病 ≥ 200",high:"胰島素分泌延遲或阻抗，需飲食控制與運動。",low:"通常無問題。",tips:["飯後散步降低飯後血糖效果顯著","選擇低GI食物","控制每餐份量"],related:"與HbA1c、空腹血糖、體重相關"},
+  // 🫀 肝功能
+  {key:"alt",group:"🫀 肝功能",title:"ALT 丙胺酸轉胺酶",icon:"🫀",color:C.amber,fullName:"Alanine Aminotransferase",desc:"主要存在肝細胞中，肝細胞受損時大量釋放，是最敏感的肝功能指標。",range:"正常 男 < 44 U/L　女 < 32 U/L",high:"脂肪肝、病毒性肝炎、藥物傷肝、過量飲酒。1-3倍需追蹤，>3倍需就醫。",low:"無臨床意義。",tips:["減重5-10%可顯著改善脂肪肝","戒酒","減少不必要藥物","規律運動"],related:"與AST、GGT、體重、脂肪肝密切相關"},
+  {key:"ast",group:"🫀 肝功能",title:"AST 天門冬胺酸轉胺酶",icon:"🫀",color:C.green,fullName:"Aspartate Aminotransferase",desc:"存在於肝臟、心臟和肌肉，比ALT廣泛，特異性較低。",range:"正常 < 40 U/L",high:"AST/ALT > 2 可能是酒精性肝病。激烈運動後也會上升。",low:"無臨床意義。",tips:["與ALT同步評估","運動前後測量有差異屬正常"],related:"與ALT、CK、LDH相關"},
+  {key:"alp",group:"🫀 肝功能",title:"ALP 鹼性磷酸酶",icon:"🫀",color:C.green,fullName:"Alkaline Phosphatase",desc:"存在於肝臟和骨骼，膽道阻塞或骨骼疾病時升高。",range:"正常 40–120 U/L",high:"膽道阻塞、肝硬化、骨骼疾病（骨折、Paget氏病）、副甲狀腺亢進。",low:"通常無意義，可能代表鋅缺乏。",tips:["需配合GGT判斷來源（肝或骨骼）","補鈣和維生素D保護骨骼"],related:"與GGT、膽紅素相關"},
+  {key:"ggt",group:"🫀 肝功能",title:"GGT 麩胺轉移酶",icon:"🫀",color:C.amber,fullName:"Gamma-Glutamyl Transferase",desc:"對脂肪肝和酒精性肝病最敏感，也是膽道疾病的指標。",range:"正常 男 < 60 U/L　女 < 45 U/L",high:"脂肪肝、飲酒、膽道疾病、某些藥物。",low:"無臨床意義。",tips:["戒酒後GGT通常4-8週內下降","減重改善脂肪肝"],related:"與ALT、脂肪肝、飲酒習慣密切相關"},
+  {key:"tbil",group:"🫀 肝功能",title:"總膽紅素",icon:"🟡",color:C.green,fullName:"Total Bilirubin",desc:"紅血球分解產物，由肝臟代謝後從膽汁排出，偏高時出現黃疸。",range:"正常 0.2–1.2 mg/dL",high:"肝臟疾病、膽道阻塞、溶血性貧血。",low:"通常無意義。",tips:["黃疸需就醫","多喝水助膽汁排出"],related:"與ALT、AST、ALP相關"},
+  {key:"alb",group:"🫀 肝功能",title:"白蛋白",icon:"🥚",color:C.green,fullName:"Albumin",desc:"肝臟合成的主要蛋白質，維持血液滲透壓，是肝功能和營養狀態的指標。",range:"正常 3.5–5.5 g/dL",high:"少見，可能為脫水。",low:"肝功能不全、營養不良、腎病症候群。",tips:["確保足夠蛋白質攝取","控制肝臟疾病"],related:"與TP、eGFR、UPCR相關"},
+  {key:"tp",group:"🫀 肝功能",title:"總蛋白",icon:"🧬",color:C.green,fullName:"Total Protein",desc:"血液中白蛋白與球蛋白的總和，反映整體蛋白質代謝狀態。",range:"正常 6.4–8.3 g/dL",high:"可能為脫水或慢性感染/免疫疾病。",low:"營養不良、肝腎疾病、吸收不良。",tips:["搭配A/G比值判斷","確保飲食中有足夠優質蛋白"],related:"與白蛋白、球蛋白相關"},
+  {key:"glob",group:"🫀 肝功能",title:"球蛋白",icon:"🧬",color:C.green,fullName:"Globulin",desc:"免疫球蛋白的主要成分，參與免疫反應。由總蛋白減去白蛋白計算。",range:"正常 2.0–3.5 g/dL",high:"慢性感染、自體免疫疾病、肝硬化、多發性骨髓瘤。",low:"免疫功能缺乏。",tips:["需搭配A/G比值和完整免疫評估"],related:"與A/G比值、TP、免疫功能相關"},
+  {key:"ag_ratio",group:"🫀 肝功能",title:"A/G比值",icon:"📊",color:C.green,fullName:"Albumin/Globulin Ratio",desc:"白蛋白除以球蛋白，偏低可能代表慢性肝病或免疫異常。",range:"正常 1.1–2.5",high:"少見，通常無問題。",low:"慢性肝病、自體免疫疾病、多發性骨髓瘤。",tips:["需配合其他肝功能指標解讀"],related:"與白蛋白、球蛋白相關"},
+  // 🫘 腎功能
+  {key:"creatinine",group:"🫘 腎功能",title:"肌酸酐",icon:"🫘",color:C.green,fullName:"Creatinine",desc:"肌肉代謝產物，幾乎全由腎臟過濾排出，是腎功能最基本的指標。",range:"正常 男 0.7–1.3 mg/dL　女 0.6–1.1",high:"腎臟過濾功能下降，需配合eGFR一起判斷。",low:"肌肉量少（老年、營養不良），不代表腎功能好。",tips:["多喝水","控制血糖血壓","避免NSAID類止痛藥"],related:"與eGFR、BUN、UPCR共同評估腎功能"},
+  {key:"gfr",group:"🫘 腎功能",title:"eGFR (CKD-EPI)",icon:"💧",color:C.green,fullName:"Estimated Glomerular Filtration Rate",desc:"估算腎臟每分鐘過濾血液量，是腎功能最直接的評估指標。",range:"正常 ≥ 60　G1 ≥90　G2 60-89　G3a 45-59　G3b 30-44　G4 15-29　G5 <15",high:"無意義。",low:"< 60 持續3個月以上為慢性腎臟病（CKD）。",tips:["控制血糖、血壓、體重","避免NSAID類止痛藥","每6個月追蹤"],related:"與肌酸酐、UPCR、血壓、血糖密切相關"},
+  {key:"bun",group:"🫘 腎功能",title:"BUN 血中尿素氮",icon:"🫘",color:C.green,fullName:"Blood Urea Nitrogen",desc:"蛋白質代謝產物，由腎臟排出。越南報告的Urea mmol/L需乘以2.8換算。",range:"正常 7–23 mg/dL",high:"腎功能下降或高蛋白飲食、脫水、胃腸道出血。",low:"蛋白質攝取不足、嚴重肝病。",tips:["適量蛋白質攝取","多喝水","搭配肌酸酐一起評估"],related:"與肌酸酐、eGFR共同評估腎功能"},
+  {key:"upcr",group:"🫘 腎功能",title:"UPCR 尿液蛋白肌酸酐比值",icon:"💧",color:C.amber,fullName:"Urine Protein Creatinine Ratio",desc:"偵測尿液異常蛋白質，是糖尿病腎病變最早期的敏感指標。",range:"正常 < 30 mg/g　微量蛋白尿 30–300　顯性蛋白尿 > 300",high:"糖尿病腎病變早期警訊，需積極控制血糖血壓。",low:"無臨床意義。",tips:["嚴格控制血糖（HbA1c < 7%）","血壓控制 < 130/80","必要時使用ACEI/ARB藥物","每6個月複查"],related:"與HbA1c、血壓、eGFR密切相關"},
+  // 💉 血脂
+  {key:"hdl",group:"💉 血脂",title:"HDL-C 高密度脂蛋白",icon:"💚",color:C.green,fullName:"High-Density Lipoprotein Cholesterol",desc:"俗稱「好膽固醇」，負責將血管中多餘膽固醇運回肝臟代謝，數值越高越保護心血管。",range:"正常 男 > 40 mg/dL　女 > 50 mg/dL　理想 > 60",high:"越高越好，保護心血管。",low:"心血管保護力不足，與T2D、代謝症候群相關。",tips:["規律有氧運動是提升HDL最有效方法","攝取健康脂肪：橄欖油、堅果","減少反式脂肪","戒菸"],related:"與三酸甘油酯呈反比，與體重、運動量相關"},
+  {key:"ldl",group:"💉 血脂",title:"LDL-C 低密度脂蛋白",icon:"⚠️",color:C.blue,fullName:"Low-Density Lipoprotein Cholesterol",desc:"俗稱「壞膽固醇」，過多會沉積在血管壁形成動脈硬化斑塊，是心血管疾病主因。",range:"正常 < 130 mg/dL　T2D患者建議 < 100",high:"心肌梗塞、腦中風主要風險因子，T2D患者需嚴格控制。",low:"通常越低越好。",tips:["減少飽和脂肪：紅肉、全脂乳品","增加膳食纖維：燕麥、豆類","規律運動"],related:"與總膽固醇、飲食脂肪攝取相關"},
+  {key:"tg",group:"💉 血脂",title:"三酸甘油酯",icon:"🧈",color:C.amber,fullName:"Triglyceride",desc:"血液中最主要的脂肪形式，與精緻糖攝取、飲酒、肥胖密切相關。",range:"正常 < 150 mg/dL　邊緣 150–199　偏高 200–499　極高 ≥ 500",high:"精緻糖和酒精攝取過多、肥胖、T2D，增加心血管和胰臟炎風險。",low:"通常無問題。",tips:["減少精緻糖和酒精","減重","增加omega-3攝取"],related:"與HDL呈反比，與血糖、體重密切相關"},
+  {key:"cholesterol",group:"💉 血脂",title:"總膽固醇",icon:"🔵",color:C.green,fullName:"Total Cholesterol",desc:"血液中所有膽固醇的總和，需配合HDL/LDL比例分析才有意義。",range:"正常 < 200 mg/dL　邊緣 200–239　偏高 ≥ 240",high:"需進一步看LDL和HDL的組成比例。",low:"通常無問題，極低可能與營養不良或甲亢有關。",tips:["均衡飲食","規律運動","配合LDL/HDL一起評估"],related:"HDL + LDL + 其他脂蛋白的總和"},
+  {key:"chol_hdl",group:"💉 血脂",title:"膽固醇/HDL比值",icon:"📊",color:C.green,fullName:"Cholesterol/HDL Ratio",desc:"總膽固醇除以HDL，比單看總膽固醇更能反映心血管風險，比值越低越好。",range:"理想 < 3.5　正常 < 5.0　高風險 ≥ 5.0",high:"心血管風險增加。",low:"越低越好，代表HDL保護力強。",tips:["提升HDL和降低LDL雙管齊下"],related:"與HDL、LDL、總膽固醇相關"},
+  // ⚗️ 尿酸/鐵
+  {key:"uric_acid",group:"⚗️ 尿酸／鐵",title:"尿酸",icon:"🔬",color:C.blue,fullName:"Uric Acid",desc:"嘌呤代謝的最終產物，由腎臟排出，過高會在關節沉積引起痛風，也與腎功能和代謝症候群相關。",range:"正常 男 3.4–7.6 mg/dL　女 2.3–6.6",high:"痛風、腎結石、代謝症候群、心血管疾病風險增加。",low:"通常無意義。",tips:["每天喝水2000mL以上","減少紅肉、內臟、啤酒","減重","必要時藥物治療"],related:"與腎功能、體重、飲食習慣相關"},
+  {key:"fe",group:"⚗️ 尿酸／鐵",title:"鐵 Fe",icon:"🔩",color:C.green,fullName:"Serum Iron",desc:"血液中游離鐵的含量，與貧血診斷和鐵代謝狀態相關。",range:"正常 60–170 ug/dL",high:"鐵過載（血色素沉著症）、輸血後、急性肝炎。",low:"缺鐵性貧血最常見原因，需補充鐵劑。",tips:["搭配TIBC、鐵飽和度一起評估","補鐵同時補充維生素C促進吸收"],related:"與TIBC、鐵飽和度、血紅素相關"},
+  {key:"tibc",group:"⚗️ 尿酸／鐵",title:"TIBC 總鐵結合力",icon:"🔩",color:C.green,fullName:"Total Iron Binding Capacity",desc:"血液中運鐵蛋白可以攜帶鐵的最大能力，缺鐵時升高。",range:"正常 250–370 ug/dL",high:"缺鐵性貧血、妊娠。",low:"鐵過載、慢性疾病性貧血、肝臟疾病。",tips:["配合血清鐵和飽和度一起解讀"],related:"與鐵 Fe、鐵飽和度相關"},
+  {key:"fe_sat",group:"⚗️ 尿酸／鐵",title:"鐵飽和度",icon:"🔩",color:C.green,fullName:"Iron Saturation",desc:"血清鐵除以TIBC的百分比，反映運鐵蛋白實際攜帶鐵的比例。",range:"正常 15–50%",high:"鐵過載、血色素沉著症。",low:"缺鐵性貧血。",tips:["<15% 考慮缺鐵性貧血",">50% 考慮鐵過載，需進一步檢查"],related:"與血清鐵、TIBC、血紅素相關"},
+  // 🦋 甲狀腺
+  {key:"tsh",group:"🦋 甲狀腺",title:"TSH 甲狀腺促素",icon:"🦋",color:C.green,fullName:"Thyroid-Stimulating Hormone",desc:"腦下垂體分泌的激素，調控甲狀腺功能，是甲狀腺疾病最敏感的第一線篩檢指標。",range:"正常 0.34–5.60 uIU/mL",high:"甲狀腺功能低下（甲低）：疲倦、體重增加、怕冷、便秘。",low:"甲狀腺功能亢進（甲亢）：心跳加快、消瘦、怕熱、手抖。",tips:["甲狀腺疾病需醫師治療","T2D患者甲狀腺疾病風險較高","每年追蹤一次"],related:"與FT3、FT4相關，T2D患者需特別注意"},
+  {key:"ft3",group:"🦋 甲狀腺",title:"Free T3 游離三碘甲狀腺素",icon:"🦋",color:C.green,fullName:"Free Triiodothyronine",desc:"活性最強的甲狀腺激素，直接作用於組織器官，調節代謝率。",range:"正常 2.3–4.2 pg/mL",high:"甲亢、T3型甲亢。",low:"甲低、嚴重疾病期間。",tips:["配合TSH、FT4一起解讀才準確"],related:"與TSH、FT4相關"},
+  {key:"ft4",group:"🦋 甲狀腺",title:"Free T4 游離甲狀腺素",icon:"🦋",color:C.green,fullName:"Free Thyroxine",desc:"主要的甲狀腺激素，在組織中轉化為活性更強的T3。",range:"正常 0.89–1.76 ng/dL",high:"甲亢、TSH偏低時需一起評估。",low:"甲低、垂體功能不足。",tips:["配合TSH一起解讀","甲狀腺功能異常需就醫"],related:"與TSH、FT3相關"},
+  // 🧂 電解質
+  {key:"na",group:"🧂 電解質",title:"鈉 Na",icon:"🧂",color:C.green,fullName:"Sodium",desc:"細胞外液主要陽離子，調節血液滲透壓、神經和肌肉功能。",range:"正常 136–145 mEq/L",high:"脫水、高鹽飲食、腎上腺亢進。",low:"喝水過多、心衰、腎病、利尿劑副作用。",tips:["每日鈉攝取量 < 2300mg（約1茶匙鹽）","減少加工食品"],related:"與血壓、腎功能、心臟功能密切相關"},
+  {key:"k",group:"🧂 電解質",title:"鉀 K",icon:"🍌",color:C.green,fullName:"Potassium",desc:"細胞內液主要陽離子，維持心臟和肌肉正常電位，影響心律。",range:"正常 3.5–5.1 mEq/L",high:"腎功能不全、ACEI/ARB藥物副作用，嚴重時導致心律不整。",low:"利尿劑副作用、腹瀉嘔吐，嚴重時肌肉無力、心律不整。",tips:["腎功能異常時需特別注意鉀的攝取","富含鉀：香蕉、橘子、菠菜（腎功能正常可補充）"],related:"與腎功能、血壓藥物密切相關"},
+  {key:"cl",group:"🧂 電解質",title:"氯 Cl",icon:"🧂",color:C.green,fullName:"Chloride",desc:"細胞外液主要陰離子，配合鈉維持滲透壓和酸鹼平衡。",range:"正常 98–106 mEq/L",high:"代謝性酸中毒、脫水。",low:"嘔吐、胃液流失、代謝性鹼中毒。",tips:["通常跟鈉一起變化，需配合血氣分析解讀"],related:"與鈉、腎功能、酸鹼平衡相關"},
+  {key:"ca",group:"🧂 電解質",title:"鈣 Ca",icon:"🦴",color:C.green,fullName:"Calcium",desc:"維持骨骼強度、肌肉收縮、神經傳導和凝血功能的重要礦物質。",range:"正常 8.5–10.5 mg/dL",high:"副甲狀腺亢進、惡性腫瘤、維生素D過量。",low:"副甲狀腺低下、維生素D缺乏、腎功能不全。",tips:["每日鈣需求 1000-1200mg","乳製品、豆腐、深綠蔬菜富含鈣","需要維生素D幫助吸收"],related:"與維生素D、副甲狀腺素、骨密度相關"},
+  {key:"mg",group:"🧂 電解質",title:"鎂 Mg",icon:"🌿",color:C.green,fullName:"Magnesium",desc:"參與300多種酵素反應，T2D患者常見鎂缺乏，可能加重胰島素阻抗。",range:"正常 1.7–2.5 mg/dL",high:"腎功能不全、鎂補充過量。",low:"T2D常見、飲酒、利尿劑，可能加重胰島素阻抗。",tips:["T2D患者特別需要注意鎂的補充","富含鎂：堅果、深色蔬菜、黑巧克力"],related:"與T2D、胰島素阻抗、血壓相關"},
+  {key:"phos",group:"🧂 電解質",title:"磷 Phos",icon:"🦴",color:C.green,fullName:"Phosphorus",desc:"骨骼和牙齒的重要成分，也參與能量代謝（ATP）和DNA合成。",range:"正常 2.5–4.5 mg/dL",high:"腎功能不全時磷排出減少，增加心血管鈣化風險。",low:"副甲狀腺亢進、維生素D缺乏、營養不良。",tips:["腎功能不全患者需限制磷攝取","高磷食物：乳製品、堅果、豆類"],related:"與鈣、腎功能、維生素D相關"},
+  // 🔬 其他生化
+  {key:"crp",group:"🔬 其他生化",title:"CRP C反應蛋白",icon:"🔥",color:C.amber,fullName:"C-Reactive Protein",desc:"肝臟在急性發炎、感染、組織損傷時分泌，是最廣泛使用的發炎指標。",range:"正常 < 1.0 mg/L　輕度發炎 1–3　中度 3–10　急性 > 10",high:"感染、自體免疫疾病、心血管疾病。慢性低度發炎（1-3）與T2D、代謝症候群相關。",low:"無臨床意義。",tips:["規律運動降低慢性發炎","地中海飲食","減重","充足睡眠","戒菸"],related:"與血糖、血脂、體重、生活習慣密切相關"},
+  {key:"amy",group:"🔬 其他生化",title:"澱粉酶 AMY",icon:"🫁",color:C.green,fullName:"Amylase",desc:"由胰臟和唾液腺分泌，分解澱粉，胰臟炎時大量釋放。",range:"正常 28–100 U/L",high:"急性胰臟炎（通常>3倍上限）、腮腺炎、腸阻塞。",low:"通常無意義。",tips:["腹部劇烈疼痛合併AMY升高需立即就醫","限制酒精和高脂飲食保護胰臟"],related:"與脂肪酶LIP一起評估更準確"},
+  {key:"lip",group:"🔬 其他生化",title:"脂肪酶 LIP",icon:"🫁",color:C.green,fullName:"Lipase",desc:"主要由胰臟分泌，分解脂肪。比澱粉酶更具胰臟特異性。",range:"正常 13–60 U/L",high:"急性胰臟炎（比澱粉酶持續更久）、慢性胰臟炎、胰臟癌。",low:"通常無意義。",tips:["急性胰臟炎治療期間需禁食","長期保護：少油、少酒精"],related:"與澱粉酶一起評估胰臟功能"},
+  {key:"ck",group:"🔬 其他生化",title:"CK 肌酸激酶",icon:"💪",color:C.green,fullName:"Creatine Kinase",desc:"主要存在於骨骼肌、心肌和腦部，肌肉損傷或劇烈運動後大量釋放。",range:"正常 男 55–200 U/L　女 30–145 U/L",high:"急性心肌梗塞、橫紋肌溶解症、肌炎、劇烈運動後。",low:"通常無意義。",tips:["激烈運動後升高屬正常","懷疑心肌梗塞需配合心電圖"],related:"與AST、LDH相關"},
+  {key:"ldh",group:"🔬 其他生化",title:"LDH 乳酸脫氫酶",icon:"⚡",color:C.green,fullName:"Lactate Dehydrogenase",desc:"廣泛存在各組織，組織損傷時釋放，是非特異性的細胞損傷指標。",range:"正常 140–248 U/L",high:"心肌梗塞、肝炎、溶血性貧血、惡性腫瘤、肺栓塞。",low:"通常無意義。",tips:["非特異性指標，需配合其他檢驗判斷","腫瘤治療追蹤有參考價值"],related:"與CK、ALT、AST相關"},
+  // 🩸 血液CBC
+  {key:"wbc",group:"🩸 血液CBC",title:"WBC 白血球",icon:"🦠",color:C.green,fullName:"White Blood Cell Count",desc:"免疫系統的主要細胞，負責對抗感染和異物，由多種細胞組成。",range:"正常 3.6–11.2 x10³/uL",high:"感染、發炎、壓力、某些藥物、白血病（極高）。",low:"免疫抑制藥物、病毒感染、骨髓問題。",tips:["WBC偏高合併發燒需就醫","維持規律作息和均衡飲食強化免疫"],related:"與CRP、白血球分類相關"},
+  {key:"rbc",group:"🩸 血液CBC",title:"RBC 紅血球",icon:"🔴",color:C.green,fullName:"Red Blood Cell Count",desc:"攜帶氧氣的血球，數量反映造血功能和貧血狀態。",range:"正常 男 4.5–5.9 M/uL　女 4.1–5.3",high:"真性紅血球增多症、脫水、高海拔適應。",low:"貧血（缺鐵、維生素B12缺乏、慢性病）。",tips:["需搭配Hb、Hct、MCV一起評估貧血類型"],related:"與Hb、Hct、MCV、MCH相關"},
+  {key:"hb",group:"🩸 血液CBC",title:"血紅素 Hb",icon:"💉",color:C.green,fullName:"Hemoglobin",desc:"紅血球中攜帶氧氣的蛋白質，是診斷貧血最直接的指標。",range:"正常 男 13.7–17.0 g/dL　女 12.0–15.5",high:"真性紅血球增多症、脫水，T2D患者Hb偏高需注意血液黏稠度。",low:"貧血（缺鐵最常見），影響疲勞感和運動能力，T2D腎臟病變時常見。",tips:["缺鐵性貧血：補充鐵劑+維生素C","B12缺乏：補充B12（尤其素食者）","腎性貧血：控制腎功能"],related:"與RBC、Hct、MCV、腎功能相關"},
+  {key:"hct",group:"🩸 血液CBC",title:"Hct 血球容積比",icon:"🔴",color:C.green,fullName:"Hematocrit",desc:"紅血球占血液總體積的百分比，反映貧血或血液濃縮程度。",range:"正常 男 40.5–50.4%　女 36.9–44.6%",high:"脫水、真性紅血球增多症。",low:"貧血。",tips:["通常與Hb平行變化","Hb×3 ≈ Hct（粗略換算）"],related:"與Hb、RBC相關"},
+  {key:"mcv",group:"🩸 血液CBC",title:"MCV 平均紅血球容積",icon:"🔴",color:C.green,fullName:"Mean Corpuscular Volume",desc:"每個紅血球的平均大小，是分類貧血類型的重要指標。",range:"正常 80–97 fL",high:"大球性貧血：維生素B12或葉酸缺乏、酒精性肝病。",low:"小球性貧血：缺鐵性貧血最常見、地中海型貧血。",tips:["MCV配合MCHC可精準分類貧血","素食者需注意B12補充"],related:"與MCH、MCHC、血紅素相關"},
+  {key:"mch",group:"🩸 血液CBC",title:"MCH 平均紅血球血色素",icon:"🔴",color:C.green,fullName:"Mean Corpuscular Hemoglobin",desc:"每個紅血球中血紅素的平均重量，與MCV類似用於貧血分類。",range:"正常 27–33 pg",high:"大球性貧血。",low:"缺鐵性貧血、地中海型貧血。",tips:["配合MCV和MCHC一起解讀"],related:"與MCV、MCHC相關"},
+  {key:"mchc",group:"🩸 血液CBC",title:"MCHC 平均紅血球血色素濃度",icon:"🔴",color:C.green,fullName:"Mean Corpuscular Hemoglobin Concentration",desc:"每個紅血球中血紅素的平均濃度，低於正常值稱為低色素，常見於缺鐵性貧血。",range:"正常 32.5–35.7 g/dL",high:"遺傳性球形紅血球症。",low:"缺鐵性貧血、地中海型貧血（紅血球顏色淡）。",tips:["低色素+小球性→缺鐵性貧血可能性大"],related:"與MCV、MCH、鐵蛋白相關"},
+  {key:"platelet",group:"🩸 血液CBC",title:"血小板 Platelet",icon:"🩺",color:C.green,fullName:"Platelet Count",desc:"負責血液凝固和止血，數量過低增加出血風險，過高增加血栓風險。",range:"正常 130–400 x10³/uL",high:"血小板增多症、感染後反應性增加、缺鐵。",low:"免疫性血小板低下（ITP）、骨髓疾病、肝硬化、某些藥物。",tips:["<50 出血風險高，需就醫","避免NSAID類藥物影響血小板功能"],related:"與凝血功能、肝功能相關"},
+  // 🦠 白血球分類
+  {key:"ne_pct",group:"🦠 白血球分類",title:"嗜中性球 NE%",icon:"🦠",color:C.green,fullName:"Neutrophil Percentage",desc:"白血球中佔最多比例的細胞，是抵抗細菌感染的第一道防線。",range:"正常 43.7–76.6%",high:"細菌感染、急性發炎、壓力反應。",low:"病毒感染、某些藥物、骨髓抑制。",tips:["高燒合併NE%升高通常提示細菌感染需就醫"],related:"與WBC、CRP相關"},
+  {key:"ly_pct",group:"🦠 白血球分類",title:"淋巴球 LY%",icon:"🦠",color:C.green,fullName:"Lymphocyte Percentage",desc:"負責免疫記憶和對抗病毒感染，T細胞和B細胞都屬於淋巴球。",range:"正常 16.0–43.5%",high:"病毒感染（如COVID-19後恢復期）、百日咳、慢性淋巴性白血病。",low:"細菌感染、使用類固醇、HIV感染。",tips:["病毒感染後淋巴球比例常暫時升高屬正常"],related:"與NE%呈反比"},
+  {key:"mo_pct",group:"🦠 白血球分類",title:"單核球 MO%",icon:"🦠",color:C.green,fullName:"Monocyte Percentage",desc:"吞噬細胞，進入組織後變成巨噬細胞，處理細菌和異物。",range:"正常 4.5–12.5%",high:"慢性感染（結核病）、自體免疫疾病、單核球增多症。",low:"骨髓抑制。",tips:["單核球比例持續升高需排除慢性感染或自體免疫疾病"],related:"與WBC相關"},
+  {key:"eo_pct",group:"🦠 白血球分類",title:"嗜酸性球 EO%",icon:"🦠",color:C.green,fullName:"Eosinophil Percentage",desc:"與過敏反應和寄生蟲感染有關，台灣和越南部分地區寄生蟲感染仍需注意。",range:"正常 0–7.9%",high:"過敏性疾病（氣喘、花粉症）、寄生蟲感染、藥物反應。",low:"通常無意義。",tips:["越南居住者需注意腸道寄生蟲可能","規律糞便檢查"],related:"與過敏、寄生蟲感染相關"},
+  {key:"ba_pct",group:"🦠 白血球分類",title:"嗜鹼性球 BA%",icon:"🦠",color:C.green,fullName:"Basophil Percentage",desc:"數量最少的白血球，參與過敏反應和發炎，通常佔白血球比例不到1%。",range:"正常 0–1.4%",high:"過敏反應、慢性骨髓性白血病（CML）。",low:"通常無意義。",tips:["單獨升高不常見，需搭配其他指標"],related:"與過敏反應相關"},
+  // 🧫 病毒篩檢
+  {key:"hbsag",group:"🧫 病毒篩檢",title:"HBsAg B型肝炎表面抗原",icon:"🧫",color:C.green,fullName:"Hepatitis B Surface Antigen",desc:"B型肝炎病毒感染的直接指標，陽性代表目前有B肝病毒感染。",range:"陰性（Negative）= 正常",high:"目前感染B型肝炎，需進一步評估病毒量（HBV DNA）和肝功能。",low:"無意義。",tips:["陽性需每6個月追蹤肝功能","抗病毒治療可有效控制","家人需篩檢"],related:"與Anti-HBs、ALT、AST密切相關"},
+  {key:"anti_hbs",group:"🧫 病毒篩檢",title:"Anti-HBs B型肝炎表面抗體",icon:"🧫",color:C.green,fullName:"Hepatitis B Surface Antibody",desc:"對B型肝炎的保護性抗體，陽性代表已有免疫力（自然感染康復或疫苗接種）。",range:"陽性（Positive）= 有保護力",high:"有保護力，陰性才需要注意。",low:"陰性代表無保護力，若HBsAg也陰性建議施打疫苗。",tips:["抗體效價隨時間下降，可考慮加強接種","與HBsAg通常不同時陽性"],related:"與HBsAg相關"},
+  {key:"anti_hcv",group:"🧫 病毒篩檢",title:"Anti-HCV C型肝炎抗體",icon:"🧫",color:C.green,fullName:"Hepatitis C Antibody",desc:"C型肝炎抗體，陽性代表曾接觸C肝病毒，需進一步確認HCV RNA。",range:"陰性（Negative）= 正常",high:"曾感染C型肝炎，需做HCV RNA確認是否仍有活動性感染，現有口服藥物可根治。",low:"無意義。",tips:["C肝現在有高效口服藥物，根治率>95%","定期追蹤肝功能"],related:"與ALT、AST相關"},
+  // 🎗️ 腫瘤標記
+  {key:"cea",group:"🎗️ 腫瘤標記",title:"CEA 癌胚抗原",icon:"🎗️",color:C.green,fullName:"Carcinoembryonic Antigen",desc:"腫瘤標記物，主要用於大腸直腸癌的追蹤，也與肺癌、胃癌有關。非特異性，吸菸者也偏高。",range:"正常 < 5.0 ng/mL（吸菸者 < 10）",high:"大腸直腸癌、肺癌、胰臟癌、吸菸、發炎性腸病。",low:"無意義。",tips:["CEA升高不代表一定是癌症","與基礎值比較趨勢比單次數值更重要","配合糞便潛血、大腸鏡評估"],related:"與AFP、PSA一起作為腫瘤標記組合"},
+  {key:"afp",group:"🎗️ 腫瘤標記",title:"AFP 甲胎蛋白",icon:"🎗️",color:C.green,fullName:"Alpha-Fetoprotein",desc:"主要用於肝細胞癌（HCC）的篩檢，慢性B肝患者定期追蹤的重要指標。",range:"正常 < 7.0 ng/mL",high:"肝細胞癌（顯著升高）、慢性肝病（輕度升高）、睪丸癌。",low:"無意義。",tips:["HBsAg陽性患者每6個月需追蹤AFP+腹部超音波","輕度升高（7-100）需進一步影像檢查"],related:"與HBsAg、ALT、腹部超音波相關"},
+  {key:"psa",group:"🎗️ 腫瘤標記",title:"PSA 攝護腺特異抗原",icon:"🎗️",color:C.green,fullName:"Prostate-Specific Antigen",desc:"攝護腺癌篩檢指標，50歲以上男性建議定期追蹤。",range:"正常 < 4.0 ng/mL",high:"攝護腺癌、良性攝護腺肥大（BPH）、攝護腺炎。",low:"無意義。",tips:["PSA升高需泌尿科評估","50歲以上每年追蹤","射精後24小時內避免採血"],related:"與攝護腺超音波、尿流速檢查相關"},
+  // 🛡️ 免疫
+  {key:"asto",group:"🛡️ 免疫",title:"ASTO 抗鏈球菌溶血素O",icon:"🛡️",color:C.green,fullName:"Anti-Streptolysin O",desc:"A群鏈球菌感染後產生的抗體，用於診斷風濕熱和急性腎炎的輔助指標。",range:"陰性（Negative）= 正常",high:"近期A群鏈球菌感染（喉嚨發炎後1-4週），可能與風濕熱有關。",low:"無意義。",tips:["陽性需配合臨床症狀和心臟聽診評估","鏈球菌感染需完整抗生素療程"],related:"與RF、CRP相關"},
+  {key:"rf",group:"🛡️ 免疫",title:"RF 類風濕因子",icon:"🛡️",color:C.green,fullName:"Rheumatoid Factor",desc:"類風濕性關節炎的篩檢指標，但特異性不高，正常人也可陽性。",range:"陰性（Negative）= 正常",high:"類風濕性關節炎、乾燥症候群、其他自體免疫疾病。老年人約5-10%可假陽性。",low:"無意義。",tips:["RF陽性不等於類風濕性關節炎，需配合臨床症狀","Anti-CCP比RF更有特異性"],related:"與ASTO、CRP、關節症狀相關"},
+  // 🔍 尿液分析
+  {key:"urine_glucose",group:"🔍 尿液分析",title:"尿糖",icon:"🍬",color:C.green,fullName:"Urine Glucose",desc:"正常腎臟可完全回收血液中的葡萄糖，尿液出現糖分代表血糖已超過腎臟回吸收閾值（約180 mg/dL）。",range:"陰性（－）= 正常",high:"血糖 > 180 mg/dL（腎糖閾）、妊娠糖尿病、腎小管疾病。",low:"無意義。",tips:["尿糖陽性必須進一步測血糖","良好血糖控制可使尿糖轉為陰性"],related:"與空腹血糖、HbA1c密切相關"},
+  {key:"urine_bilirubin",group:"🔍 尿液分析",title:"尿膽紅素",icon:"🟡",color:C.green,fullName:"Urine Bilirubin",desc:"正常尿液不含膽紅素，陽性代表結合型膽紅素過多從腎臟排出，提示肝膽疾病。",range:"陰性（－）= 正常",high:"肝炎、肝硬化、膽道阻塞。",low:"無意義。",tips:["尿膽紅素陽性需配合肝功能檢查評估"],related:"與總膽紅素、ALT、ALP相關"},
+  {key:"urine_ketone",group:"🔍 尿液分析",title:"尿酮體",icon:"⚡",color:C.green,fullName:"Urine Ketone",desc:"脂肪燃燒的代謝產物，禁食、低碳飲食或糖尿病血糖控制差時出現。",range:"陰性（－）= 正常",high:"糖尿病酮酸中毒（DKA，需緊急就醫）、長時間禁食、極低碳飲食、嘔吐。",low:"無意義。",tips:["T2D患者尿酮強陽性需立即就醫","空腹時輕度陽性（+）屬正常"],related:"與血糖、HbA1c相關"},
+  {key:"urine_sg",group:"🔍 尿液分析",title:"尿比重",icon:"💧",color:C.green,fullName:"Urine Specific Gravity",desc:"反映尿液中溶質濃度，代表腎臟濃縮和稀釋尿液的能力。",range:"正常 1.005–1.030",high:"脫水、蛋白尿、糖尿。",low:"多尿、腎功能下降（濃縮功能喪失）、過量飲水。",tips:["每天飲水2000mL可維持適當尿比重","晨尿通常最高"],related:"與腎功能、水分攝取相關"},
+  {key:"urine_ph",group:"🔍 尿液分析",title:"尿液pH",icon:"⚗️",color:C.green,fullName:"Urine pH",desc:"尿液的酸鹼值，反映腎臟調節酸鹼平衡的能力，也與結石風險相關。",range:"正常 4.5–8.0（晨尿約5.5–6.5）",high:"鹼性尿（> 7）：素食飲食、泌尿道感染、某些腎臟疾病。",low:"酸性尿（< 5）：高蛋白飲食、糖尿病、脫水、痛風體質。",tips:["多喝水稀釋尿液","尿酸結石傾向者需保持尿液偏鹼（pH 6.5-7）"],related:"與尿酸、腎結石相關"},
+  {key:"urine_nitrite",group:"🔍 尿液分析",title:"亞硝酸鹽",icon:"🦠",color:C.green,fullName:"Urine Nitrite",desc:"細菌將尿液中的硝酸鹽轉化為亞硝酸鹽，是泌尿道感染的間接指標。",range:"陰性（－）= 正常",high:"泌尿道感染（UTI），需配合尿液白血球和培養確認。",low:"無意義。",tips:["陽性合併尿液白血球升高，高度懷疑UTI需就醫","多喝水預防UTI"],related:"與尿液白血球一起評估泌尿道感染"},
+  {key:"urine_urobilinogen",group:"🔍 尿液分析",title:"尿膽素原",icon:"🟡",color:C.green,fullName:"Urine Urobilinogen",desc:"膽紅素在腸道被細菌分解的產物，部分被吸收後從腎臟排出，少量屬正常。",range:"陰性至微量（－ 到 +）= 正常",high:"溶血性貧血、肝炎（肝臟無法處理回收的尿膽素原）。",low:"完全陰性可能代表膽道完全阻塞。",tips:["輕度陽性通常無意義","顯著升高需配合肝功能評估"],related:"與總膽紅素、ALT相關"},
+  {key:"urine_blood",group:"🔍 尿液分析",title:"尿潛血",icon:"🩸",color:C.green,fullName:"Urine Blood",desc:"偵測尿液中是否有紅血球（血尿），可見於泌尿道任何部位的出血或損傷。",range:"陰性（－）= 正常",high:"泌尿道感染、腎結石、腎臟炎、泌尿道腫瘤、激烈運動後。",low:"無意義。",tips:["肉眼血尿需立即就醫","尿潛血陽性需追蹤顯微鏡檢查","女性月經期可能假陽性"],related:"與尿液白血球、腎功能、泌尿道超音波相關"},
+  {key:"urine_leukocyte",group:"🔍 尿液分析",title:"尿白血球",icon:"🦠",color:C.green,fullName:"Urine Leukocyte",desc:"尿液中有白血球（膿尿），是泌尿道感染最重要的指標。",range:"陰性（－）= 正常",high:"泌尿道感染（UTI）是最常見原因，也見於間質性腎炎、腎結核。",low:"無意義。",tips:["合併亞硝酸鹽陽性強烈提示UTI","多喝水是最好的預防方法","T2D患者UTI風險較高"],related:"與亞硝酸鹽、尿液細菌培養相關"},
 ];
 
 export default function HealthJournal(){
@@ -737,12 +830,27 @@ export default function HealthJournal(){
    ba_abs=BA#/Basophil#/嗜鹼性球絕對值
    hbsag=HBsAg（陰性填0，陽性填1）
    anti_hcv=Anti-HCV（陰性填0，陽性填1）
+   anti_hbs=Anti-HBs（陰性填0，陽性填1）
+   cea=CEA/癌胚抗原
+   afp=AFP/甲胎蛋白
+   psa=PSA/攝護腺特異抗原
+   asto=ASTO/抗鏈球菌溶血素O（陰性填0，陽性填1）
+   rf=RF/類風濕因子（陰性填0，陽性填1）
+   urine_glucose=尿糖/Glucose(Urine)（negative填0，positive填1）
+   urine_bilirubin=尿膽紅素/Bilirubin(Urine)（negative填0，positive填1）
+   urine_ketone=尿酮體/Ketone(Urine)（negative填0，positive填1）
+   urine_sg=尿比重/Specific Gravity（填數值如1.010）
+   urine_ph=尿液pH（填數值如6.0）
+   urine_nitrite=亞硝酸鹽/Nitrite（negative填0，positive填1）
+   urine_urobilinogen=尿膽素原/Urobilinogen（negative填0，positive填1）
+   urine_blood=尿潛血/Blood(Urine)（negative填0，positive填1）
+   urine_leukocyte=尿白血球/Leukocyte(Urine)（negative填0，positive填1）
 
 報告內容：
 ${textPart}
 
 只回傳JSON格式，包含所有找到的欄位（有值的填數值，沒有的填null）：
-{"date":null,"hospital":null,"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"gfr2":null,"bun":null,"upcr":null,"urine_creatinine":null,"urine_protein":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"ne_pct":null,"ly_pct":null,"mo_pct":null,"eo_pct":null,"ba_pct":null,"ne_abs":null,"ly_abs":null,"mo_abs":null,"eo_abs":null,"ba_abs":null,"hbsag":null,"anti_hcv":null,"note":null}`});
+{"date":null,"hospital":null,"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"gfr2":null,"bun":null,"upcr":null,"urine_creatinine":null,"urine_protein":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"ck_mb":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"ne_pct":null,"ly_pct":null,"mo_pct":null,"eo_pct":null,"ba_pct":null,"ne_abs":null,"ly_abs":null,"mo_abs":null,"eo_abs":null,"ba_abs":null,"hbsag":null,"anti_hcv":null,"anti_hbs":null,"cea":null,"afp":null,"psa":null,"asto":null,"rf":null,"urine_glucose":null,"urine_bilirubin":null,"urine_ketone":null,"urine_sg":null,"urine_ph":null,"urine_nitrite":null,"urine_urobilinogen":null,"urine_blood":null,"urine_leukocyte":null,"note":null}`});
 
       const rawText = await callClaude([{role:"user",content}], 1200);
       console.log("Raw text:",rawText.slice(0,500));
@@ -786,6 +894,38 @@ ${textPart}
       Object.keys(parsed).forEach(k=>{
         if(parsed[k]===null||parsed[k]===undefined||parsed[k]==="null"||parsed[k]==="")delete parsed[k];
       });
+
+      // ── Batch2：extra_data 兜底 ─────────────────────────
+      // 已知欄位白名單（所有有定義的欄位）
+      const KNOWN_KEYS = new Set([
+        "date","hospital","country","fasting","doctor","note",
+        "hba1c","glucose_ac","glucose_pc","glucose_random",
+        "alt","ast","alp","ggt","ldh","tbil","dbil","tp","alb","glob","ag_ratio",
+        "hdl","ldl","tg","cholesterol","chol_hdl",
+        "uric_acid","creatinine","gfr","gfr2","bun","upcr","urine_creatinine","urine_protein","urine_protein2",
+        "tsh","ft3","ft4",
+        "na","k","cl","ca","mg","phos",
+        "crp","amy","lip","ck","ck_mb",
+        "fe","uibc","tibc","fe_sat",
+        "hb","wbc","rbc","hct","mcv","mch","mchc","rdw_cv","rdw_sd","platelet","mpv",
+        "ne_pct","ly_pct","mo_pct","eo_pct","ba_pct",
+        "ne_abs","ly_abs","mo_abs","eo_abs","ba_abs",
+        "hbsag","anti_hcv","anti_hbs",
+        "cea","afp","psa","asto","rf",
+        "urine_glucose","urine_bilirubin","urine_ketone","urine_sg","urine_ph",
+        "urine_nitrite","urine_urobilinogen","urine_blood","urine_leukocyte",
+        "extra_data","source_country","createdAt","id",
+      ]);
+      // 找出不在白名單的欄位
+      const extraObj = {};
+      Object.keys(parsed).forEach(k=>{
+        if(!KNOWN_KEYS.has(k)) extraObj[k] = parsed[k];
+      });
+      if(Object.keys(extraObj).length > 0){
+        parsed._extraData = extraObj; // 暫存，saveLabReport時合併
+      }
+      // ───────────────────────────────────────────────────
+
       console.log("Parsed:",JSON.stringify(parsed));
 
       // 合併到表單
@@ -812,13 +952,21 @@ ${textPart}
     }
   };
 
-  // 確認儲存抽血報告
+    // 確認儲存抽血報告
   const saveLabReport=async()=>{
     if(!labForm.hospital){showToast("⚠️ 請輸入醫院名稱");return;}
     setLabStep("saving");
     // 合併所有資料：labParsed（AI解析）+ labForm（使用者輸入）
     // labForm 優先覆蓋
-    const data={...labParsed,...labForm};
+    const {_extraData, ...parsedClean} = labParsed;
+    const data={...parsedClean,...labForm};
+    // 合併 extra_data（保留舊值，追加新值）
+    let existingExtra = {};
+    try { existingExtra = data.extra_data ? JSON.parse(data.extra_data) : {}; } catch(e){}
+    const mergedExtra = {...existingExtra, ...(_extraData||{})};
+    if(Object.keys(mergedExtra).length > 0){
+      data.extra_data = JSON.stringify(mergedExtra);
+    }
     // 確保基本欄位都有
     if(!data.createdAt) data.createdAt=new Date().toISOString();
     if(!data.id) data.id="LAB"+Date.now();
@@ -852,10 +1000,6 @@ ${textPart}
   const saveImaging = async () => {
     if (!imagingForm.hospital) { showToast("⚠️ 請輸入醫院名稱"); return; }
     if (!imagingForm.finding) { showToast("⚠️ 請輸入報告結論"); return; }
-    // 壓縮照片存入 driveUrl 欄位（base64格式，最多3張用|||分隔）
-    const photoData = imagingPhotos.length > 0
-      ? imagingPhotos.map(p => p.data || p).join('|||')
-      : '';
     const r = await api.post("append", "imaging", {
       date: imagingForm.date,
       type: imagingForm.type,
@@ -864,15 +1008,13 @@ ${textPart}
       finding: imagingForm.finding,
       recommendation: imagingForm.recommendation,
       nextDate: imagingForm.nextDate,
-      driveUrl: photoData,
       note: imagingForm.note,
     });
     if (r?.success) {
-      showToast("✅ 影像檢查記錄已儲存" + (imagingPhotos.length>0?`（含${imagingPhotos.length}張照片）`:""));
+      showToast("✅ 影像檢查記錄已儲存");
       saveHospital(imagingForm.hospital);
       setImagingForm({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
       setImagingPhotos([]);
-      loadData();
     } else showToast("❌ 儲存失敗");
   };
 
@@ -1053,24 +1195,6 @@ const LAB_INFO = {
     improve:"均衡飲食、避免NSAID類藥物（影響血小板功能）",
     related:"與凝血功能、肝功能相關",
   },
-};
-
-
-// ── 圖片壓縮工具 ──────────────────────────────────────
-const compressImage = (dataUrl, maxWidth=800, quality=0.7) => {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      let w = img.width, h = img.height;
-      if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
-      canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);
-      resolve(canvas.toDataURL('image/jpeg', quality));
-    };
-    img.src = dataUrl;
-  });
 };
 
 // ── 趨勢分析函數 ──────────────────────────────────────
@@ -1365,6 +1489,22 @@ const analyzeTrend = (key, data) => {
               </div>
             ))}
           </div>
+
+          {/* extra_data 兜底警告 */}
+          {labParsed._extraData && Object.keys(labParsed._extraData).length > 0 && (
+            <div className="card" style={{border:`1px solid ${C.amber}55`,background:"rgba(255,179,71,0.06)"}}>
+              <div className="card-title" style={{color:C.amber}}>⚠️ 已備份（欄位待新增）</div>
+              <div style={{fontSize:12,color:C.textMuted,marginBottom:8,lineHeight:1.7}}>
+                以下項目目前無對應欄位，已存入備份區，不會遺失：
+              </div>
+              {Object.entries(labParsed._extraData).map(([k,v])=>(
+                <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <span style={{fontSize:12,color:C.amber}}>{k}</span>
+                  <span style={{fontSize:12,color:C.text,fontWeight:600}}>{String(v)}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* 數值確認 - 動態顯示所有解析到的欄位 */}
           <div className="card">
@@ -1905,6 +2045,25 @@ const analyzeTrend = (key, data) => {
       {key:"rdw_sd",label:"RDW-SD",unit:"fL",group:"血液CBC"},
       {key:"platelet",label:"血小板",unit:"K/uL",group:"血液CBC"},
       {key:"mpv",label:"MPV",unit:"fL",group:"血液CBC"},
+      // 腫瘤標記
+      {key:"cea",label:"CEA",unit:"ng/mL",group:"腫瘤標記"},
+      {key:"afp",label:"AFP",unit:"ng/mL",group:"腫瘤標記"},
+      {key:"psa",label:"PSA",unit:"ng/mL",group:"腫瘤標記"},
+      // 免疫
+      {key:"asto",label:"ASTO",unit:"",group:"免疫"},
+      {key:"rf",label:"RF類風濕因子",unit:"",group:"免疫"},
+      // 病毒補充
+      {key:"anti_hbs",label:"Anti-HBs",unit:"",group:"病毒篩檢"},
+      // 尿液分析
+      {key:"urine_glucose",label:"尿糖",unit:"",group:"尿液分析"},
+      {key:"urine_bilirubin",label:"尿膽紅素",unit:"",group:"尿液分析"},
+      {key:"urine_ketone",label:"尿酮體",unit:"",group:"尿液分析"},
+      {key:"urine_sg",label:"尿比重",unit:"",group:"尿液分析"},
+      {key:"urine_ph",label:"尿液pH",unit:"",group:"尿液分析"},
+      {key:"urine_nitrite",label:"亞硝酸鹽",unit:"",group:"尿液分析"},
+      {key:"urine_urobilinogen",label:"尿膽素原",unit:"",group:"尿液分析"},
+      {key:"urine_blood",label:"尿潛血",unit:"",group:"尿液分析"},
+      {key:"urine_leukocyte",label:"尿白血球",unit:"",group:"尿液分析"},
     ];
     // 依分組顯示
     const groups = [...new Set(LAB_DISPLAY.map(f=>f.group))];
@@ -2024,34 +2183,28 @@ const analyzeTrend = (key, data) => {
                         {record.note&&(
                           <div style={{marginTop:8,fontSize:11,color:C.textMuted}}>備註：{record.note}</div>
                         )}
+                        {/* extra_data 備份顯示 */}
+                        {(()=>{
+                          if(!record.extra_data)return null;
+                          let extras={};
+                          try{extras=JSON.parse(record.extra_data);}catch(e){return null;}
+                          if(Object.keys(extras).length===0)return null;
+                          return(
+                            <div style={{marginTop:10,padding:"10px",background:"rgba(255,179,71,0.06)",border:`1px solid ${C.amber}44`,borderRadius:8}}>
+                              <div style={{fontSize:10,color:C.amber,letterSpacing:1,marginBottom:6}}>備份資料（欄位待新增）</div>
+                              {Object.entries(extras).map(([k,v])=>(
+                                <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:`1px solid ${C.border}`}}>
+                                  <span style={{fontSize:11,color:C.textMuted}}>{k}</span>
+                                  <span style={{fontSize:11,color:C.text}}>{String(v)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </>
                     ):(
                       // 影像檢查展開
                       <>
-                        {/* 照片顯示 */}
-                        {record.driveUrl&&(()=>{
-                          const photos = record.driveUrl.split('|||').filter(p=>p&&p.startsWith('data:'));
-                          if(photos.length===0)return null;
-                          return(
-                            <div style={{marginBottom:12}}>
-                              <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>📷 影像照片（{photos.length}張）</div>
-                              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                                {photos.map((photo,i)=>(
-                                  <div key={i} style={{position:"relative"}}>
-                                    <img src={photo} alt={`影像${i+1}`}
-                                      style={{width:100,height:100,objectFit:"cover",borderRadius:8,cursor:"pointer",border:`1px solid ${C.border}`}}
-                                      onClick={()=>{
-                                        // 點擊放大顯示
-                                        const w=window.open();
-                                        w.document.write(`<img src="${photo}" style="max-width:100%;max-height:100vh;">`);
-                                      }}/>
-                                    <div style={{position:"absolute",bottom:2,right:2,fontSize:9,color:"white",background:"rgba(0,0,0,0.6)",borderRadius:4,padding:"1px 4px"}}>🔍點放大</div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })()}
                         {record.finding&&(
                           <div style={{marginBottom:8}}>
                             <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>報告結論</div>
@@ -2400,14 +2553,10 @@ ${mealText||"（請從圖片辨識食物）"}
               )}
               <input ref={imagingPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}}
                 onChange={async e=>{
-                  showToast("⏳ 壓縮圖片中...");
                   for(const file of Array.from(e.target.files).slice(0,3-imagingPhotos.length)){
                     const dataUrl=await new Promise(res=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.readAsDataURL(file);});
-                    const compressed=await compressImage(dataUrl, 800, 0.7);
-                    const kb=Math.round(compressed.length*0.75/1024);
-                    setImagingPhotos(prev=>[...prev,{data:compressed,size:kb}].slice(0,3));
+                    setImagingPhotos(prev=>[...prev,dataUrl].slice(0,3));
                   }
-                  showToast("✅ 圖片壓縮完成");
                   e.target.value="";
                 }}/>
             </div>
@@ -2516,32 +2665,103 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
 
   // ── 知識庫 ─────────────────────────────────────────────
   const KnowledgeTab=()=>{
+    const [kbSearch, setKbSearch] = useState("");
+    const latestLab = labHistory.length > 0 ? labHistory[labHistory.length-1] : null;
+
+    // 定性項目（0/1或negative/positive）顯示轉換
+    const fmtQualVal = (v) => {
+      if(v===null||v===undefined||v==="")return null;
+      const s = String(v).toLowerCase().trim();
+      if(s==="0"||s==="negative"||s==="neg"||s==="陰性")return{text:"陰性 (－)",color:C.green};
+      if(s==="1"||s==="positive"||s==="pos"||s==="陽性")return{text:"陽性 (＋)",color:C.red};
+      return{text:String(v),color:C.text};
+    };
+
+    // 取得你的最新值
+    const getYourVal = (key) => {
+      if(!latestLab) return null;
+      const v = latestLab[key];
+      if(v===null||v===undefined||v==="")return null;
+      return v;
+    };
+
+    // 詳細頁
     if(selectedKnowledge){
-      const item=selectedKnowledge;
+      const item = selectedKnowledge;
+      const yourVal = getYourVal(item.key);
+      const st = getStatus(item.key, yourVal);
+      const stColors = {ok:C.green, warn:C.amber, alert:C.red};
+      const qualVal = fmtQualVal(yourVal);
+      const isQual = ["hbsag","anti_hbs","anti_hcv","asto","rf",
+        "urine_glucose","urine_bilirubin","urine_ketone","urine_nitrite",
+        "urine_urobilinogen","urine_blood","urine_leukocyte","crp"].includes(item.key);
+
       return(
         <div className="fade-in" style={{padding:"16px 16px 80px"}}>
-          <button className="btn-secondary" style={{marginBottom:16}} onClick={()=>setSelectedKnowledge(null)}>← 返回</button>
+          <button className="btn-secondary" style={{marginBottom:16}} onClick={()=>setSelectedKnowledge(null)}>← 返回知識庫</button>
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
-            <span style={{fontSize:36}}>{item.icon}</span>
-            <div><div style={{fontSize:18,fontWeight:700,color:item.color}}>{item.title}</div></div>
-          </div>
-          <div className="card"><div className="card-title">說明</div><div style={{fontSize:14,lineHeight:1.8}}>{item.desc}</div></div>
-          <div className="card">
-            <div className="card-title">數值範圍</div>
-            {item.levels.map(l=>(
-              <div key={l.label} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
-                <span style={{fontSize:13}}>{l.label}</span>
-                <span style={{fontSize:13,fontWeight:600,color:l.color}}>{l.range}</span>
-              </div>
-            ))}
-          </div>
-          <div className="card" style={{border:`1px solid ${item.color}44`}}>
-            <div className="card-title">你的數值</div>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <span style={{fontSize:28,fontFamily:"'DM Serif Display',serif",color:item.color}}>{item.yourValue}</span>
-              <span className={`status-chip ${item.yourStatus==="ok"?"status-ok":"status-warn"}`}>{item.yourStatus==="ok"?"✅ 正常":"⚠️ 需注意"}</span>
+            <span style={{fontSize:40}}>{item.icon}</span>
+            <div>
+              <div style={{fontSize:18,fontWeight:700,color:item.color}}>{item.title}</div>
+              <div style={{fontSize:11,color:C.textMuted}}>{item.fullName}</div>
+              <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>{item.group}</div>
             </div>
           </div>
+
+          {/* 說明 */}
+          <div className="card">
+            <div className="card-title">說明</div>
+            <div style={{fontSize:14,lineHeight:1.8,color:C.text}}>{item.desc}</div>
+          </div>
+
+          {/* 正常範圍 */}
+          <div className="card">
+            <div className="card-title">正常範圍</div>
+            <div style={{fontSize:14,color:C.green,lineHeight:1.8}}>{item.range}</div>
+          </div>
+
+          {/* 偏高/偏低 */}
+          <div className="card">
+            <div className="card-title">數值意義</div>
+            <div style={{padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+              <div style={{fontSize:11,color:C.red,marginBottom:4}}>偏高代表</div>
+              <div style={{fontSize:13,lineHeight:1.7}}>{item.high}</div>
+            </div>
+            <div style={{padding:"8px 0"}}>
+              <div style={{fontSize:11,color:C.blue,marginBottom:4}}>偏低代表</div>
+              <div style={{fontSize:13,lineHeight:1.7}}>{item.low}</div>
+            </div>
+          </div>
+
+          {/* 你的最新值 */}
+          {yourVal!==null&&(
+            <div className="card" style={{border:`1px solid ${item.color}44`}}>
+              <div className="card-title">你的最新值</div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                {isQual&&qualVal?(
+                  <span style={{fontSize:22,fontWeight:700,color:qualVal.color}}>{qualVal.text}</span>
+                ):(
+                  <span style={{fontSize:28,fontFamily:"'DM Serif Display',serif",color:st?stColors[st]:C.text}}>{yourVal}</span>
+                )}
+                {st&&!isQual&&(
+                  <span className={`status-chip ${st==="ok"?"status-ok":st==="warn"?"status-warn":"status-alert"}`}>
+                    {st==="ok"?"✅ 正常":st==="warn"?"⚠️ 需注意":"❌ 異常"}
+                  </span>
+                )}
+              </div>
+              <div style={{fontSize:11,color:C.textMuted,marginTop:6}}>
+                來自最新報告：{fmtDateFull(latestLab?.date)} {latestLab?.hospital}
+              </div>
+            </div>
+          )}
+          {yourVal===null&&(
+            <div className="card" style={{border:`1px solid ${C.border}`}}>
+              <div className="card-title">你的最新值</div>
+              <div style={{fontSize:13,color:C.textMuted}}>此項目尚無記錄</div>
+            </div>
+          )}
+
+          {/* 改善建議 */}
           <div className="card">
             <div className="card-title">改善建議</div>
             {item.tips.map((tip,i)=>(
@@ -2551,34 +2771,131 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
               </div>
             ))}
           </div>
+
+          {/* 相關指標 */}
+          <div className="card">
+            <div className="card-title">相關指標</div>
+            <div style={{fontSize:13,color:C.textMuted,lineHeight:1.7}}>{item.related}</div>
+          </div>
         </div>
       );
     }
+
+    // 列表頁
+    const groups = [...new Set(KNOWLEDGE_ITEMS.map(i=>i.group))];
+    const searchLower = kbSearch.toLowerCase().trim();
+    const filtered = searchLower
+      ? KNOWLEDGE_ITEMS.filter(i=>
+          i.title.toLowerCase().includes(searchLower)||
+          (i.fullName||"").toLowerCase().includes(searchLower)||
+          i.key.toLowerCase().includes(searchLower)||
+          i.group.toLowerCase().includes(searchLower)
+        )
+      : null;
+
     return(
       <div className="fade-in" style={{padding:"16px 16px 80px"}}>
         <div className="section-header">📚 健康知識庫</div>
-        <div style={{background:"rgba(255,179,71,0.08)",border:"1px solid rgba(255,179,71,0.25)",borderRadius:14,padding:14,marginBottom:16}}>
-          <div style={{fontSize:13,fontWeight:700,color:C.amber,marginBottom:6}}>📌 糖尿病前期專區</div>
-          <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>HbA1c 5.8% + 家族史 T2D = 高風險群<br/>好消息：糖尿病前期是可逆的，現在介入效果最好！</div>
+
+        {/* 搜尋欄 */}
+        <div style={{position:"relative",marginBottom:16}}>
+          <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:16,color:C.textMuted}}>🔍</span>
+          <input className="input-field" style={{paddingLeft:36}}
+            placeholder="搜尋項目（ALT、血糖、腎功能...）"
+            value={kbSearch}
+            onChange={e=>setKbSearch(e.target.value)}
+          />
+          {kbSearch&&(
+            <button style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.textMuted,fontSize:16,cursor:"pointer"}}
+              onClick={()=>setKbSearch("")}>✕</button>
+          )}
         </div>
-        <div style={{fontSize:11,color:C.textMuted,letterSpacing:1.5,marginBottom:10}}>點擊查看詳細說明</div>
-        {KNOWLEDGE_ITEMS.map(item=>(
-          <div key={item.key} className="knowledge-card" style={{borderLeftColor:item.color}} onClick={()=>setSelectedKnowledge(item)}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <span style={{fontSize:22}}>{item.icon}</span>
-                <div>
-                  <div style={{fontSize:14,fontWeight:600}}>{item.title}</div>
-                  <div style={{fontSize:11,color:C.textMuted}}>你的值：{item.yourValue}</div>
-                </div>
-              </div>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span className={`status-chip ${item.yourStatus==="ok"?"status-ok":"status-warn"}`}>{item.yourStatus==="ok"?"正常":"注意"}</span>
-                <span style={{color:C.textMuted,fontSize:16}}>›</span>
-              </div>
+
+        {/* 糖尿病前期提示（僅搜尋為空時顯示）*/}
+        {!searchLower&&(
+          <div style={{background:"rgba(255,179,71,0.08)",border:"1px solid rgba(255,179,71,0.25)",borderRadius:14,padding:14,marginBottom:16}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.amber,marginBottom:6}}>📌 糖尿病前期專區</div>
+            <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>HbA1c 5.97% + 家族史 T2D = 高風險群<br/>好消息：糖尿病前期是可逆的，現在介入效果最好！</div>
+          </div>
+        )}
+
+        {/* 搜尋結果 */}
+        {searchLower&&(
+          <div>
+            <div style={{fontSize:12,color:C.textMuted,marginBottom:10}}>找到 {filtered.length} 個項目</div>
+            {filtered.length===0?(
+              <div className="empty-state">找不到「{kbSearch}」<br/>試試輸入英文縮寫或中文名稱</div>
+            ):(
+              filtered.map(item=><KnowledgeCard key={item.key} item={item} latestLab={latestLab} onSelect={setSelectedKnowledge}/>)
+            )}
+          </div>
+        )}
+
+        {/* 分組列表 */}
+        {!searchLower&&groups.map(group=>{
+          const items = KNOWLEDGE_ITEMS.filter(i=>i.group===group);
+          return(
+            <div key={group} style={{marginBottom:20}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:8,paddingLeft:2}}>{group}</div>
+              {items.map(item=><KnowledgeCard key={item.key} item={item} latestLab={latestLab} onSelect={setSelectedKnowledge}/>)}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // 知識庫卡片元件
+  const KnowledgeCard=({item,latestLab,onSelect})=>{
+    const yourVal = latestLab?.[item.key];
+    const hasVal = yourVal!==null&&yourVal!==undefined&&yourVal!=="";
+    const st = getStatus(item.key, yourVal);
+    const stColors = {ok:C.green, warn:C.amber, alert:C.red};
+    // 定性項目
+    const qualKeys = ["hbsag","anti_hbs","anti_hcv","asto","rf",
+      "urine_glucose","urine_bilirubin","urine_ketone","urine_nitrite",
+      "urine_urobilinogen","urine_blood","urine_leukocyte","crp"];
+    const isQual = qualKeys.includes(item.key);
+    const getQualDisplay = (v)=>{
+      if(!hasVal)return null;
+      const s=String(v).toLowerCase().trim();
+      if(s==="0"||s==="negative"||s==="neg")return{text:"陰性",color:C.green};
+      if(s==="1"||s==="positive"||s==="pos")return{text:"陽性",color:C.red};
+      return{text:String(v),color:C.text};
+    };
+    const qualDisplay = getQualDisplay(yourVal);
+    return(
+      <div className="knowledge-card" style={{borderLeftColor:item.color}} onClick={()=>onSelect(item)}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
+            <span style={{fontSize:20}}>{item.icon}</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:600,color:C.text}}>{item.title}</div>
+              {hasVal?(
+                isQual&&qualDisplay?(
+                  <div style={{fontSize:11,color:qualDisplay.color,marginTop:2}}>最新值：{qualDisplay.text}</div>
+                ):(
+                  <div style={{fontSize:11,color:st?stColors[st]:C.textMuted,marginTop:2}}>
+                    最新值：{yourVal} {LAB_STATUS[item.key]?.unit||""}
+                  </div>
+                )
+              ):(
+                <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>尚無記錄</div>
+              )}
             </div>
           </div>
-        ))}
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            {hasVal&&!isQual&&st&&(
+              <span className={`status-chip ${st==="ok"?"status-ok":st==="warn"?"status-warn":"status-alert"}`}>
+                {st==="ok"?"正常":st==="warn"?"注意":"異常"}
+              </span>
+            )}
+            {hasVal&&isQual&&qualDisplay&&(
+              <span style={{fontSize:11,fontWeight:600,color:qualDisplay.color}}>{qualDisplay.text}</span>
+            )}
+            <span style={{color:C.textMuted,fontSize:16}}>›</span>
+          </div>
+        </div>
       </div>
     );
   };
