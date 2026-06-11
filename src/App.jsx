@@ -568,7 +568,7 @@ export default function HealthJournal(){
   const [tab,setTab]=useState("home");
   const [recordTab,setRecordTab]=useState("glucose");
   const [selectedKnowledge,setSelectedKnowledge]=useState(null);
-  const [trendItem,setTrendItem]=useState("glucose");
+  const [trendItem,setTrendItem]=useState("lab");
   const [toast,setToast]=useState("");
   const [loading,setLoading]=useState(false);
   const [isOnline,setIsOnline]=useState(navigator.onLine);
