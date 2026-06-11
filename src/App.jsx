@@ -324,9 +324,32 @@ const LAB_STATUS = {
   urine_ph:   {warn:8.0, alert:9.0,  unit:"",      label:"尿液pH",    low:4.5},
 };
 
+// 定性欄位：0=陰性=正常，1=陽性=異常
+const QUALITATIVE_KEYS = new Set([
+  "hbsag","anti_hcv","asto","rf",
+  "urine_glucose","urine_bilirubin","urine_ketone",
+  "urine_nitrite","urine_urobilinogen","urine_blood","urine_leukocyte",
+]);
+// 定性欄位但陽性=正常（有保護力）
+const QUALITATIVE_POSITIVE_OK = new Set(["anti_hbs"]);
+
 const getStatus = (key, val) => {
+  if (val===null || val===undefined || val==="") return null;
+  const sVal = String(val).toLowerCase().trim();
+  // 定性：陽性=異常
+  if (QUALITATIVE_KEYS.has(key)) {
+    if (sVal==="0"||sVal==="negative"||sVal==="neg") return "ok";
+    if (sVal==="1"||sVal==="positive"||sVal==="pos") return "alert";
+    return null;
+  }
+  // 定性：陽性=正常（anti_hbs）
+  if (QUALITATIVE_POSITIVE_OK.has(key)) {
+    if (sVal==="1"||sVal==="positive"||sVal==="pos") return "ok";
+    if (sVal==="0"||sVal==="negative"||sVal==="neg") return "warn";
+    return null;
+  }
   const s = LAB_STATUS[key];
-  if (!s || val===null || val===undefined || val==="") return null;
+  if (!s) return null;
   const v = parseFloat(val);
   if (isNaN(v)) return null;
   if (s.reverse) {
@@ -339,6 +362,31 @@ const getStatus = (key, val) => {
   if (v >= s.alert) return "alert";
   if (v >= s.warn) return "warn";
   return "ok";
+};
+
+// 定性欄位：0=陰性=正常（顯示用）
+const QUAL_DISPLAY_KEYS = new Set([
+  "hbsag","anti_hcv","anti_hbs","asto","rf",
+  "urine_glucose","urine_bilirubin","urine_ketone",
+  "urine_nitrite","urine_urobilinogen","urine_blood","urine_leukocyte",
+]);
+
+// 格式化檢驗值顯示
+const fmtLabVal = (key, val) => {
+  if (val===null||val===undefined||val==="") return "";
+  // 定性欄位
+  if (QUAL_DISPLAY_KEYS.has(key)) {
+    const s = String(val).toLowerCase().trim();
+    if (s==="0"||s==="negative"||s==="neg") return "陰性";
+    if (s==="1"||s==="positive"||s==="pos") return "陽性";
+    return String(val);
+  }
+  // 尿比重固定3位小數
+  if (key==="urine_sg") {
+    const n = parseFloat(val);
+    return isNaN(n) ? String(val) : n.toFixed(3);
+  }
+  return String(val);
 };
 
 const StatusDot = ({status}) => {
@@ -977,7 +1025,12 @@ ${textPart}
     const r=await api.post("append","lab_reports",data);
     if(r?.success){
       saveHospital(labForm.hospital);
-      showToast(`✅ 抽血報告已儲存（${Object.keys(data).filter(k=>data[k]!==null&&data[k]!==undefined&&data[k]!=="").length}筆數據）`);
+      const SKIP_COUNT_KEYS = new Set(['id','date','hospital','country','doctor','fasting','note','extra_data','source_country','createdAt','_extraData','_type','_icon','_label','_summary']);
+    const dataCount = Object.keys(data).filter(k=>
+      !SKIP_COUNT_KEYS.has(k) &&
+      data[k]!==null && data[k]!==undefined && data[k]!==""
+    ).length;
+    showToast(`✅ 抽血報告已儲存（${dataCount}筆數據）`);
       setLabStep("input");
       setLabInputText("");setLabPhotos([]);
       setLabParsed({});setLabForm({date:"",hospital:"",country:"台灣",fasting:"空腹"});
@@ -2139,7 +2192,7 @@ const analyzeTrend = (key, data) => {
                                   <div key={f.key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:`1px solid ${C.border}`}}>
                                     <span style={{fontSize:12,color:C.textMuted}}>{f.label}</span>
                                     <div style={{display:"flex",alignItems:"center",gap:6}}>
-                                      <span style={{fontSize:13,fontWeight:600,color:st?stColors[st]:C.text}}>{record[f.key]}</span>
+                                      <span style={{fontSize:13,fontWeight:600,color:st?stColors[st]:C.text}}>{fmtLabVal(f.key,record[f.key])}</span>
                                       <span style={{fontSize:11,color:C.textMuted}}>{f.unit}</span>
                                       <StatusDot status={st}/>
                                     </div>
@@ -2741,7 +2794,7 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
                 {isQual&&qualVal?(
                   <span style={{fontSize:22,fontWeight:700,color:qualVal.color}}>{qualVal.text}</span>
                 ):(
-                  <span style={{fontSize:28,fontFamily:"'DM Serif Display',serif",color:st?stColors[st]:C.text}}>{yourVal}</span>
+                  <span style={{fontSize:28,fontFamily:"'DM Serif Display',serif",color:st?stColors[st]:C.text}}>{fmtLabVal(item.key, yourVal)}</span>
                 )}
                 {st&&!isQual&&(
                   <span className={`status-chip ${st==="ok"?"status-ok":st==="warn"?"status-warn":"status-alert"}`}>
@@ -2876,7 +2929,7 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
                   <div style={{fontSize:11,color:qualDisplay.color,marginTop:2}}>最新值：{qualDisplay.text}</div>
                 ):(
                   <div style={{fontSize:11,color:st?stColors[st]:C.textMuted,marginTop:2}}>
-                    最新值：{yourVal} {LAB_STATUS[item.key]?.unit||""}
+                    最新值：{fmtLabVal(item.key, yourVal)} {LAB_STATUS[item.key]?.unit||""}
                   </div>
                 )
               ):(
