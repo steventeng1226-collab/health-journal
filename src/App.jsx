@@ -816,6 +816,8 @@ T2D患者失智症風險是一般人的2倍。
 ✅ 確保睡眠7–8小時`,
   },
 ];
+
+export default function HealthJournal(){
   const [tab,setTab]=useState("home");
   const [recordTab,setRecordTab]=useState("glucose");
   const [selectedKnowledge,setSelectedKnowledge]=useState(null);
