@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.9";
+const VERSION = "v4.10";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -396,7 +396,47 @@ const StatusDot = ({status}) => {
   return <span style={{fontSize:12}}>{labels[status]}</span>;
 };
 
-// 預設追蹤項目
+// ── Cloudinary 照片上傳 ───────────────────────────────
+const compressImage = (file) => new Promise((res) => {
+  if (!file.type.startsWith("image/")) { res(file); return; }
+  const img = new Image();
+  img.onload = () => {
+    const MAX = 1200;
+    let w = img.width, h = img.height;
+    if (w > MAX || h > MAX) {
+      if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+      else { w = Math.round(w * MAX / h); h = MAX; }
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+    canvas.toBlob(
+      blob => res(new File([blob], file.name, { type: "image/jpeg" })),
+      "image/jpeg", 0.75
+    );
+  };
+  img.src = URL.createObjectURL(file);
+});
+
+const uploadToCloudinary = async (file) => {
+  const cloudName = localStorage.getItem("cloudinary_name");
+  const uploadPreset = localStorage.getItem("cloudinary_preset");
+  if (!cloudName || !uploadPreset) throw new Error("請先在設定頁填入 Cloudinary Cloud Name 和 Upload Preset");
+  const compressed = await compressImage(file);
+  const formData = new FormData();
+  formData.append("file", compressed);
+  formData.append("upload_preset", uploadPreset);
+  formData.append("folder", "health-journal");
+  const resp = await fetch(
+    `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+    { method: "POST", body: formData }
+  );
+  if (!resp.ok) throw new Error("上傳失敗，請確認 Cloud Name 和 Preset 是否正確");
+  const result = await resp.json();
+  return result.secure_url;
+};
+
+// ── 預設追蹤項目
 const DEFAULT_TRACK = ["hba1c","glucose_ac","alt","hdl","upcr","ldl","uric_acid","creatinine","crp","ggt","ck","bun","na","k","cl","mg","ca"];
 
 // 所有可追蹤項目
@@ -586,6 +626,7 @@ export default function HealthJournal(){
   const [imagingForm,setImagingForm]=useState({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
   const [imagingPhotos,setImagingPhotos]=useState([]);
   const imagingPhotoRef = React.useRef();
+  const [lightboxUrl,setLightboxUrl]=useState(null);
   const [imagingHistory,setImagingHistory]=useState([]);
   const [syncStatus,setSyncStatus]=useState("idle"); // idle|syncing|synced|error
   const [lastSync,setLastSync]=useState(null);
@@ -1061,6 +1102,7 @@ ${textPart}
       finding: imagingForm.finding,
       recommendation: imagingForm.recommendation,
       nextDate: imagingForm.nextDate,
+      driveUrl: imagingPhotos.join(","),
       note: imagingForm.note,
     });
     if (r?.success) {
@@ -2271,7 +2313,30 @@ const analyzeTrend = (key, data) => {
                           </div>
                         )}
                         {record.nextDate&&(
-                          <div style={{fontSize:12,color:C.amber}}>下次追蹤：{fmtDate(record.nextDate)}</div>
+                          <div style={{fontSize:12,color:C.amber,marginBottom:8}}>下次追蹤：{fmtDate(record.nextDate)}</div>
+                        )}
+                        {/* 照片縮圖 */}
+                        {record.driveUrl&&record.driveUrl.trim()&&(()=>{
+                          const urls = record.driveUrl.split(",").map(u=>u.trim()).filter(Boolean);
+                          if(urls.length===0)return null;
+                          return(
+                            <div style={{marginTop:8}}>
+                              <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>影像照片（{urls.length}張）</div>
+                              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                                {urls.map((url,i)=>(
+                                  <div key={i} style={{width:90,height:90,borderRadius:8,overflow:"hidden",cursor:"pointer",border:`1px solid ${C.border}`}}
+                                    onClick={()=>setLightboxUrl(url)}>
+                                    <img src={url} alt={`影像${i+1}`}
+                                      style={{width:"100%",height:"100%",objectFit:"cover"}}
+                                      onError={e=>{e.target.style.display="none";}}/>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                        {record.note&&(
+                          <div style={{marginTop:8,fontSize:11,color:C.textMuted}}>備註：{record.note}</div>
                         )}
                       </>
                     )}
@@ -2285,6 +2350,17 @@ const analyzeTrend = (key, data) => {
               </div>
             );
           })
+        )}
+
+        {/* Lightbox 全螢幕照片 */}
+        {lightboxUrl&&(
+          <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.92)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
+            onClick={()=>setLightboxUrl(null)}>
+            <img src={lightboxUrl} alt="全螢幕影像"
+              style={{maxWidth:"95vw",maxHeight:"90vh",objectFit:"contain",borderRadius:8}}/>
+            <button style={{position:"absolute",top:16,right:16,background:"rgba(255,255,255,0.15)",border:"none",color:"white",fontSize:24,width:40,height:40,borderRadius:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}
+              onClick={()=>setLightboxUrl(null)}>✕</button>
+          </div>
         )}
 
         {delConfirm&&(
@@ -2606,10 +2682,23 @@ ${mealText||"（請從圖片辨識食物）"}
               )}
               <input ref={imagingPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}}
                 onChange={async e=>{
-                  for(const file of Array.from(e.target.files).slice(0,3-imagingPhotos.length)){
-                    const dataUrl=await new Promise(res=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.readAsDataURL(file);});
-                    setImagingPhotos(prev=>[...prev,dataUrl].slice(0,3));
+                  const cloudName = localStorage.getItem("cloudinary_name");
+                  if(!cloudName){showToast("⚠️ 請先在設定頁填入 Cloudinary 設定");e.target.value="";return;}
+                  const files = Array.from(e.target.files).slice(0, 3-imagingPhotos.length);
+                  showToast(`⏳ 上傳中（0/${files.length}）...`);
+                  const urls = [];
+                  for(let i=0; i<files.length; i++){
+                    try{
+                      const url = await uploadToCloudinary(files[i]);
+                      urls.push(url);
+                      showToast(`⏳ 上傳中（${i+1}/${files.length}）...`);
+                    }catch(err){
+                      showToast("❌ 上傳失敗："+err.message);
+                      e.target.value=""; return;
+                    }
                   }
+                  setImagingPhotos(prev=>[...prev,...urls].slice(0,3));
+                  showToast(`✅ ${urls.length} 張照片已上傳`);
                   e.target.value="";
                 }}/>
             </div>
@@ -2958,6 +3047,8 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
   const SettingTab=()=>{
     const [inputKey,setInputKey]=useState(apiKey);
     const [newHospital,setNewHospital]=useState("");
+    const [cloudName,setCloudName]=useState(localStorage.getItem("cloudinary_name")||"");
+    const [cloudPreset,setCloudPreset]=useState(localStorage.getItem("cloudinary_preset")||"");
     const saved=!!localStorage.getItem("hj_apikey");
     return(
       <div className="fade-in" style={{padding:"16px 16px 80px"}}>
@@ -3046,6 +3137,45 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
             </div>
           ))}
           <div style={{fontSize:11,color:C.textMuted,marginTop:10}}>以上背景已自動帶入每次AI分析</div>
+        </div>
+
+        {/* Cloudinary 照片上傳設定 */}
+        <div className="card">
+          <div className="card-title">📷 照片上傳設定（Cloudinary）</div>
+          <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.7}}>
+            用於影像檢查照片上傳<br/>
+            至 <span style={{color:C.green}}>cloudinary.com</span> 取得 Cloud Name 與 Upload Preset（需設為 Unsigned）
+          </div>
+          {localStorage.getItem("cloudinary_name")&&(
+            <div style={{fontSize:12,color:C.green,marginBottom:8,padding:"6px 10px",background:"rgba(46,204,138,0.1)",borderRadius:8}}>
+              ✅ 已設定：{localStorage.getItem("cloudinary_name")}
+            </div>
+          )}
+          <div style={{marginBottom:10}}>
+            <div className="field-label">Cloud Name</div>
+            <input className="input-field" placeholder="例：dxaxjnhil"
+              value={cloudName} onChange={e=>setCloudName(e.target.value)}
+              style={{marginBottom:8}}/>
+            <div className="field-label">Upload Preset（Unsigned）</div>
+            <input className="input-field" placeholder="例：health-journal"
+              value={cloudPreset} onChange={e=>setCloudPreset(e.target.value)}
+              style={{marginBottom:10}}/>
+            <button className="btn-primary" onClick={()=>{
+              if(!cloudName.trim()||!cloudPreset.trim()){showToast("⚠️ 請填入 Cloud Name 和 Preset");return;}
+              localStorage.setItem("cloudinary_name",cloudName.trim());
+              localStorage.setItem("cloudinary_preset",cloudPreset.trim());
+              showToast("✅ Cloudinary 設定已儲存");
+            }}>儲存設定</button>
+          </div>
+          {localStorage.getItem("cloudinary_name")&&(
+            <button style={{width:"100%",padding:"10px",background:"transparent",border:`1px solid ${C.red}44`,borderRadius:10,color:C.red,fontSize:13,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}
+              onClick={()=>{
+                localStorage.removeItem("cloudinary_name");
+                localStorage.removeItem("cloudinary_preset");
+                setCloudName(""); setCloudPreset("");
+                showToast("🗑️ Cloudinary 設定已清除");
+              }}>清除設定</button>
+          )}
         </div>
 
         {/* 維護工具 */}
