@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.10";
+const VERSION = "v4.11";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -222,7 +222,7 @@ const styles=`
   .photo-preview img{width:100%;height:100%;object-fit:cover;}
   .photo-del{position:absolute;top:2px;right:2px;background:rgba(0,0,0,0.7);border:none;border-radius:50%;width:20px;height:20px;color:white;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:flex-end;justify-content:center;z-index:200;padding:0;}
-  .overlay-sheet{background:${C.bgCard};border-radius:20px 20px 0 0;width:100%;max-width:480px;padding:20px 20px 40px;max-height:75vh;overflow-y:auto;}
+  .overlay-sheet{background:${C.bgCard};border-radius:20px 20px 0 0;width:100%;max-width:480px;padding:20px 20px 90px;max-height:80vh;overflow-y:auto;}
 `;
 
 // Icons
@@ -564,10 +564,267 @@ const KNOWLEDGE_ITEMS=[
   {key:"urine_leukocyte",group:"🔍 尿液分析",title:"尿白血球",icon:"🦠",color:C.green,fullName:"Urine Leukocyte",desc:"尿液中有白血球（膿尿），是泌尿道感染最重要的指標。",range:"陰性（－）= 正常",high:"泌尿道感染（UTI）是最常見原因，也見於間質性腎炎、腎結核。",low:"無意義。",tips:["合併亞硝酸鹽陽性強烈提示UTI","多喝水是最好的預防方法","T2D患者UTI風險較高"],related:"與亞硝酸鹽、尿液細菌培養相關"},
 ];
 
-export default function HealthJournal(){
+// ── 內建健康知識文章 ──────────────────────────────────
+const BUILTIN_ARTICLES = [
+  {
+    id:"builtin_1", tag:"血糖", icon:"🩸", builtin:true,
+    title:"糖尿病前期逆轉指南",
+    content:`糖尿病前期（HbA1c 5.7–6.4%）是可逆的，現在介入效果最好。
+
+**為什麼要重視？**
+研究顯示，糖尿病前期如不介入，10年內約有50%會進展為T2D。但透過生活方式改變，可降低58%的進展風險。
+
+**關鍵介入方法**
+
+1. 減重 5–7%
+每減1kg，HbA1c約可降0.1%。體重從66kg減到62kg，HbA1c預計可降0.4%。
+
+2. 每週150分鐘中強度運動
+快走、游泳、騎車均可。飯後30分鐘走15分鐘效果最直接。
+
+3. 低GI飲食
+白米換糙米，減少麵包、餅乾、含糖飲料。每餐先吃蔬菜再吃飯。
+
+4. 每3個月追蹤HbA1c
+觀察趨勢比單次數值更重要。
+
+**你的目標**
+HbA1c 從5.97% → 5.6% 以下，代表已脫離糖尿病前期範圍。`,
+  },
+  {
+    id:"builtin_2", tag:"血糖", icon:"🔬", builtin:true,
+    title:"什麼是胰島素阻抗？",
+    content:`胰島素阻抗是T2D和代謝症候群的核心問題。
+
+**簡單說明**
+正常情況下，胰島素像鑰匙，血糖像門。胰島素阻抗就像「鎖生鏽了」，需要更多鑰匙才能開門，導致血糖和胰島素同時偏高。
+
+**如何判斷你有胰島素阻抗？**
+- HbA1c 或空腹血糖偏高
+- 三酸甘油酯偏高
+- HDL偏低
+- 腰圍偏大（男 > 90cm）
+- 脂肪肝
+
+你目前符合：HbA1c 5.97%、HDL偏低、脂肪肝，需要積極介入。
+
+**改善方法**
+- 減少精緻碳水（最有效）
+- 規律運動（肌肉是消耗血糖的主要器官）
+- 充足睡眠（睡眠不足會加重胰島素阻抗）
+- 減重（腹部脂肪是主要元凶）`,
+  },
+  {
+    id:"builtin_3", tag:"肝臟", icon:"🫀", builtin:true,
+    title:"脂肪肝如何改善？",
+    content:`脂肪肝 Grade 1（輕度）是完全可逆的。
+
+**什麼是脂肪肝？**
+肝臟細胞內脂肪堆積超過5%就是脂肪肝。主要原因是代謝問題，與飲酒無關的稱為非酒精性脂肪肝（NAFLD）。
+
+**你目前的狀況**
+Grade 1（輕度）：肝回音增強，ALT 50.6（輕度偏高）。門靜脈正常，無肝硬化徵象，預後良好。
+
+**改善關鍵：體重**
+研究顯示體重減少5%，脂肪肝可顯著改善；減少7–10%，大部分可完全逆轉。
+
+**具體做法**
+1. 減少精緻糖和果糖（珍珠奶茶、含糖飲料是最大敵人）
+2. 減少飽和脂肪（紅肉、炸物）
+3. 增加有氧運動
+4. 避免飲酒
+5. 每6個月追蹤腹部超音波和ALT
+
+**追蹤指標**
+ALT、GGT、腹部超音波（每6個月）`,
+  },
+  {
+    id:"builtin_4", tag:"血脂", icon:"💉", builtin:true,
+    title:"HDL 偏低怎麼辦？",
+    content:`HDL（好膽固醇）偏低是心血管疾病的獨立危險因子。
+
+**你的狀況**
+HDL 30.94 mg/dL（正常男性 > 40），明顯偏低。
+
+**為什麼HDL重要？**
+HDL負責把血管壁多餘的膽固醇運回肝臟代謝，數值越高，心血管保護力越強。HDL < 40 mg/dL 是代謝症候群的診斷標準之一。
+
+**提升HDL最有效的方法**
+
+1. 有氧運動（最有效）
+每週150分鐘以上，HDL可提升5–10%。快走、游泳、騎車均可。
+
+2. 減重
+每減1kg，HDL約可提升0.35 mg/dL。
+
+3. 健康脂肪
+橄欖油、堅果、酪梨、深海魚（omega-3）。
+
+4. 戒菸
+吸菸是降低HDL的重要因素。
+
+5. 減少精緻糖
+三酸甘油酯和HDL呈反比，降低TG有助提升HDL。
+
+**目標**
+HDL > 40 mg/dL（理想 > 60）`,
+  },
+  {
+    id:"builtin_5", tag:"尿酸", icon:"🔬", builtin:true,
+    title:"痛風的飲食控制",
+    content:`尿酸過高（高尿酸血症）是痛風的根本原因，也與腎臟和心血管疾病相關。
+
+**你的狀況**
+尿酸 7.52 mg/dL（正常男性 < 7.0），輕度偏高。尚未發作痛風，但需要注意。
+
+**高普林食物（需限制）**
+- 內臟類：肝、腎、腦（最高）
+- 海鮮：沙丁魚、鯖魚、蛤蜊
+- 紅肉：牛、豬、羊
+- 啤酒（酒精本身也會升高尿酸）
+
+**低普林食物（可多吃）**
+- 蔬菜、水果
+- 蛋、乳製品
+- 豆腐（雖是豆類但普林較低）
+
+**關鍵習慣**
+1. 每天喝水 2000mL 以上（幫助尿酸排出）
+2. 避免突然劇烈運動（會暫時升高尿酸）
+3. 減重（肥胖是高尿酸的重要原因）
+4. 避免含糖飲料（果糖會升高尿酸）
+
+**目標**
+尿酸 < 6.0 mg/dL（預防痛風發作的安全值）`,
+  },
+  {
+    id:"builtin_6", tag:"綜合", icon:"🫒", builtin:true,
+    title:"地中海飲食入門",
+    content:`地中海飲食是目前實證最強的健康飲食模式之一，對你的多個健康問題都有幫助。
+
+**對你的具體好處**
+- 降低HbA1c和改善胰島素阻抗
+- 提升HDL（好膽固醇）
+- 改善脂肪肝
+- 降低心血管疾病風險
+- 預防失智症
+
+**核心原則**
+
+🫒 大量蔬菜水果
+每餐至少半盤蔬菜，各種顏色都要有。
+
+🐟 每週2次深海魚
+鮭魚、鯖魚、沙丁魚富含omega-3，對心血管和大腦都好。
+
+🌾 全穀類取代精緻澱粉
+糙米、燕麥、全麥麵包取代白米、白麵包。
+
+🥜 堅果和豆類
+每天一小把堅果（杏仁、核桃），每週數次豆類。
+
+🫒 橄欖油為主要油脂
+取代奶油和動物油脂。
+
+🍷 減少紅肉
+每週不超過2次，以魚和禽肉為主。
+
+**越南版地中海飲食**
+- 河粉→ 選清湯版，多加蔬菜
+- 白飯→ 混入糙米
+- 多選海鮮和蔬菜料理`,
+  },
+  {
+    id:"builtin_7", tag:"腎臟", icon:"🫘", builtin:true,
+    title:"腎臟保護的日常習慣",
+    content:`你的 eGFR 68.66（G2期，輕度下降），需要主動保護腎臟。
+
+**為什麼腎臟重要？**
+腎臟一旦受損很難恢復，保護腎臟比治療更重要。糖尿病前期患者是慢性腎臟病的高風險族群。
+
+**每日保護腎臟的習慣**
+
+1. 多喝水
+每天 1500–2000mL，維持尿液淡黃色。幫助廢物排出，預防腎結石。
+
+2. 控制血糖
+血糖是傷腎最主要的原因。HbA1c 每降低1%，腎臟併發症風險降低37%。
+
+3. 控制血壓
+目標 < 130/80 mmHg。你目前 130/90，需要注意。
+
+4. 避免止痛藥
+NSAID類（布洛芬、阿斯匹靈大劑量）會傷腎，非必要不用。
+
+5. 定期追蹤
+每6個月：肌酸酐、eGFR、UPCR
+異常趨勢比單次數值更重要。
+
+6. 適量蛋白質
+不需要過度限制，但避免高蛋白飲食（每日蛋白質 0.8g/kg體重）。
+
+**你的追蹤計畫**
+eGFR 68 → 目標維持在 60 以上
+UPCR 每6個月追蹤（早期腎病變指標）`,
+  },
+  {
+    id:"builtin_8", tag:"大腦", icon:"🧠", builtin:true,
+    title:"大腦健康與預防失智症",
+    content:`失智症不是老化的必然結果，40%的風險是可以預防的。
+
+**與你相關的風險因素**
+- 血糖控制不佳（糖尿病前期）：大腦神經細胞也需要胰島素
+- 高血壓：傷害腦部血管
+- 脂肪肝和代謝症候群：與認知功能下降相關
+- 睡眠不足：大腦清除廢物（包括β-amyloid）主要在睡眠中進行
+
+**保護大腦的飲食**
+
+🐟 Omega-3脂肪酸
+鮭魚、鯖魚、核桃。DHA是大腦細胞膜的主要成分。
+
+🫐 抗氧化食物
+藍莓、草莓、黑巧克力、深色蔬菜。對抗自由基傷害。
+
+🥦 十字花科蔬菜
+花椰菜、高麗菜含蘿蔔硫素，有神經保護作用。
+
+☕ 適量咖啡
+每天1–2杯咖啡（不加糖）可降低失智症風險20–30%。
+
+**保護大腦的生活習慣**
+
+1. 持續學習（建立認知儲備）
+學習新語言、樂器、新技能都有效。
+
+2. 規律運動
+有氧運動促進BDNF（腦源性神經滋養因子）分泌，幫助神經細胞生長。
+
+3. 充足睡眠（7–8小時）
+睡眠中大腦清除β-amyloid（失智症相關蛋白質）。
+
+4. 社交連結
+孤立是失智症的獨立危險因子。
+
+5. 控制血糖和血壓
+T2D患者失智症風險是一般人的2倍。
+
+**你現在可以做的**
+✅ 每週2次深海魚
+✅ 每天快走30分鐘
+✅ 控制HbA1c < 5.7%
+✅ 確保睡眠7–8小時`,
+  },
+];
   const [tab,setTab]=useState("home");
   const [recordTab,setRecordTab]=useState("glucose");
   const [selectedKnowledge,setSelectedKnowledge]=useState(null);
+  const [kbTab,setKbTab]=useState("lab"); // lab | articles
+  const [selectedArticle,setSelectedArticle]=useState(null);
+  const [customArticles,setCustomArticles]=useState(()=>{
+    try{return JSON.parse(localStorage.getItem("hj_articles")||"[]");}catch(e){return[];}
+  });
+  const [showAddArticle,setShowAddArticle]=useState(false);
   const [trendItem,setTrendItem]=useState("lab");
   const [toast,setToast]=useState("");
   const [loading,setLoading]=useState(false);
@@ -2808,36 +3065,111 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
   // ── 知識庫 ─────────────────────────────────────────────
   const KnowledgeTab=()=>{
     const [kbSearch, setKbSearch] = useState("");
+    const [openGroup, setOpenGroup] = useState(null);
+    const [articleForm, setArticleForm] = useState({title:"",tag:"血糖",content:"",photos:[]});
+    const [uploadingPhoto, setUploadingPhoto] = useState(false);
+    const articlePhotoRef = React.useRef();
     const latestLab = labHistory.length > 0 ? labHistory[labHistory.length-1] : null;
+    const allArticles = [...BUILTIN_ARTICLES, ...customArticles];
 
-    // 定性項目（0/1或negative/positive）顯示轉換
-    const fmtQualVal = (v) => {
-      if(v===null||v===undefined||v==="")return null;
-      const s = String(v).toLowerCase().trim();
-      if(s==="0"||s==="negative"||s==="neg"||s==="陰性")return{text:"陰性 (－)",color:C.green};
-      if(s==="1"||s==="positive"||s==="pos"||s==="陽性")return{text:"陽性 (＋)",color:C.red};
-      return{text:String(v),color:C.text};
+    const saveCustomArticle = () => {
+      if(!articleForm.title.trim()||!articleForm.content.trim()){showToast("⚠️ 請填入標題和內容");return;}
+      const newArt = {
+        id:"custom_"+Date.now(),
+        tag:articleForm.tag,
+        icon:"📝",
+        builtin:false,
+        title:articleForm.title.trim(),
+        content:articleForm.content.trim(),
+        photos:articleForm.photos,
+        createdAt:new Date().toISOString().split("T")[0],
+      };
+      const updated = [...customArticles, newArt];
+      setCustomArticles(updated);
+      localStorage.setItem("hj_articles", JSON.stringify(updated));
+      setArticleForm({title:"",tag:"血糖",content:"",photos:[]});
+      setShowAddArticle(false);
+      showToast("✅ 知識文章已儲存");
     };
 
-    // 取得你的最新值
-    const getYourVal = (key) => {
-      if(!latestLab) return null;
-      const v = latestLab[key];
-      if(v===null||v===undefined||v==="")return null;
-      return v;
+    const deleteCustomArticle = (id) => {
+      const updated = customArticles.filter(a=>a.id!==id);
+      setCustomArticles(updated);
+      localStorage.setItem("hj_articles", JSON.stringify(updated));
+      setSelectedArticle(null);
+      showToast("🗑️ 已刪除");
     };
 
-    // 詳細頁
+    // ── 文章詳細頁 ──
+    if(selectedArticle){
+      const art = selectedArticle;
+      const paragraphs = art.content.split("\n").map((line,i)=>{
+        if(line.startsWith("**")&&line.endsWith("**")){
+          return <div key={i} style={{fontWeight:700,color:C.green,marginTop:12,marginBottom:4,fontSize:14}}>{line.replace(/\*\*/g,"")}</div>;
+        }
+        if(line.startsWith("- ")||line.match(/^\d+\./)){
+          return <div key={i} style={{fontSize:13,lineHeight:1.8,paddingLeft:12,color:C.text}}>{line}</div>;
+        }
+        if(line.trim()==="")return <div key={i} style={{height:8}}/>;
+        return <div key={i} style={{fontSize:13,lineHeight:1.8,color:C.text}}>{line}</div>;
+      });
+      return(
+        <div className="fade-in" style={{padding:"16px 16px 80px"}}>
+          <button className="btn-secondary" style={{marginBottom:16}} onClick={()=>setSelectedArticle(null)}>← 返回知識庫</button>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+            <span style={{fontSize:36}}>{art.icon}</span>
+            <div>
+              <div style={{fontSize:18,fontWeight:700,color:C.text}}>{art.title}</div>
+              <div style={{display:"flex",gap:6,marginTop:4}}>
+                <span style={{fontSize:11,padding:"2px 8px",background:"rgba(46,204,138,0.15)",borderRadius:10,color:C.green}}>{art.tag}</span>
+                {art.builtin&&<span style={{fontSize:11,padding:"2px 8px",background:"rgba(90,180,255,0.15)",borderRadius:10,color:C.blue}}>內建</span>}
+                {art.createdAt&&!art.builtin&&<span style={{fontSize:11,color:C.textMuted}}>{art.createdAt}</span>}
+              </div>
+            </div>
+          </div>
+          <div className="card">
+            {paragraphs}
+          </div>
+          {art.photos&&art.photos.length>0&&(
+            <div className="card">
+              <div className="card-title">圖片</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {art.photos.map((url,i)=>(
+                  <div key={i} style={{width:100,height:100,borderRadius:8,overflow:"hidden",cursor:"pointer",border:`1px solid ${C.border}`}}
+                    onClick={()=>setLightboxUrl(url)}>
+                    <img src={url} alt={`圖片${i+1}`} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {!art.builtin&&(
+            <button style={{width:"100%",padding:"12px",background:"transparent",border:`1px solid ${C.red}44`,borderRadius:10,color:C.red,fontSize:13,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif",marginTop:8}}
+              onClick={()=>deleteCustomArticle(art.id)}>
+              🗑️ 刪除這篇文章
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    // ── 檢驗指標詳細頁 ──
     if(selectedKnowledge){
       const item = selectedKnowledge;
-      const yourVal = getYourVal(item.key);
+      const yourVal = latestLab?.[item.key];
+      const hasVal = yourVal!==null&&yourVal!==undefined&&yourVal!=="";
       const st = getStatus(item.key, yourVal);
       const stColors = {ok:C.green, warn:C.amber, alert:C.red};
-      const qualVal = fmtQualVal(yourVal);
       const isQual = ["hbsag","anti_hbs","anti_hcv","asto","rf",
         "urine_glucose","urine_bilirubin","urine_ketone","urine_nitrite",
         "urine_urobilinogen","urine_blood","urine_leukocyte","crp"].includes(item.key);
-
+      const qualVal = isQual ? (()=>{
+        if(!hasVal)return null;
+        const s=String(yourVal).toLowerCase().trim();
+        if(s==="0"||s==="negative"||s==="neg")return{text:"陰性 (－)",color:C.green};
+        if(s==="1"||s==="positive"||s==="pos")return{text:"陽性 (＋)",color:C.red};
+        return{text:String(yourVal),color:C.text};
+      })() : null;
       return(
         <div className="fade-in" style={{padding:"16px 16px 80px"}}>
           <button className="btn-secondary" style={{marginBottom:16}} onClick={()=>setSelectedKnowledge(null)}>← 返回知識庫</button>
@@ -2849,20 +3181,8 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
               <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>{item.group}</div>
             </div>
           </div>
-
-          {/* 說明 */}
-          <div className="card">
-            <div className="card-title">說明</div>
-            <div style={{fontSize:14,lineHeight:1.8,color:C.text}}>{item.desc}</div>
-          </div>
-
-          {/* 正常範圍 */}
-          <div className="card">
-            <div className="card-title">正常範圍</div>
-            <div style={{fontSize:14,color:C.green,lineHeight:1.8}}>{item.range}</div>
-          </div>
-
-          {/* 偏高/偏低 */}
+          <div className="card"><div className="card-title">說明</div><div style={{fontSize:14,lineHeight:1.8,color:C.text}}>{item.desc}</div></div>
+          <div className="card"><div className="card-title">正常範圍</div><div style={{fontSize:14,color:C.green,lineHeight:1.8}}>{item.range}</div></div>
           <div className="card">
             <div className="card-title">數值意義</div>
             <div style={{padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
@@ -2874,16 +3194,14 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
               <div style={{fontSize:13,lineHeight:1.7}}>{item.low}</div>
             </div>
           </div>
-
-          {/* 你的最新值 */}
-          {yourVal!==null&&(
-            <div className="card" style={{border:`1px solid ${item.color}44`}}>
-              <div className="card-title">你的最新值</div>
+          <div className="card" style={{border:`1px solid ${item.color}44`}}>
+            <div className="card-title">你的最新值</div>
+            {hasVal?(
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                 {isQual&&qualVal?(
                   <span style={{fontSize:22,fontWeight:700,color:qualVal.color}}>{qualVal.text}</span>
                 ):(
-                  <span style={{fontSize:28,fontFamily:"'DM Serif Display',serif",color:st?stColors[st]:C.text}}>{fmtLabVal(item.key, yourVal)}</span>
+                  <span style={{fontSize:28,fontFamily:"'DM Serif Display',serif",color:st?stColors[st]:C.text}}>{fmtLabVal(item.key,yourVal)}</span>
                 )}
                 {st&&!isQual&&(
                   <span className={`status-chip ${st==="ok"?"status-ok":st==="warn"?"status-warn":"status-alert"}`}>
@@ -2891,19 +3209,11 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
                   </span>
                 )}
               </div>
-              <div style={{fontSize:11,color:C.textMuted,marginTop:6}}>
-                來自最新報告：{fmtDateFull(latestLab?.date)} {latestLab?.hospital}
-              </div>
-            </div>
-          )}
-          {yourVal===null&&(
-            <div className="card" style={{border:`1px solid ${C.border}`}}>
-              <div className="card-title">你的最新值</div>
+            ):(
               <div style={{fontSize:13,color:C.textMuted}}>此項目尚無記錄</div>
-            </div>
-          )}
-
-          {/* 改善建議 */}
+            )}
+            {hasVal&&<div style={{fontSize:11,color:C.textMuted,marginTop:6}}>來自最新報告：{fmtDateFull(latestLab?.date)} {latestLab?.hospital}</div>}
+          </div>
           <div className="card">
             <div className="card-title">改善建議</div>
             {item.tips.map((tip,i)=>(
@@ -2913,8 +3223,6 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
               </div>
             ))}
           </div>
-
-          {/* 相關指標 */}
           <div className="card">
             <div className="card-title">相關指標</div>
             <div style={{fontSize:13,color:C.textMuted,lineHeight:1.7}}>{item.related}</div>
@@ -2923,15 +3231,93 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
       );
     }
 
-    // 列表頁
+    // ── 新增文章頁 ──
+    if(showAddArticle){
+      const TAGS=["血糖","肝臟","腎臟","血脂","心血管","大腦","骨骼","腸道","尿酸","綜合","其他"];
+      return(
+        <div className="fade-in" style={{padding:"16px 16px 80px"}}>
+          <button className="btn-secondary" style={{marginBottom:16}} onClick={()=>setShowAddArticle(false)}>← 返回</button>
+          <div className="section-header">✏️ 新增健康知識</div>
+          <div className="card">
+            <div className="field-label">標題</div>
+            <input className="input-field" style={{marginBottom:12}} placeholder="例：我的血壓控制心得"
+              value={articleForm.title} onChange={e=>setArticleForm(f=>({...f,title:e.target.value}))}/>
+            <div className="field-label">分類</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+              {TAGS.map(t=>(
+                <button key={t} className={`btn-sm ${articleForm.tag===t?"active":""}`}
+                  style={articleForm.tag===t?{background:"rgba(46,204,138,0.2)",borderColor:C.green,color:C.green}:{}}
+                  onClick={()=>setArticleForm(f=>({...f,tag:t}))}>{t}</button>
+              ))}
+            </div>
+            <div className="field-label">內容</div>
+            <textarea className="input-field" rows={8} style={{resize:"vertical",marginBottom:12}}
+              placeholder="輸入知識內容...&#10;&#10;支援簡單格式：&#10;**粗體標題**&#10;- 項目列表&#10;1. 編號列表"
+              value={articleForm.content} onChange={e=>setArticleForm(f=>({...f,content:e.target.value}))}/>
+            <div className="field-label">圖片（選填，最多3張）</div>
+            {articleForm.photos.length>0&&(
+              <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                {articleForm.photos.map((url,i)=>(
+                  <div key={i} style={{position:"relative",width:80,height:80}}>
+                    <img src={url} style={{width:80,height:80,objectFit:"cover",borderRadius:8}}/>
+                    <button style={{position:"absolute",top:-6,right:-6,background:C.red,border:"none",borderRadius:10,color:"white",width:20,height:20,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}
+                      onClick={()=>setArticleForm(f=>({...f,photos:f.photos.filter((_,idx)=>idx!==i)}))}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {articleForm.photos.length<3&&(
+              <div style={{border:`2px dashed ${C.border}`,borderRadius:10,padding:"12px",textAlign:"center",cursor:"pointer",marginBottom:12}}
+                onClick={()=>articlePhotoRef.current?.click()}>
+                {uploadingPhoto?(
+                  <div style={{fontSize:12,color:C.textMuted}}>⏳ 上傳中...</div>
+                ):(
+                  <>
+                    <div style={{fontSize:20,marginBottom:4}}>📷</div>
+                    <div style={{fontSize:12,color:C.textMuted}}>點擊上傳圖片</div>
+                  </>
+                )}
+              </div>
+            )}
+            <input ref={articlePhotoRef} type="file" accept="image/*" multiple style={{display:"none"}}
+              onChange={async e=>{
+                const cloudName=localStorage.getItem("cloudinary_name");
+                if(!cloudName){showToast("⚠️ 請先在設定頁填入 Cloudinary 設定");e.target.value="";return;}
+                setUploadingPhoto(true);
+                const files=Array.from(e.target.files).slice(0,3-articleForm.photos.length);
+                const urls=[];
+                for(const file of files){
+                  try{
+                    const url=await uploadToCloudinary(file);
+                    urls.push(url);
+                  }catch(err){showToast("❌ 上傳失敗："+err.message);break;}
+                }
+                setArticleForm(f=>({...f,photos:[...f.photos,...urls].slice(0,3)}));
+                setUploadingPhoto(false);
+                e.target.value="";
+              }}/>
+            <button className="btn-primary" onClick={saveCustomArticle}>儲存文章</button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── 列表主頁 ──
     const groups = [...new Set(KNOWLEDGE_ITEMS.map(i=>i.group))];
     const searchLower = kbSearch.toLowerCase().trim();
-    const filtered = searchLower
+    const filteredLab = searchLower
       ? KNOWLEDGE_ITEMS.filter(i=>
           i.title.toLowerCase().includes(searchLower)||
           (i.fullName||"").toLowerCase().includes(searchLower)||
           i.key.toLowerCase().includes(searchLower)||
           i.group.toLowerCase().includes(searchLower)
+        )
+      : null;
+    const filteredArticles = searchLower
+      ? allArticles.filter(a=>
+          a.title.toLowerCase().includes(searchLower)||
+          a.tag.toLowerCase().includes(searchLower)||
+          a.content.toLowerCase().includes(searchLower)
         )
       : null;
 
@@ -2940,60 +3326,113 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
         <div className="section-header">📚 健康知識庫</div>
 
         {/* 搜尋欄 */}
-        <div style={{position:"relative",marginBottom:16}}>
+        <div style={{position:"relative",marginBottom:12}}>
           <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:16,color:C.textMuted}}>🔍</span>
           <input className="input-field" style={{paddingLeft:36}}
             placeholder="搜尋項目（ALT、血糖、腎功能...）"
-            value={kbSearch}
-            onChange={e=>setKbSearch(e.target.value)}
-          />
+            value={kbSearch} onChange={e=>setKbSearch(e.target.value)}/>
           {kbSearch&&(
             <button style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.textMuted,fontSize:16,cursor:"pointer"}}
               onClick={()=>setKbSearch("")}>✕</button>
           )}
         </div>
 
-        {/* 糖尿病前期提示（僅搜尋為空時顯示）*/}
+        {/* Tab 切換 */}
         {!searchLower&&(
-          <div style={{background:"rgba(255,179,71,0.08)",border:"1px solid rgba(255,179,71,0.25)",borderRadius:14,padding:14,marginBottom:16}}>
-            <div style={{fontSize:13,fontWeight:700,color:C.amber,marginBottom:6}}>📌 糖尿病前期專區</div>
-            <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>HbA1c 5.97% + 家族史 T2D = 高風險群<br/>好消息：糖尿病前期是可逆的，現在介入效果最好！</div>
+          <div style={{display:"flex",gap:8,marginBottom:16}}>
+            {[{key:"lab",label:"📊 檢驗指標"},{key:"articles",label:"📖 健康知識"}].map(t=>(
+              <button key={t.key} onClick={()=>setKbTab(t.key)}
+                style={{flex:1,padding:"10px",borderRadius:10,border:`1px solid ${kbTab===t.key?C.green:C.border}`,
+                  background:kbTab===t.key?"rgba(46,204,138,0.12)":"transparent",
+                  color:kbTab===t.key?C.green:C.textMuted,fontSize:13,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif",fontWeight:kbTab===t.key?700:400}}>
+                {t.label}
+              </button>
+            ))}
           </div>
         )}
 
         {/* 搜尋結果 */}
         {searchLower&&(
           <div>
-            <div style={{fontSize:12,color:C.textMuted,marginBottom:10}}>找到 {filtered.length} 個項目</div>
-            {filtered.length===0?(
-              <div className="empty-state">找不到「{kbSearch}」<br/>試試輸入英文縮寫或中文名稱</div>
-            ):(
-              filtered.map(item=><KnowledgeCard key={item.key} item={item} latestLab={latestLab} onSelect={setSelectedKnowledge}/>)
+            {filteredLab.length>0&&(
+              <>
+                <div style={{fontSize:11,color:C.textMuted,letterSpacing:1,marginBottom:8}}>檢驗指標（{filteredLab.length}項）</div>
+                {filteredLab.map(item=><KnowledgeCard key={item.key} item={item} latestLab={latestLab} onSelect={setSelectedKnowledge}/>)}
+              </>
+            )}
+            {filteredArticles.length>0&&(
+              <>
+                <div style={{fontSize:11,color:C.textMuted,letterSpacing:1,marginBottom:8,marginTop:12}}>健康知識（{filteredArticles.length}篇）</div>
+                {filteredArticles.map(art=><ArticleCard key={art.id} art={art} onSelect={setSelectedArticle}/>)}
+              </>
+            )}
+            {filteredLab.length===0&&filteredArticles.length===0&&(
+              <div className="empty-state">找不到「{kbSearch}」</div>
             )}
           </div>
         )}
 
-        {/* 分組列表 */}
-        {!searchLower&&groups.map(group=>{
-          const items = KNOWLEDGE_ITEMS.filter(i=>i.group===group);
-          return(
-            <div key={group} style={{marginBottom:20}}>
-              <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:8,paddingLeft:2}}>{group}</div>
-              {items.map(item=><KnowledgeCard key={item.key} item={item} latestLab={latestLab} onSelect={setSelectedKnowledge}/>)}
+        {/* 檢驗指標 Tab */}
+        {!searchLower&&kbTab==="lab"&&(
+          <>
+            <div style={{background:"rgba(255,179,71,0.08)",border:"1px solid rgba(255,179,71,0.25)",borderRadius:14,padding:14,marginBottom:16}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.amber,marginBottom:6}}>📌 糖尿病前期專區</div>
+              <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>HbA1c 5.97% + 家族史 T2D = 高風險群<br/>好消息：糖尿病前期是可逆的，現在介入效果最好！</div>
             </div>
-          );
-        })}
+            {groups.map(group=>{
+              const items = KNOWLEDGE_ITEMS.filter(i=>i.group===group);
+              const isOpen = openGroup===group;
+              return(
+                <div key={group} style={{marginBottom:8}}>
+                  {/* 分組標題 */}
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                    padding:"14px 16px",background:C.bgCard,borderRadius:isOpen?"12px 12px 0 0":"12px",
+                    border:`1px solid ${isOpen?C.green:C.border}`,cursor:"pointer"}}
+                    onClick={()=>setOpenGroup(isOpen?null:group)}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <span style={{fontSize:18}}>{group.split(" ")[0]}</span>
+                      <span style={{fontSize:14,fontWeight:600,color:C.text}}>{group.replace(/^[^\s]+\s/,"")}</span>
+                      <span style={{fontSize:11,color:C.textMuted}}>（{items.length}項）</span>
+                    </div>
+                    <span style={{color:isOpen?C.green:C.textMuted,fontSize:14,transition:"transform 0.2s",
+                      transform:isOpen?"rotate(180deg)":"rotate(0deg)"}}>▼</span>
+                  </div>
+                  {/* 展開內容 */}
+                  {isOpen&&(
+                    <div style={{border:`1px solid ${C.green}`,borderTop:"none",borderRadius:"0 0 12px 12px",overflow:"hidden",marginBottom:2}}>
+                      {items.map(item=><KnowledgeCard key={item.key} item={item} latestLab={latestLab} onSelect={setSelectedKnowledge}/>)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {/* 健康知識 Tab */}
+        {!searchLower&&kbTab==="articles"&&(
+          <>
+            <button className="btn-secondary" style={{width:"100%",marginBottom:16}}
+              onClick={()=>setShowAddArticle(true)}>
+              ✏️ 新增知識文章
+            </button>
+            {allArticles.length===0?(
+              <div className="empty-state">尚無文章，點上方按鈕新增</div>
+            ):(
+              allArticles.map(art=><ArticleCard key={art.id} art={art} onSelect={setSelectedArticle}/>)
+            )}
+          </>
+        )}
       </div>
     );
   };
 
-  // 知識庫卡片元件
+  // 知識庫檢驗指標卡片
   const KnowledgeCard=({item,latestLab,onSelect})=>{
     const yourVal = latestLab?.[item.key];
     const hasVal = yourVal!==null&&yourVal!==undefined&&yourVal!=="";
     const st = getStatus(item.key, yourVal);
     const stColors = {ok:C.green, warn:C.amber, alert:C.red};
-    // 定性項目
     const qualKeys = ["hbsag","anti_hbs","anti_hcv","asto","rf",
       "urine_glucose","urine_bilirubin","urine_ketone","urine_nitrite",
       "urine_urobilinogen","urine_blood","urine_leukocyte","crp"];
@@ -3007,41 +3446,58 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
     };
     const qualDisplay = getQualDisplay(yourVal);
     return(
-      <div className="knowledge-card" style={{borderLeftColor:item.color}} onClick={()=>onSelect(item)}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
-            <span style={{fontSize:20}}>{item.icon}</span>
-            <div style={{flex:1}}>
-              <div style={{fontSize:13,fontWeight:600,color:C.text}}>{item.title}</div>
-              {hasVal?(
-                isQual&&qualDisplay?(
-                  <div style={{fontSize:11,color:qualDisplay.color,marginTop:2}}>最新值：{qualDisplay.text}</div>
-                ):(
-                  <div style={{fontSize:11,color:st?stColors[st]:C.textMuted,marginTop:2}}>
-                    最新值：{fmtLabVal(item.key, yourVal)} {LAB_STATUS[item.key]?.unit||""}
-                  </div>
-                )
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+        padding:"12px 16px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:"transparent"}}
+        onClick={()=>onSelect(item)}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
+          <span style={{fontSize:18}}>{item.icon}</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:600,color:C.text}}>{item.title}</div>
+            {hasVal?(
+              isQual&&qualDisplay?(
+                <div style={{fontSize:11,color:qualDisplay.color,marginTop:2}}>最新值：{qualDisplay.text}</div>
               ):(
-                <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>尚無記錄</div>
-              )}
-            </div>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
-            {hasVal&&!isQual&&st&&(
-              <span className={`status-chip ${st==="ok"?"status-ok":st==="warn"?"status-warn":"status-alert"}`}>
-                {st==="ok"?"正常":st==="warn"?"注意":"異常"}
-              </span>
+                <div style={{fontSize:11,color:st?stColors[st]:C.textMuted,marginTop:2}}>
+                  最新值：{fmtLabVal(item.key,yourVal)} {LAB_STATUS[item.key]?.unit||""}
+                </div>
+              )
+            ):(
+              <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>尚無記錄</div>
             )}
-            {hasVal&&isQual&&qualDisplay&&(
-              <span style={{fontSize:11,fontWeight:600,color:qualDisplay.color}}>{qualDisplay.text}</span>
-            )}
-            <span style={{color:C.textMuted,fontSize:16}}>›</span>
           </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          {hasVal&&!isQual&&st&&(
+            <span className={`status-chip ${st==="ok"?"status-ok":st==="warn"?"status-warn":"status-alert"}`}>
+              {st==="ok"?"正常":st==="warn"?"注意":"異常"}
+            </span>
+          )}
+          {hasVal&&isQual&&qualDisplay&&(
+            <span style={{fontSize:11,fontWeight:600,color:qualDisplay.color}}>{qualDisplay.text}</span>
+          )}
+          <span style={{color:C.textMuted,fontSize:16}}>›</span>
         </div>
       </div>
     );
   };
 
+  // 健康知識文章卡片
+  const ArticleCard=({art,onSelect})=>(
+    <div className="card" style={{cursor:"pointer",marginBottom:10}} onClick={()=>onSelect(art)}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <span style={{fontSize:28}}>{art.icon}</span>
+        <div style={{flex:1}}>
+          <div style={{fontSize:14,fontWeight:600,color:C.text}}>{art.title}</div>
+          <div style={{display:"flex",gap:6,marginTop:4,alignItems:"center"}}>
+            <span style={{fontSize:11,padding:"2px 8px",background:"rgba(46,204,138,0.12)",borderRadius:10,color:C.green}}>{art.tag}</span>
+            {art.builtin&&<span style={{fontSize:11,padding:"2px 8px",background:"rgba(90,180,255,0.12)",borderRadius:10,color:C.blue}}>內建</span>}
+            {art.photos&&art.photos.length>0&&<span style={{fontSize:11,color:C.textMuted}}>📷 {art.photos.length}張</span>}
+          </div>
+        </div>
+        <span style={{color:C.textMuted,fontSize:16}}>›</span>
+      </div>
+    </div>
+  );
 
   // ── 設定 ───────────────────────────────────────────────
   const SettingTab=()=>{
