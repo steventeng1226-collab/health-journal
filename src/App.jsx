@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.16";
+const VERSION = "v4.17";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -3373,7 +3373,7 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
       try{return JSON.parse(localStorage.getItem("hj_mymeds")||"[]");}catch(e){return[];}
     });
     const [showMedForm, setShowMedForm] = useState(false);
-    const [medForm, setMedForm] = useState({name:"",dose:"",timing:"早餐後",note:""});
+    const [medForm, setMedForm] = useState({name:"",dose:"",freq:"每天",timing:"早餐後",note:""});
     const saveMyMeds = (list)=>{
       setMyMeds(list);
       localStorage.setItem("hj_mymeds", JSON.stringify(list));
@@ -3810,7 +3810,7 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
             {/* 我的用藥清單 */}
             <div className="card" style={{padding:"12px",marginBottom:12}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:myMeds.length>0||showMedForm?8:0}}>
-                <div style={{fontSize:13,fontWeight:700,color:C.green}}>📝 我的用藥清單</div>
+                <div style={{fontSize:13,fontWeight:700,color:C.green}}>📝 我的用藥及保健清單</div>
                 <button onClick={()=>setShowMedForm(v=>!v)}
                   style={{padding:"4px 12px",borderRadius:8,fontSize:12,cursor:"pointer",
                     background:showMedForm?"transparent":"rgba(46,204,138,0.12)",
@@ -3828,6 +3828,12 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
                     <input className="input-field" placeholder="劑量（例：1錠）" style={{flex:1}}
                       value={medForm.dose} onChange={e=>setMedForm(f=>({...f,dose:e.target.value}))}/>
                     <select className="input-field" style={{flex:1}}
+                      value={medForm.freq} onChange={e=>setMedForm(f=>({...f,freq:e.target.value}))}>
+                      <option>每天</option><option>2天1次</option><option>每週1次</option><option>需要時</option>
+                    </select>
+                  </div>
+                  <div style={{marginBottom:6}}>
+                    <select className="input-field"
                       value={medForm.timing} onChange={e=>setMedForm(f=>({...f,timing:e.target.value}))}>
                       <option>早餐前</option><option>早餐後</option><option>午餐後</option>
                       <option>晚餐後</option><option>睡前</option><option>每日固定</option>
@@ -3840,7 +3846,7 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
                     onClick={()=>{
                       if(!medForm.name.trim()){showToast("⚠️ 請輸入名稱");return;}
                       saveMyMeds([...myMeds,{id:Date.now(),...medForm,startDate:today()}]);
-                      setMedForm({name:"",dose:"",timing:"早餐後",note:""});
+                      setMedForm({name:"",dose:"",freq:"每天",timing:"早餐後",note:""});
                       setShowMedForm(false);
                       showToast("✅ 已加入清單");
                     }}>儲存</button>
@@ -3855,7 +3861,7 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
                   <div style={{flex:1}}>
                     <div style={{fontSize:13,fontWeight:600,color:C.text}}>{med.name}</div>
                     <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>
-                      {[med.dose,med.timing,med.note].filter(Boolean).join(" · ")}
+                      {[med.dose,med.freq,med.timing,med.note].filter(Boolean).join(" · ")}
                     </div>
                   </div>
                   <button onClick={()=>{
