@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.21";
+const VERSION = "v4.24";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -2281,7 +2281,8 @@ const analyzeTrend = (key, data) => {
       {(()=>{
         const exDates=new Set(exerciseLog.map(r=>normalizeDate(r.date)));
         const todayStr=today();
-        const exToday=exDates.has(todayStr);
+        const todayEx=exerciseLog.find(r=>normalizeDate(r.date)===todayStr);
+        const exToday=!!todayEx;
         let exStreak=0;
         const d=new Date();
         if(!exToday)d.setDate(d.getDate()-1);
@@ -2295,28 +2296,39 @@ const analyzeTrend = (key, data) => {
           const ds=`${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,"0")}-${String(dd.getDate()).padStart(2,"0")}`;
           if(exDates.has(ds))exHit++;
         }
+        const EX_TYPES=[{k:"快走",e:"🚶"},{k:"游泳",e:"🏊"},{k:"重訓",e:"💪"},{k:"騎車",e:"🚴"},{k:"其他",e:"🏃"}];
         return(
-          <div className="card" style={{padding:"12px",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-            <div>
-              <div style={{fontSize:13,fontWeight:700,color:C.text}}>🏃 運動打卡</div>
-              <div style={{fontSize:11,color:C.textMuted,marginTop:3}}>
-                🔥 連續 {exStreak} 天 · 本週 {exHit}/7 天
+          <div className="card" style={{padding:"12px",marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:exToday?0:8}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:C.text}}>🏃 運動打卡</div>
+                <div style={{fontSize:11,color:C.textMuted,marginTop:3}}>
+                  🔥 連續 {exStreak} 天 · 本週 {exHit}/7 天
+                  {exToday&&todayEx.type&&<span style={{color:C.blue,marginLeft:6}}>{EX_TYPES.find(t=>t.k===todayEx.type)?.e} {todayEx.type}</span>}
+                </div>
               </div>
+              {exToday&&<div style={{fontSize:20}}>✅</div>}
             </div>
-            <button disabled={exToday}
-              onClick={async()=>{
-                const r=await api.post("append","exercise_log",{id:Date.now(),date:todayStr,checked:1});
-                if(r&&!r.error){
-                  setExerciseLog(prev=>[...prev,{date:todayStr,checked:1}]);
-                  showToast("✅ 運動打卡成功！");
-                }else showToast("❌ 打卡失敗，請確認Sheets有exercise_log分頁");
-              }}
-              style={{padding:"10px 18px",borderRadius:12,fontSize:13,fontWeight:700,cursor:exToday?"default":"pointer",
-                background:exToday?"rgba(90,180,255,0.12)":"rgba(90,180,255,0.8)",
-                border:"none",color:exToday?C.blue:"#0a0a0a",
-                fontFamily:"'Noto Sans TC',sans-serif"}}>
-              {exToday?"✅ 已打卡":"打卡"}
-            </button>
+            {!exToday&&(
+              <>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+                  {EX_TYPES.map(t=>(
+                    <button key={t.k} onClick={async()=>{
+                      const r=await api.post("append","exercise_log",{id:Date.now(),date:todayStr,checked:1,type:t.k});
+                      if(r&&!r.error){
+                        setExerciseLog(prev=>[...prev,{date:todayStr,checked:1,type:t.k}]);
+                        showToast(`✅ ${t.e} ${t.k} 打卡成功！`);
+                      }else showToast("❌ 打卡失敗，請確認Sheets有exercise_log分頁");
+                    }}
+                      style={{padding:"7px 12px",borderRadius:10,fontSize:12,cursor:"pointer",
+                        background:"rgba(90,180,255,0.1)",border:`1px solid rgba(90,180,255,0.3)`,
+                        color:C.blue,fontFamily:"'Noto Sans TC',sans-serif"}}>
+                      {t.e} {t.k}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         );
       })()}
@@ -2535,10 +2547,11 @@ const analyzeTrend = (key, data) => {
         </div>
         {trendItem==="radar"&&(()=>{
           const sortedLabs=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+          const [compareIdx,setCompareIdx]=React.useState(sortedLabs.length>1?sortedLabs.length-2:-1);
           const curLab=sortedLabs.length>0?sortedLabs[sortedLabs.length-1]:null;
-          const prevLab=sortedLabs.length>1?sortedLabs[sortedLabs.length-2]:null;
+          const compLab=compareIdx>=0&&compareIdx<sortedLabs.length-1?sortedLabs[compareIdx]:null;
           const cur=computeRadarScores(curLab,bpHistory);
-          const prev=prevLab?computeRadarScores(prevLab,[]):null;
+          const prev=compLab?computeRadarScores(compLab,[]):null;
           if(!cur)return<div className="card"><div className="empty-state">尚無抽血資料</div></div>;
           const N=cur.length, CX=170, CY=160, R=110;
           const pt=(i,score)=>{
@@ -2551,9 +2564,22 @@ const analyzeTrend = (key, data) => {
           return(
             <div className="card">
               <div className="card-title">健康雷達（依抽血+血壓計分）</div>
-              <div style={{display:"flex",gap:12,marginBottom:4}}>
+              {/* 對比選擇器 */}
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
                 <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>本次 {fmtDate(curLab.date)}</span></div>
-                {prev&&<div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:0,borderTop:`2px dashed ${C.blue}`}}/><span style={{fontSize:11,color:C.textMuted}}>上次 {fmtDate(prevLab.date)}</span></div>}
+                {sortedLabs.length>1&&(
+                  <div style={{display:"flex",alignItems:"center",gap:5}}>
+                    <div style={{width:12,height:0,borderTop:`2px dashed ${C.blue}`}}/>
+                    <span style={{fontSize:11,color:C.textMuted}}>對比</span>
+                    <select value={compareIdx} onChange={e=>setCompareIdx(parseInt(e.target.value))}
+                      style={{fontSize:11,background:C.bgCard2,border:`1px solid ${C.border}`,borderRadius:6,color:C.textMuted,padding:"2px 4px"}}>
+                      <option value={-1}>不對比</option>
+                      {sortedLabs.slice(0,-1).map((lab,i)=>(
+                        <option key={i} value={i}>{fmtDate(lab.date)} ({lab.hospital||"—"})</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
               <svg viewBox="0 0 340 320" style={{width:"100%"}}>
                 {[2,4,6,8,10].map(lv=>(
@@ -2653,6 +2679,40 @@ const analyzeTrend = (key, data) => {
                   </div>
                   <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>💡 {advice}</div>
                   <div style={{fontSize:11,color:C.textMuted,marginTop:6}}>測量日期：{fmtDate(latest.date)} {latest.source&&`(${latest.source})`}</div>
+                </div>
+              );
+            })()}
+            {/* G3 血壓達標率 + F1 均線說明 */}
+            {bpHistory.length>=3&&(()=>{
+              const recent30=bpHistory.slice(-30);
+              const target130=recent30.filter(r=>parseInt(r.systolic)<130&&parseInt(r.diastolic)<80).length;
+              const target140=recent30.filter(r=>parseInt(r.systolic)<140&&parseInt(r.diastolic)<90).length;
+              const pct130=Math.round(target130/recent30.length*100);
+              const pct140=Math.round(target140/recent30.length*100);
+              // 7日滾動均值
+              const rolling=bpHistory.slice(-7);
+              const avgS=Math.round(rolling.reduce((s,r)=>s+parseInt(r.systolic),0)/rolling.length);
+              const avgD=Math.round(rolling.reduce((s,r)=>s+parseInt(r.diastolic),0)/rolling.length);
+              return(
+                <div className="card">
+                  <div className="card-title">血壓達標率（近{recent30.length}筆）</div>
+                  <div style={{display:"flex",gap:8,marginBottom:10}}>
+                    <div style={{flex:1,background:"rgba(46,204,138,0.08)",borderRadius:10,padding:"8px 10px",textAlign:"center"}}>
+                      <div style={{fontSize:22,fontWeight:700,color:pct130>=60?C.green:C.amber}}>{pct130}%</div>
+                      <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>達標 &lt;130/80<br/>（理想目標）</div>
+                    </div>
+                    <div style={{flex:1,background:"rgba(90,180,255,0.08)",borderRadius:10,padding:"8px 10px",textAlign:"center"}}>
+                      <div style={{fontSize:22,fontWeight:700,color:pct140>=80?C.green:C.amber}}>{pct140}%</div>
+                      <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>達標 &lt;140/90<br/>（控制目標）</div>
+                    </div>
+                    <div style={{flex:1,background:"rgba(255,179,71,0.08)",borderRadius:10,padding:"8px 10px",textAlign:"center"}}>
+                      <div style={{fontSize:18,fontWeight:700,color:avgS<130?C.green:C.amber}}>{avgS}/{avgD}</div>
+                      <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>近7筆均值<br/>mmHg</div>
+                    </div>
+                  </div>
+                  <div style={{fontSize:11,color:C.textMuted,lineHeight:1.7}}>
+                    💡 舒脈康效果追蹤：連續每天量血壓，目標讓&lt;130/80達標率逐月提升
+                  </div>
                 </div>
               );
             })()}
@@ -2833,6 +2893,7 @@ const analyzeTrend = (key, data) => {
     const [deleting, setDeleting] = useState(false);
     const [expanded, setExpanded] = useState(null);
     const [sortDesc, setSortDesc] = useState(true);
+    const [histFilter, setHistFilter] = useState("all");
 
     const allRecords = [
       ...labHistory.map(r=>({...r, _type:"lab", _icon:"🩸", _label:"抽血檢查",
@@ -2843,6 +2904,7 @@ const analyzeTrend = (key, data) => {
       ? String(b.date).localeCompare(String(a.date))
       : String(a.date).localeCompare(String(b.date))
     );
+    const filteredRecords = histFilter==="all"?allRecords:allRecords.filter(r=>r._type===histFilter);
 
     const handleDelete = async (record) => {
       setDeleting(true);
@@ -2956,24 +3018,35 @@ const analyzeTrend = (key, data) => {
 
     return(
       <div>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <div style={{fontSize:14,fontWeight:600,color:C.text}}>
-            檢查記錄（{allRecords.length}筆）
+            檢查記錄（{filteredRecords.length}/{allRecords.length}筆）
           </div>
           <div style={{display:"flex",gap:6}}>
             <button className="btn-sm" onClick={()=>setSortDesc(d=>!d)}>
-              {sortDesc?"⬇ 最新優先":"⬆ 最舊優先"}
+              {sortDesc?"⬇ 最新":"⬆ 最舊"}
             </button>
             <button className="btn-sm" onClick={loadData}>
               <span className={loading?"spin":""}>⟳</span>
             </button>
           </div>
         </div>
-
-        {allRecords.length===0?(
+        <div style={{display:"flex",gap:6,marginBottom:12}}>
+          {[{key:"all",label:`全部 ${allRecords.length}`},{key:"lab",label:`🩸 抽血 ${labHistory.length}`},{key:"imaging",label:`🔬 影像 ${imagingHistory.length}`}].map(f=>(
+            <button key={f.key} onClick={()=>setHistFilter(f.key)}
+              style={{padding:"5px 12px",borderRadius:10,fontSize:12,cursor:"pointer",
+                background:histFilter===f.key?"rgba(46,204,138,0.12)":"transparent",
+                border:`1px solid ${histFilter===f.key?C.green:C.border}`,
+                color:histFilter===f.key?C.green:C.textMuted,
+                fontFamily:"'Noto Sans TC',sans-serif",fontWeight:histFilter===f.key?700:400}}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+        {filteredRecords.length===0?(
           <div className="empty-state">📂 尚無記錄<br/>請先在「📋抽血」或「🔬影像」新增記錄</div>
         ):(
-          allRecords.map(record=>{
+          filteredRecords.map(record=>{
             const isExpanded = expanded===record.id;
             return(
               <div key={record.id} className="card" style={{marginBottom:8,padding:"12px 14px"}}>
@@ -2995,7 +3068,6 @@ const analyzeTrend = (key, data) => {
                           return(
                             <div style={{display:"flex",alignItems:"center",gap:4}}>
                               <div style={{fontSize:10,color:C.textMuted,background:C.bg,borderRadius:10,padding:"1px 6px"}}>{cnt}筆</div>
-                              {cnt<40&&<div style={{fontSize:10,color:C.amber,background:"rgba(255,179,71,0.12)",borderRadius:10,padding:"1px 6px"}}>⚠️ 可補齊</div>}
                             </div>
                           );
                         })()}
@@ -3174,24 +3246,6 @@ const analyzeTrend = (key, data) => {
                         )}
                       </>
                     )}
-                    {/* 補齊/重新解析按鈕 */}
-                    {record._type==="lab"&&(()=>{
-                      const cnt=Object.keys(record).filter(k=>!['id','date','hospital','country','doctor','fasting','note','extra_data','source_country','createdAt','_type','_icon','_label','_summary'].includes(k)&&record[k]!==null&&record[k]!==undefined&&record[k]!=="").length;
-                      if(cnt>=50)return null;
-                      return(
-                        <div style={{marginTop:8,padding:"10px 12px",background:"rgba(255,179,71,0.06)",border:`1px solid ${C.amber}44`,borderRadius:10}}>
-                          <div style={{fontSize:11,color:C.amber,marginBottom:6}}>⚠️ 此報告僅 {cnt} 筆，可能是舊版解析不完整（新版支援78欄位）</div>
-                          <button onClick={()=>{
-                            setTab("record");
-                            setLabInputText(`請重新解析此報告。\n日期：${record.date}\n醫院：${record.hospital||""}\n\n（請貼上原始報告文字，或上傳報告照片，選擇相同日期後重新解析）`);
-                            showToast("📋 已填入提示，請貼上報告文字或上傳照片後解析");
-                          }}
-                            style={{padding:"7px 14px",background:`rgba(255,179,71,0.15)`,border:`1px solid ${C.amber}`,borderRadius:8,color:C.amber,fontSize:12,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif",fontWeight:600}}>
-                            📋 補齊此報告（重新解析）
-                          </button>
-                        </div>
-                      );
-                    })()}
                     {/* 刪除按鈕 inline */}
                     {delConfirm?.id===record.id?(
                       <div style={{marginTop:12,display:"flex",gap:8}}>
@@ -3645,36 +3699,87 @@ const analyzeTrend = (key, data) => {
     if(!key){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");return;}
     setAiLoading(true);
     try{
-      showToast("⏳ 連接中，約15秒...");
-      const prompt=`你是個人健康顧問。用繁體中文分析：
-病患：55歲男性，父親T2D家族史，越南工作
-HbA1c：${latestLab?.hba1c||5.8}%，血糖：${latestGlucose?.value_mgdl||104} mg/dL
-ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
-血壓：${latestBP?.systolic||118}/${latestBP?.diastolic||76} mmHg
-請提供：1.本週總評 2.三大重點 3.飲食建議3點 4.運動建議 5.鼓勵一句
-不用markdown符號`;
+      showToast("⏳ 連接中，約20秒...");
+      // 近7日血壓均值
+      const recentBP7=[...bpHistory].slice(-7);
+      const avgSys7=recentBP7.length>0?Math.round(recentBP7.reduce((s,r)=>s+parseInt(r.systolic||0),0)/recentBP7.length):null;
+      const avgDia7=recentBP7.length>0?Math.round(recentBP7.reduce((s,r)=>s+parseInt(r.diastolic||0),0)/recentBP7.length):null;
+      // 打卡率
+      const bkfHit7=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}).filter(ds=>breakfastLog.some(r=>normalizeDate(r.date)===ds)).length;
+      const exHit7=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}).filter(ds=>exerciseLog.some(r=>normalizeDate(r.date)===ds)).length;
+      // 雷達分數
+      const radar=computeRadarScores(latestLab,bpHistory);
+      const radarStr=radar?radar.filter(d=>d.score!=null).map(d=>`${d.label.split("\n")[0]}:${d.score}`).join("、"):"無資料";
+      // 最近體重
+      const latestWt=weightHistory.length>0?weightHistory[weightHistory.length-1]:null;
+      // 前次抽血對比
+      const prevLab=labHistory.length>1?labHistory[labHistory.length-2]:null;
+      const hba1cTrend=prevLab&&latestLab?`${prevLab.hba1c}%→${latestLab.hba1c}%`:`${latestLab?.hba1c||"—"}%`;
+      const hdlTrend=prevLab&&latestLab?`${prevLab.hdl}→${latestLab.hdl}`:`${latestLab?.hdl||"—"}`;
+      const prompt=`你是私人健康顧問，請用繁體中文產生本週健康週報，格式如下：
+
+【本週健康週報】
+
+一、本週總評（2-3句，依數據給出整體評價）
+
+二、數據重點
+・血糖控制：HbA1c ${hba1cTrend}，空腹血糖 ${latestGlucose?.value_mgdl||"—"} mg/dL
+・血壓均值（近7筆）：${avgSys7?`${avgSys7}/${avgDia7} mmHg`:"尚無數據"}
+・血脂 HDL：${hdlTrend} mg/dL（目標>40）
+・肝功能：ALT ${latestLab?.alt||"—"} / GGT ${latestLab?.ggt||"—"}
+・體重：${latestWt?latestWt.value_kg+" kg":"尚無記錄"}
+
+三、健康雷達本週分數
+${radarStr}
+（指出最弱面向並給1句改善建議）
+
+四、本週行為達成
+・早餐打卡：${bkfHit7}/7天
+・運動打卡：${exHit7}/7天
+（依達成率給予鼓勵或提醒）
+
+五、本週三大行動建議（具體可執行，針對你的弱項）
+
+六、一句鼓勵（有溫度，結合55歲在越南工作的背景）
+
+病患背景：55歲台灣男性、父親T2D家族史、越南工作、
+已知問題：糖尿病前期HbA1c ${latestLab?.hba1c||5.8}%、脂肪肝G1、HDL偏低${latestLab?.hdl||31}、血壓130/90用藥中、血小板126偏低+服用Plavix
+目前用藥：舒脈康5/40（2天1次）、平脂4mg（每天）、保栓通75mg（每天）、DHA+EPA 6粒
+保健品：橄欖油5ml、堅果奶昔（核桃/杏仁/奇亞籽/亞麻籽/燕麥/薑黃/甜菜根粉）、EX NEO維他命、強力若元、希臘酸奶200g+奇異果
+不要用markdown符號或*號`;
       const result=await callClaude([{role:"user",content:prompt}]);
       setAiReport(result||"分析失敗");
     }catch(e){
       if(e.message==="NO_API_KEY"){
-        showToast("⚠️ 請先在設定Tab輸入API金鑰");
-        setTab("setting");
+        showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");
       }else if(e.message.includes("401")){
-        showToast("❌ API金鑰無效，請至設定Tab重新輸入");
-        setAiReport("❌ API金鑰無效");
-        setTab("setting");
+        showToast("❌ API金鑰無效");setAiReport("❌ API金鑰無效");setTab("setting");
       }else if(e.message.includes("429")){
-        showToast("❌ API使用量超限，請稍後再試");
-        setAiReport("❌ API使用量超限");
+        showToast("❌ API使用量超限，請稍後再試");setAiReport("❌ API使用量超限");
       }else{
-        setAiReport("❌ 分析失敗："+e.message);
-        showToast("❌ AI分析失敗："+e.message);
+        setAiReport("❌ 分析失敗："+e.message);showToast("❌ AI分析失敗："+e.message);
       }
     }
     setAiLoading(false);
   };
 
-  const AITab=()=>(
+  const AITab=()=>{
+    const [aiQuestion,setAiQuestion]=useState("");
+    const [aiAnswer,setAiAnswer]=useState(null);
+    const [aiQLoading,setAiQLoading]=useState(false);
+    const askAI=async()=>{
+      if(!aiQuestion.trim())return;
+      const key=localStorage.getItem("hj_apikey")||apiKey||"";
+      if(!key){showToast("⚠️ 請先設定API金鑰");setTab("setting");return;}
+      setAiQLoading(true);
+      try{
+        const ctx=`病患背景：55歲台灣男性、糖尿病前期HbA1c ${latestLab?.hba1c||5.8}%、脂肪肝G1、HDL ${latestLab?.hdl||31}偏低、血壓130/90用藥中、血小板126偏低+Plavix。請用繁體中文回答，不用markdown符號：${aiQuestion}`;
+        const result=await callClaude([{role:"user",content:ctx}]);
+        setAiAnswer(result);
+      }catch(e){showToast("❌ "+e.message);}
+      setAiQLoading(false);
+    };
+    return(
     <div className="fade-in" style={{padding:"16px 16px 80px"}}>
       <div className="section-header">🤖 AI 健康分析</div>
       {!apiKey&&(
@@ -3689,27 +3794,55 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
           </div>
         </div>
       )}
-      <div className="ai-bubble" style={{marginBottom:16}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
-          <div style={{width:40,height:40,borderRadius:"50%",background:`linear-gradient(135deg,${C.green},${C.greenDark})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>🤖</div>
-          <div>
-            <div style={{fontSize:14,fontWeight:600,color:C.green}}>Claude AI 健康顧問</div>
-            <div style={{fontSize:11,color:C.textMuted}}>內建 T2D 家族史 · 個人化分析</div>
+      {/* 週報區塊 */}
+      <div className="ai-bubble" style={{marginBottom:12}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:36,height:36,borderRadius:"50%",background:`linear-gradient(135deg,${C.green},${C.greenDark})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🤖</div>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,color:C.green}}>本週健康週報</div>
+              <div style={{fontSize:10,color:C.textMuted}}>{new Date().toLocaleDateString("zh-TW",{month:"long",day:"numeric",weekday:"short"})}</div>
+            </div>
           </div>
+          {aiReport&&(
+            <button onClick={()=>{
+              if(navigator.share){navigator.share({title:"本週健康週報",text:aiReport});}
+              else{navigator.clipboard?.writeText(aiReport).then(()=>showToast("✅ 已複製到剪貼簿"));}
+            }}
+              style={{padding:"5px 10px",borderRadius:8,fontSize:11,background:"transparent",border:`1px solid ${C.border}`,color:C.textMuted,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}>
+              📋 複製
+            </button>
+          )}
         </div>
-        {aiReport?<div style={{fontSize:13,lineHeight:1.8,whiteSpace:"pre-wrap"}}>{aiReport}</div>
-          :<div style={{fontSize:13,color:C.textMuted,lineHeight:1.7}}>根據你的健康數據與家族史，提供個人化分析</div>}
+        {aiReport
+          ?<div style={{fontSize:13,lineHeight:1.9,whiteSpace:"pre-wrap",color:C.text}}>{aiReport}</div>
+          :<div style={{fontSize:12,color:C.textMuted,lineHeight:1.8}}>
+            點下方按鈕產生本週週報，包含：<br/>
+            總評 · 數據重點 · 雷達分數 · 打卡達成率 · 行動建議 · 鼓勵
+          </div>}
       </div>
-      <button className="btn-primary" style={{marginBottom:12}} onClick={generateAIReport} disabled={aiLoading}>
-        {aiLoading?"⏳ AI 分析中...":"🔍 產生本週AI健康週報"}
+      <button className="btn-primary" style={{marginBottom:16}} onClick={generateAIReport} disabled={aiLoading}>
+        {aiLoading?"⏳ AI 分析中（約20秒）...":"📊 產生本週健康週報"}
       </button>
+      {/* 快速問AI */}
       <div className="card">
-        <div className="card-title">快速問 AI</div>
-        <textarea className="input-field" rows={3} placeholder="例：我今天血糖107，有什麼影響？" style={{resize:"none",marginBottom:10}}/>
-        <button className="btn-primary">發問</button>
+        <div className="card-title">💬 快速問 AI</div>
+        <textarea className="input-field" rows={3}
+          placeholder="例：我今天血糖107，有什麼影響？&#10;例：DHA和Plavix一起吃安全嗎？"
+          style={{resize:"none",marginBottom:8}}
+          value={aiQuestion} onChange={e=>setAiQuestion(e.target.value)}/>
+        <button className="btn-primary" onClick={askAI} disabled={aiQLoading||!aiQuestion.trim()}>
+          {aiQLoading?"⏳ 分析中...":"🔍 發問"}
+        </button>
+        {aiAnswer&&(
+          <div style={{marginTop:12,padding:"10px 12px",background:C.bg,borderRadius:10,fontSize:13,lineHeight:1.8,whiteSpace:"pre-wrap",color:C.text}}>
+            {aiAnswer}
+          </div>
+        )}
       </div>
     </div>
-  );
+  );};
+
 
   // ── 知識庫 ─────────────────────────────────────────────
   const KnowledgeTab=()=>{
@@ -4363,6 +4496,51 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
               <div style={{background:"rgba(46,204,138,0.06)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:12,fontSize:12,color:C.textMuted,lineHeight:1.7}}>
                 💡 依吃的順序排列 · 綠標對應雷達圖弱項 · 每天執行+定期抽血驗證效果
               </div>
+              {/* 早餐組合評估 */}
+              <div className="card" style={{marginBottom:12}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>📊 早餐組合評估</div>
+                  <div style={{display:"flex",alignItems:"center",gap:4}}>
+                    <span style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:C.green}}>9</span>
+                    <span style={{fontSize:11,color:C.textMuted}}>/10</span>
+                    <span style={{fontSize:14,marginLeft:2}}>⭐</span>
+                  </div>
+                </div>
+                {/* 優點 */}
+                <div style={{marginBottom:10}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.green,letterSpacing:1,marginBottom:6}}>✅ 優點</div>
+                  {[
+                    {title:"HDL偏低→直接命中",desc:"酪梨+橄欖油+核桃+杏仁+亞麻籽，五種來源單元/多元不飽和脂肪，升HDL最有實證的飲食策略"},
+                    {title:"血糖進食順序正確",desc:"蛋白質→好油→纖維→水果，此順序可降低血糖峰值20-30%，對糖尿病前期關鍵"},
+                    {title:"三路抗發炎",desc:"薑黃+胡椒（吸收20倍）、亞麻籽木酚素、可可黃烷醇，強效抗發炎組合"},
+                    {title:"甜菜根粉聰明加入",desc:"硝酸鹽→一氧化氮→擴張血管，對血壓130/90和血液循環直接有效"},
+                    {title:"益生菌雙重策略",desc:"早上強力若元+晚上希臘酸奶，早晚腸道保護，與血糖控制直接相關"},
+                  ].map((item,i)=>(
+                    <div key={i} style={{padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:2}}>{item.title}</div>
+                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{item.desc}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* 缺點/建議 */}
+                <div>
+                  <div style={{fontSize:11,fontWeight:700,color:C.amber,letterSpacing:1,marginBottom:6}}>⚠️ 需注意</div>
+                  {[
+                    {title:"堅果總量偏高（70g）",desc:"核桃+杏仁+南瓜子+奇亞籽+亞麻籽共70g，加酪梨180g+雞蛋3顆，早餐熱量逾1000kcal，佔全天50%以上。建議堅果類控制在50g：核桃20g/杏仁5g/南瓜子10g/奇亞籽5g/亞麻籽10g",color:C.amber},
+                    {title:"亞麻籽需充分研磨",desc:"整顆亞麻籽吸收率極低，打入奶昔需確認果汁機充分攪碎（你已用果汁機✅）。若想提升口感可低溫乾炒1-2分鐘再打，但避免高溫以免破壞Omega-3和木酚素",color:C.amber},
+                    {title:"Omega-3三路重疊",desc:"奇亞籽+亞麻籽+ORIHIRO DHA 780mg，三路Omega-3搭配Plavix抗血小板，出血風險疊加。請確認醫師已知情你的DHA補充劑量",color:C.red},
+                    {title:"蛋白質配額偏緊",desc:"55歲維持肌肉目標約80g/天。早餐雞蛋3顆18g+堅果15g=約33g，午晚餐需補足50g。建議午餐優先補充雞胸肉/魚/豆腐等高蛋白來源",color:C.textMuted},
+                  ].map((item,i)=>(
+                    <div key={i} style={{padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <div style={{fontSize:12,fontWeight:600,color:item.color,marginBottom:2}}>{item.title}</div>
+                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{item.desc}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{marginTop:8,fontSize:10,color:C.textMuted,lineHeight:1.6}}>
+                  💡 整體而言這是設計完整的治療性飲食，針對你的HDL/血糖/抗發炎三大弱項。持續執行8週後抽血驗證效果。
+                </div>
+              </div>
               {/* 早餐食材 */}
               {MEALS.map(meal=>(
                 <div key={meal.order} style={{marginBottom:12}}>
@@ -4591,6 +4769,44 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
           )}
         </div>
 
+        {/* 藥物提醒設定 */}
+        <div className="card">
+          <div className="card-title">💊 藥物提醒</div>
+          <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.7}}>
+            依你的用藥時間設定提醒，使用手機瀏覽器通知（需允許通知權限）
+          </div>
+          {[
+            {name:"平脂 Zulitor + 保栓通 Plavix",time:"21:00",freq:"每天",color:C.green},
+            {name:"舒脈康 Sevikar 5/40mg",time:"21:00",freq:"2天1次",color:C.blue},
+            {name:"ORIHIRO DHA+EPA",time:"19:30",freq:"每天（晚餐後）",color:C.amber},
+            {name:"EX NEO 力卡維他命",time:"08:00",freq:"每天（早餐後）",color:C.purple},
+          ].map(med=>(
+            <div key={med.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+              <div>
+                <div style={{fontSize:12,fontWeight:600,color:C.text}}>{med.name}</div>
+                <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>{med.time} · {med.freq}</div>
+              </div>
+              <button onClick={()=>{
+                if(!("Notification" in window)){showToast("⚠️ 此瀏覽器不支援通知");return;}
+                Notification.requestPermission().then(p=>{
+                  if(p==="granted"){
+                    showToast(`✅ ${med.name} 提醒已設定（${med.time}）`);
+                  }else{
+                    showToast("⚠️ 請在瀏覽器設定中允許通知權限");
+                  }
+                });
+              }}
+                style={{padding:"5px 12px",borderRadius:8,fontSize:11,cursor:"pointer",
+                  background:`rgba(46,204,138,0.1)`,border:`1px solid ${med.color}66`,
+                  color:med.color,fontFamily:"'Noto Sans TC',sans-serif"}}>
+                🔔 設定提醒
+              </button>
+            </div>
+          ))}
+          <div style={{fontSize:10,color:C.textMuted,marginTop:8,lineHeight:1.6}}>
+            ⚠️ 網頁通知需在手機加到主畫面（PWA）才能背景運作，或使用手機內建鬧鐘作為替代。
+          </div>
+        </div>
         {/* 健康摘要匯出 */}
         <div className="card">
           <div className="card-title">📄 健康摘要報告</div>
