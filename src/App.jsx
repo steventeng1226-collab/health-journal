@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.20";
+const VERSION = "v4.21";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -982,7 +982,7 @@ const linScore=(val,ideal,bad)=>{
   if(val==null||isNaN(val))return null;
   return clamp10(10-5*Math.abs(val-ideal)/Math.abs(bad-ideal));
 };
-const computeRadarScores=(lab,bp)=>{
+const computeRadarScores=(lab,bpHistory)=>{
   if(!lab)return null;
   const f=k=>{const v=parseFloat(lab[k]);return isNaN(v)?null:v;};
   const avg=(arr)=>{const a=arr.filter(v=>v!=null);return a.length?a.reduce((s,v)=>s+v,0)/a.length:null;};
@@ -998,10 +998,12 @@ const computeRadarScores=(lab,bp)=>{
   const egfrV=f("egfr");
   const egfrScore=egfrV==null?null:clamp10(10-5*Math.max(0,90-egfrV)/30);
   const dimKidney=avg([egfrScore,linScore(f("upcr"),15,150)]);
-  // 心血管：收縮壓(理想115/臨界140) + 舒張壓(理想75/臨界90)
-  const sys=bp?parseFloat(bp.systolic):null;
-  const dia=bp?parseFloat(bp.diastolic):null;
-  const dimCV=avg([linScore(sys,115,140),linScore(dia,75,90)]);
+  // 心血管：近7筆血壓平均值
+  const recentBP=(Array.isArray(bpHistory)?[...bpHistory].slice(-7):[]);
+  const avgSys=recentBP.length>0?avg(recentBP.map(r=>parseFloat(r.systolic)).filter(v=>!isNaN(v))):null;
+  const avgDia=recentBP.length>0?avg(recentBP.map(r=>parseFloat(r.diastolic)).filter(v=>!isNaN(v))):null;
+  const dimCV=avg([linScore(avgSys,115,140),linScore(avgDia,75,90)]);
+  const cvLabel=avgSys&&avgDia?`心血管\n${Math.round(avgSys)}/${Math.round(avgDia)}`:"心血管";
   // 血液：血小板(理想200/臨界100，越高越好至正常) + Hb(理想15/臨界11)
   const pltV=f("platelet");
   const pltScore=pltV==null?null:clamp10(10-5*Math.max(0,200-pltV)/100);
@@ -1016,7 +1018,7 @@ const computeRadarScores=(lab,bp)=>{
     {label:"血脂HDL",score:dimLipid},
     {label:"肝臟",score:dimLiver},
     {label:"腎臟",score:dimKidney},
-    {label:"心血管",score:dimCV},
+    {label:cvLabel,score:dimCV,cvAvg:avgSys&&avgDia?`${Math.round(avgSys)}/${Math.round(avgDia)}`:null},
     {label:"血液",score:dimBlood},
     {label:"尿酸",score:dimUric},
     {label:"發炎/其他",score:dimOther},
@@ -1072,6 +1074,7 @@ export default function HealthJournal(){
     }catch(e){return DEFAULT_REMINDERS;}
   });
   const [editReminder,setEditReminder]=useState(null);
+  const [showOverdue,setShowOverdue]=useState(false);
   const [trackItems,setTrackItems]=useState(()=>{
     try{ const s=localStorage.getItem("hj_track"); return s?JSON.parse(s):DEFAULT_TRACK; }
     catch(e){ return DEFAULT_TRACK; }
@@ -1091,6 +1094,7 @@ export default function HealthJournal(){
   const [trendAiLoading,setTrendAiLoading]=useState(false);
   const [imagingForm,setImagingForm]=useState({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
   const [breakfastLog,setBreakfastLog]=useState([]);
+  const [exerciseLog,setExerciseLog]=useState([]);
   const [imagingPhotos,setImagingPhotos]=useState([]);
   const imagingPhotoRef = React.useRef();
   const [lightboxUrl,setLightboxUrl]=useState(null);
@@ -1139,12 +1143,15 @@ export default function HealthJournal(){
         api.loadSettings(),
         api.get("getAll",{sheet:"imaging"}),
         api.get("getAll",{sheet:"breakfast_log"}),
+        api.get("getAll",{sheet:"exercise_log"}),
       ]);
       if(lab?.data)setLabHistory(lab.data);
       if(glu?.data)setGlucoseHistory(glu.data);
       if(bp?.data)setBpHistory(bp.data);
       if(wt?.data)setWeightHistory(wt.data);
       if(bkf?.data)setBreakfastLog(bkf.data.filter(r=>r.date&&String(r.date).trim()));
+      const [exLog]=await Promise.all([api.get("getAll",{sheet:"exercise_log"})]);
+      if(exLog?.data)setExerciseLog(exLog.data.filter(r=>r.date&&String(r.date).trim()));
       if(imaging?.data){
         // 過濾空白列（id或date或type為空/空白的）
         const validImaging = imaging.data.filter(r =>
@@ -2152,7 +2159,7 @@ const analyzeTrend = (key, data) => {
   // ── 首頁 ───────────────────────────────────────────────
   const HomeTab=()=>(
     <div className="fade-in" style={{padding:"16px 16px 80px"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,position:"relative"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <ShieldIcon size={36}/>
           <div>
@@ -2169,7 +2176,19 @@ const analyzeTrend = (key, data) => {
           </div>
         </div>
         {overdueReminders.length>0&&(
-          <div style={{background:C.red,borderRadius:20,padding:"4px 10px",fontSize:12,color:"white"}}>{overdueReminders.length} 項到期</div>
+          <div onClick={()=>setShowOverdue(v=>!v)} style={{cursor:"pointer"}}>
+            <div style={{background:C.red,borderRadius:20,padding:"4px 10px",fontSize:12,color:"white"}}>{overdueReminders.length} 項到期 {showOverdue?"▲":"▼"}</div>
+            {showOverdue&&(
+              <div style={{position:"absolute",right:16,top:56,background:C.bgCard2,border:`1px solid ${C.red}66`,borderRadius:10,padding:"8px 12px",zIndex:100,minWidth:180}}>
+                {overdueReminders.map(r=>(
+                  <div key={r.id} style={{fontSize:12,color:C.red,padding:"4px 0",borderBottom:`1px solid ${C.border}`}}>
+                    📅 {r.title||r.type}
+                  </div>
+                ))}
+                <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>點擊設定頁查看詳情</div>
+              </div>
+            )}
+          </div>
         )}
       </div>
       {loading&&<div style={{textAlign:"center",color:C.textMuted,fontSize:12,marginBottom:12}}><span className="spin">⟳</span> 載入中...</div>}
@@ -2181,6 +2200,38 @@ const analyzeTrend = (key, data) => {
           <div style={{fontSize:11,color:C.textMuted}}>HbA1c {latestLab?.hba1c||"5.8"}% · 需積極管理</div>
         </div>
       </div>
+      {/* 綜合健康分數 */}
+      {(()=>{
+        const scores=computeRadarScores(latestLab,bpHistory);
+        if(!scores)return null;
+        const valid=scores.filter(d=>d.score!=null);
+        if(valid.length===0)return null;
+        const total=Math.round(valid.reduce((s,d)=>s+d.score,0)/valid.length*10);
+        const prev2=labHistory.length>1?computeRadarScores(labHistory[labHistory.length-2],bpHistory):null;
+        const prevValid=prev2?prev2.filter(d=>d.score!=null):[];
+        const prevTotal=prevValid.length>0?Math.round(prevValid.reduce((s,d)=>s+d.score,0)/prevValid.length*10):null;
+        const diff=prevTotal!=null?total-prevTotal:null;
+        const color=total>=75?C.green:total>=60?C.amber:C.red;
+        return(
+          <div className="card" style={{padding:"12px",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,cursor:"pointer"}}
+            onClick={()=>{setTab("trend");setTrendItem("radar");}}>
+            <div>
+              <div style={{fontSize:11,color:C.textMuted,marginBottom:2}}>綜合健康分數</div>
+              <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+                <span style={{fontFamily:"'DM Serif Display',serif",fontSize:36,color,lineHeight:1}}>{total}</span>
+                <span style={{fontSize:13,color:C.textMuted}}>/100</span>
+                {diff!=null&&<span style={{fontSize:12,color:diff>0?C.green:diff<0?C.red:C.textMuted,fontWeight:700}}>{diff>0?`▲+${diff}`:diff<0?`▼${diff}`:"→"}</span>}
+              </div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              {scores.filter(d=>d.score!=null&&d.score<6.5).slice(0,2).map(d=>(
+                <div key={d.label} style={{fontSize:10,color:C.amber,marginBottom:2}}>⚠️ {d.label.split("\n")[0]}</div>
+              ))}
+              <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>點擊看雷達圖 →</div>
+            </div>
+          </div>
+        );
+      })()}
       {/* 早餐打卡 */}
       {(()=>{
         const dates=new Set(breakfastLog.map(r=>normalizeDate(r.date)));
@@ -2222,6 +2273,49 @@ const analyzeTrend = (key, data) => {
                 border:"none",color:checkedToday?C.green:"#0a0a0a",
                 fontFamily:"'Noto Sans TC',sans-serif"}}>
               {checkedToday?"✅ 已打卡":"打卡"}
+            </button>
+          </div>
+        );
+      })()}
+      {/* 運動打卡 */}
+      {(()=>{
+        const exDates=new Set(exerciseLog.map(r=>normalizeDate(r.date)));
+        const todayStr=today();
+        const exToday=exDates.has(todayStr);
+        let exStreak=0;
+        const d=new Date();
+        if(!exToday)d.setDate(d.getDate()-1);
+        while(true){
+          const ds=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+          if(exDates.has(ds)){exStreak++;d.setDate(d.getDate()-1);}else break;
+        }
+        let exHit=0;
+        for(let i=0;i<7;i++){
+          const dd=new Date();dd.setDate(dd.getDate()-i);
+          const ds=`${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,"0")}-${String(dd.getDate()).padStart(2,"0")}`;
+          if(exDates.has(ds))exHit++;
+        }
+        return(
+          <div className="card" style={{padding:"12px",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:700,color:C.text}}>🏃 運動打卡</div>
+              <div style={{fontSize:11,color:C.textMuted,marginTop:3}}>
+                🔥 連續 {exStreak} 天 · 本週 {exHit}/7 天
+              </div>
+            </div>
+            <button disabled={exToday}
+              onClick={async()=>{
+                const r=await api.post("append","exercise_log",{id:Date.now(),date:todayStr,checked:1});
+                if(r&&!r.error){
+                  setExerciseLog(prev=>[...prev,{date:todayStr,checked:1}]);
+                  showToast("✅ 運動打卡成功！");
+                }else showToast("❌ 打卡失敗，請確認Sheets有exercise_log分頁");
+              }}
+              style={{padding:"10px 18px",borderRadius:12,fontSize:13,fontWeight:700,cursor:exToday?"default":"pointer",
+                background:exToday?"rgba(90,180,255,0.12)":"rgba(90,180,255,0.8)",
+                border:"none",color:exToday?C.blue:"#0a0a0a",
+                fontFamily:"'Noto Sans TC',sans-serif"}}>
+              {exToday?"✅ 已打卡":"打卡"}
             </button>
           </div>
         );
@@ -2443,8 +2537,8 @@ const analyzeTrend = (key, data) => {
           const sortedLabs=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
           const curLab=sortedLabs.length>0?sortedLabs[sortedLabs.length-1]:null;
           const prevLab=sortedLabs.length>1?sortedLabs[sortedLabs.length-2]:null;
-          const cur=computeRadarScores(curLab,latestBP);
-          const prev=prevLab?computeRadarScores(prevLab,null):null;
+          const cur=computeRadarScores(curLab,bpHistory);
+          const prev=prevLab?computeRadarScores(prevLab,[]):null;
           if(!cur)return<div className="card"><div className="empty-state">尚無抽血資料</div></div>;
           const N=cur.length, CX=170, CY=160, R=110;
           const pt=(i,score)=>{
@@ -2492,8 +2586,20 @@ const analyzeTrend = (key, data) => {
                   </div>
                 </div>
               )}
+              {(()=>{
+                const cvDim=cur.find(d=>d.label.startsWith("心血管"));
+                return cvDim?.cvAvg?(
+                  <div style={{background:"rgba(90,180,255,0.08)",border:"1px solid rgba(90,180,255,0.2)",borderRadius:10,padding:"8px 12px",marginBottom:8,fontSize:11,color:C.blue,lineHeight:1.6}}>
+                    💓 心血管：近{Math.min(bpHistory.length,7)}筆血壓均值 {cvDim.cvAvg} mmHg（單次波動已平滑）
+                  </div>
+                ):bpHistory.length===0?(
+                  <div style={{background:"rgba(255,179,71,0.08)",border:"1px solid rgba(255,179,71,0.2)",borderRadius:10,padding:"8px 12px",marginBottom:8,fontSize:11,color:C.amber,lineHeight:1.6}}>
+                    💓 心血管：尚無血壓記錄，請先記錄幾筆血壓（建議7筆以上取均值）
+                  </div>
+                ):null;
+              })()}
               <div style={{fontSize:10,color:C.textMuted,marginTop:8,lineHeight:1.6}}>
-                計分方式：各指標與理想值比較換算0-10分（10=理想、5=異常臨界），面向內多指標取平均。
+                計分方式：各指標與理想值比較換算0-10分（10=理想、5=異常臨界），面向內多指標取平均。心血管取近7筆血壓均值。
               </div>
             </div>
           );
@@ -3068,6 +3174,24 @@ const analyzeTrend = (key, data) => {
                         )}
                       </>
                     )}
+                    {/* 補齊/重新解析按鈕 */}
+                    {record._type==="lab"&&(()=>{
+                      const cnt=Object.keys(record).filter(k=>!['id','date','hospital','country','doctor','fasting','note','extra_data','source_country','createdAt','_type','_icon','_label','_summary'].includes(k)&&record[k]!==null&&record[k]!==undefined&&record[k]!=="").length;
+                      if(cnt>=50)return null;
+                      return(
+                        <div style={{marginTop:8,padding:"10px 12px",background:"rgba(255,179,71,0.06)",border:`1px solid ${C.amber}44`,borderRadius:10}}>
+                          <div style={{fontSize:11,color:C.amber,marginBottom:6}}>⚠️ 此報告僅 {cnt} 筆，可能是舊版解析不完整（新版支援78欄位）</div>
+                          <button onClick={()=>{
+                            setTab("record");
+                            setLabInputText(`請重新解析此報告。\n日期：${record.date}\n醫院：${record.hospital||""}\n\n（請貼上原始報告文字，或上傳報告照片，選擇相同日期後重新解析）`);
+                            showToast("📋 已填入提示，請貼上報告文字或上傳照片後解析");
+                          }}
+                            style={{padding:"7px 14px",background:`rgba(255,179,71,0.15)`,border:`1px solid ${C.amber}`,borderRadius:8,color:C.amber,fontSize:12,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif",fontWeight:600}}>
+                            📋 補齊此報告（重新解析）
+                          </button>
+                        </div>
+                      );
+                    })()}
                     {/* 刪除按鈕 inline */}
                     {delConfirm?.id===record.id?(
                       <div style={{marginTop:12,display:"flex",gap:8}}>
@@ -4471,14 +4595,17 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
         <div className="card">
           <div className="card-title">📄 健康摘要報告</div>
           <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.7}}>
-            產生完整健康摘要（最新數值、異常項目、追蹤事項），可列印或儲存為PDF帶去看診。
+            動態生成完整健康摘要（異常項目自動列出、用藥清單、雷達分數），可列印或儲存為PDF帶去看診。
           </div>
           <button className="btn-primary" onClick={()=>{
-            const latest = labHistory.length>0?labHistory[labHistory.length-1]:null;
-            const latestBp = bpHistory.length>0?bpHistory[bpHistory.length-1]:null;
-            const latestWt = weightHistory.length>0?weightHistory[weightHistory.length-1]:null;
+            const latest=labHistory.length>0?labHistory[labHistory.length-1]:null;
+            const recentBP=[...bpHistory].slice(-7);
+            const avgSys=recentBP.length>0?Math.round(recentBP.reduce((s,r)=>s+parseFloat(r.systolic||0),0)/recentBP.length):null;
+            const avgDia=recentBP.length>0?Math.round(recentBP.reduce((s,r)=>s+parseFloat(r.diastolic||0),0)/recentBP.length):null;
+            const latestWt=weightHistory.length>0?weightHistory[weightHistory.length-1]:null;
             if(!latest){showToast("⚠️ 尚無抽血資料");return;}
-            const FIELDS = [
+            // 動態異常項目
+            const FIELDS=[
               {key:"hba1c",label:"HbA1c",unit:"%"},
               {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL"},
               {key:"alt",label:"ALT",unit:"U/L"},
@@ -4490,44 +4617,66 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
               {key:"cholesterol",label:"總膽固醇",unit:"mg/dL"},
               {key:"uric_acid",label:"尿酸",unit:"mg/dL"},
               {key:"creatinine",label:"肌酸酐",unit:"mg/dL"},
-              {key:"gfr",label:"eGFR",unit:""},
+              {key:"egfr",label:"eGFR",unit:""},
               {key:"bun",label:"BUN",unit:"mg/dL"},
               {key:"tsh",label:"TSH",unit:"uIU/mL"},
               {key:"hb",label:"血紅素",unit:"g/dL"},
               {key:"wbc",label:"WBC",unit:"K/uL"},
               {key:"platelet",label:"血小板",unit:"K/uL"},
             ];
-            const rows = FIELDS.filter(f=>latest[f.key]!==null&&latest[f.key]!==undefined&&latest[f.key]!=="")
+            const rows=FIELDS.filter(f=>latest[f.key]!=null&&latest[f.key]!=="")
               .map(f=>{
                 const st=getStatus(f.key,latest[f.key]);
                 const mark=st==="alert"?"❌":st==="warn"?"⚠️":"✅";
-                return `<tr><td style="padding:6px 12px;border-bottom:1px solid #ddd">${f.label}</td><td style="padding:6px 12px;border-bottom:1px solid #ddd;text-align:right;font-weight:bold">${fmtLabVal(f.key,latest[f.key])} ${f.unit}</td><td style="padding:6px 12px;border-bottom:1px solid #ddd;text-align:center">${mark}</td></tr>`;
+                const bg=st==="alert"?"#fff0f3":st==="warn"?"#fffbf0":"";
+                return`<tr style="background:${bg}"><td style="padding:6px 12px;border-bottom:1px solid #eee">${f.label}</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:bold">${fmtLabVal(f.key,latest[f.key])} ${f.unit}</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:center">${mark}</td></tr>`;
               }).join("");
-            const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>健康摘要報告</title>
-<style>body{font-family:'Microsoft JhengHei',sans-serif;max-width:700px;margin:0 auto;padding:30px;color:#222}
-h1{font-size:22px;border-bottom:3px solid #2ecc8a;padding-bottom:8px}h2{font-size:16px;color:#1a8c5e;margin-top:24px}
-table{width:100%;border-collapse:collapse;font-size:14px}th{background:#f0f7f3;padding:8px 12px;text-align:left}
-.meta{color:#888;font-size:13px}.box{background:#f9f9f9;border-left:4px solid #2ecc8a;padding:12px;margin:12px 0;font-size:13px;line-height:1.8}
+            // 動態追蹤事項（依實際異常自動生成）
+            const alerts=[];
+            const v=k=>parseFloat(latest[k]);
+            if(v("hba1c")>=5.7)alerts.push(`HbA1c ${latest.hba1c}%（目標&lt;5.7%）→ 每3個月追蹤，飲食控制+運動`);
+            if(v("alt")>40||v("ggt")>60)alerts.push(`肝功能偏高 ALT ${latest.alt} / GGT ${latest.ggt} → 每6個月追蹤，超音波確認脂肪肝`);
+            if(v("hdl")<40)alerts.push(`HDL ${latest.hdl} mg/dL 偏低（目標&gt;40）→ 規律有氧運動、橄欖油、Omega-3`);
+            if(v("uric_acid")>7)alerts.push(`尿酸 ${latest.uric_acid} mg/dL 偏高 → 每日飲水2000mL+、限高普林食物`);
+            if(v("platelet")<150)alerts.push(`血小板 ${latest.platelet} K/uL 偏低 → 服用Plavix需注意出血風險，告知醫師`);
+            if(v("egfr")<75||v("egfr")>0&&v("egfr")<75)alerts.push(`eGFR ${latest.egfr}（G2期）→ 每6個月追蹤腎功能，避免腎毒性藥物`);
+            if(avgSys&&avgSys>130)alerts.push(`血壓近7筆均值 ${avgSys}/${avgDia} mmHg 仍偏高 → 確認用藥效果，目標&lt;130/80`);
+            alerts.push("右腎囊腫 10×12mm → 每年超音波追蹤");
+            // 雷達分數
+            const radarScores=computeRadarScores(latest,bpHistory);
+            const radarRows=radarScores?radarScores.filter(d=>d.score!=null)
+              .map(d=>`<tr><td style="padding:4px 12px">${d.label.split("\\n")[0]}</td><td style="padding:4px 12px;text-align:right;font-weight:bold;color:${d.score>=7?"#1a8c5e":d.score>=6?"#e67e22":"#e74c3c"}">${d.score}/10</td></tr>`).join(""):"";
+            // 用藥清單（取我的用藥及保健清單）
+            const medList=myMeds.length>0?myMeds.map(m=>`${m.name}　${m.dose||""}　${m.freq||""}　${m.timing||""}`).join("<br/>"):"（請至知識庫→藥物→我的用藥及保健清單填寫）";
+            // 打卡統計
+            const bkfHit30=Array.from({length:30},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}).filter(ds=>breakfastLog.some(r=>normalizeDate(r.date)===ds)).length;
+            const exHit7=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}).filter(ds=>exerciseLog.some(r=>normalizeDate(r.date)===ds)).length;
+            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>健康摘要報告</title>
+<style>body{font-family:'Microsoft JhengHei',sans-serif;max-width:720px;margin:0 auto;padding:30px;color:#222;font-size:14px}
+h1{font-size:20px;border-bottom:3px solid #2ecc8a;padding-bottom:8px;margin-bottom:4px}
+h2{font-size:15px;color:#1a8c5e;margin-top:20px;margin-bottom:6px;border-left:4px solid #2ecc8a;padding-left:8px}
+table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px;text-align:left;font-size:13px}
+.meta{color:#888;font-size:12px}.box{background:#f9f9f9;border-left:4px solid #2ecc8a;padding:10px 14px;margin:8px 0;font-size:13px;line-height:1.9}
+.warn{border-left-color:#e67e22;background:#fffbf0}.alert-item{margin:4px 0;padding:4px 0;border-bottom:1px solid #eee}
 @media print{body{padding:10px}}</style></head><body>
 <h1>📋 健康摘要報告</h1>
 <div class="meta">產生日期：${new Date().toLocaleDateString("zh-TW")} ｜ 最新抽血：${fmtDateFull(latest.date)}（${latest.hospital||""}）</div>
 <h2>基本資料</h2>
-<div class="box">55歲男性 ｜ 體重：${latestWt?latestWt.value_kg+" kg":"—"} ｜ 血壓：${latestBp?latestBp.systolic+"/"+latestBp.diastolic+" mmHg":"—"}<br/>
-已知狀況：糖尿病前期（HbA1c ${latest.hba1c||"—"}%）、脂肪肝 Grade 1、右腎囊腫 10×12mm</div>
+<div class="box">55歲男性 ｜ 體重：${latestWt?latestWt.value_kg+" kg":"—"} ｜ 血壓近7筆均值：${avgSys&&avgDia?avgSys+"/"+avgDia+" mmHg":"—"}<br/>
+已知狀況：糖尿病前期（HbA1c ${latest.hba1c||"—"}%）、脂肪肝 Grade 1、右腎囊腫 10×12mm、eGFR ${latest.egfr||"—"}（G2）</div>
+<h2>健康雷達分數</h2>
+<table><tr><th>面向</th><th style="text-align:right">分數</th></tr>${radarRows}</table>
 <h2>最新檢驗數值</h2>
 <table><tr><th>項目</th><th style="text-align:right">數值</th><th style="text-align:center">狀態</th></tr>${rows}</table>
-<h2>主要追蹤事項</h2>
-<div class="box">
-1. HbA1c 每3個月追蹤（目標 &lt; 5.7%）<br/>
-2. 肝功能（ALT/GGT）+ 腹部超音波每6個月（脂肪肝追蹤）<br/>
-3. HDL 偏低：規律有氧運動 + omega-3 補充<br/>
-4. 尿酸偏高：每日喝水2000mL+、限制高普林食物<br/>
-5. 血壓監測（目標 &lt; 130/80）<br/>
-6. 右腎囊腫每年超音波追蹤
-</div>
-<div class="meta" style="margin-top:30px">本報告由健康日誌App產生，僅供參考，實際診斷以醫師判斷為準。</div>
+<h2>⚠️ 需追蹤事項（自動偵測）</h2>
+<div class="box warn">${alerts.map((a,i)=>`<div class="alert-item">${i+1}. ${a}</div>`).join("")}</div>
+<h2>目前用藥及保健清單</h2>
+<div class="box">${medList}</div>
+<h2>生活習慣達成率</h2>
+<div class="box">早餐打卡近30天：${bkfHit30}/30 天（${Math.round(bkfHit30/30*100)}%）<br/>運動打卡本週：${exHit7}/7 天</div>
+<div class="meta" style="margin-top:24px;padding-top:12px;border-top:1px solid #ddd">本報告由健康日誌App v${VERSION}自動產生，僅供醫師參考，實際診斷以醫師判斷為準。</div>
 </body></html>`;
-            const win = window.open("","_blank");
+            const win=window.open("","_blank");
             win.document.write(html);
             win.document.close();
             setTimeout(()=>win.print(),500);
