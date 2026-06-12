@@ -2749,18 +2749,50 @@ const analyzeTrend = (key, data) => {
                     ):(
                       // 影像檢查展開
                       <>
-                        {record.finding&&(
-                          <div style={{marginBottom:8}}>
-                            <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>報告結論</div>
-                            <div style={{fontSize:13,color:C.text,lineHeight:1.7}}>{record.finding}</div>
-                          </div>
-                        )}
-                        {record.recommendation&&(
-                          <div style={{marginBottom:8}}>
-                            <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>醫師建議</div>
-                            <div style={{fontSize:13,color:C.text,lineHeight:1.7}}>{record.recommendation}</div>
-                          </div>
-                        )}
+                        {record.finding&&(()=>{
+                          const lines = record.finding
+                            .split(/[\n\r]+|[。]|[-－•·]/)
+                            .map(s=>s.trim()).filter(Boolean);
+                          return(
+                            <div style={{marginBottom:8}}>
+                              <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>報告結論</div>
+                              {lines.length>1?(
+                                <ul style={{margin:0,padding:"0 0 0 16px",listStyle:"none"}}>
+                                  {lines.map((l,i)=>(
+                                    <li key={i} style={{fontSize:13,color:C.text,lineHeight:1.7,display:"flex",gap:6,alignItems:"flex-start"}}>
+                                      <span style={{color:C.green,flexShrink:0,marginTop:2}}>•</span>
+                                      <span>{l}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ):(
+                                <div style={{fontSize:13,color:C.text,lineHeight:1.7}}>{record.finding}</div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                        {record.recommendation&&(()=>{
+                          const lines = record.recommendation
+                            .split(/[\n\r]+|[。]|[-－•·]/)
+                            .map(s=>s.trim()).filter(Boolean);
+                          return(
+                            <div style={{marginBottom:8}}>
+                              <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>醫師建議</div>
+                              {lines.length>1?(
+                                <ul style={{margin:0,padding:"0 0 0 16px",listStyle:"none"}}>
+                                  {lines.map((l,i)=>(
+                                    <li key={i} style={{fontSize:13,color:C.text,lineHeight:1.7,display:"flex",gap:6,alignItems:"flex-start"}}>
+                                      <span style={{color:C.amber,flexShrink:0,marginTop:2}}>•</span>
+                                      <span>{l}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ):(
+                                <div style={{fontSize:13,color:C.text,lineHeight:1.7}}>{record.recommendation}</div>
+                              )}
+                            </div>
+                          );
+                        })()}
                         {record.nextDate&&(
                           <div style={{fontSize:12,color:C.amber,marginBottom:8}}>下次追蹤：{fmtDate(record.nextDate)}</div>
                         )}
