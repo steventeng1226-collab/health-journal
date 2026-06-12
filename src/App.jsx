@@ -3775,28 +3775,28 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
             </div>
             {/* 保健品 */}
             <div style={{fontSize:12,fontWeight:700,color:C.green,letterSpacing:1,marginBottom:8}}>💊 保健品</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:16}}>
               {MEDICINE_ITEMS.filter(m=>m.type==="supplement").map(m=>(
-                <div key={m.id} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:12,
-                  padding:"12px 10px",cursor:"pointer"}}
+                <div key={m.id} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:10,
+                  padding:"8px 8px",cursor:"pointer"}}
                   onClick={()=>setSelectedMedicine(m)}>
-                  <div style={{fontSize:22,textAlign:"center",marginBottom:6}}>{m.icon}</div>
-                  <div style={{fontSize:12,fontWeight:600,color:C.text,textAlign:"center",lineHeight:1.4}}>{m.name}</div>
+                  <div style={{fontSize:18,textAlign:"center",marginBottom:4}}>{m.icon}</div>
+                  <div style={{fontSize:11,fontWeight:600,color:C.text,textAlign:"center",lineHeight:1.4}}>{m.name}</div>
                   {m.personal?.startsWith("⭐")&&(
-                    <div style={{fontSize:10,color:C.amber,textAlign:"center",marginTop:4}}>⭐ 推薦</div>
+                    <div style={{fontSize:10,color:C.amber,textAlign:"center",marginTop:3}}>⭐ 推薦</div>
                   )}
                 </div>
               ))}
             </div>
             {/* 藥物 */}
             <div style={{fontSize:12,fontWeight:700,color:C.blue,letterSpacing:1,marginBottom:8}}>💉 常見藥物</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
               {MEDICINE_ITEMS.filter(m=>m.type==="medicine").map(m=>(
-                <div key={m.id} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:12,
-                  padding:"12px 10px",cursor:"pointer"}}
+                <div key={m.id} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:10,
+                  padding:"8px 8px",cursor:"pointer"}}
                   onClick={()=>setSelectedMedicine(m)}>
-                  <div style={{fontSize:22,textAlign:"center",marginBottom:6}}>{m.icon}</div>
-                  <div style={{fontSize:12,fontWeight:600,color:C.text,textAlign:"center",lineHeight:1.4,marginBottom:4}}>{m.name}</div>
+                  <div style={{fontSize:18,textAlign:"center",marginBottom:4}}>{m.icon}</div>
+                  <div style={{fontSize:11,fontWeight:600,color:C.text,textAlign:"center",lineHeight:1.4}}>{m.name}</div>
                 </div>
               ))}
             </div>
@@ -3863,14 +3863,13 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
   // 健康知識文章卡片
   const ArticleCard=({art,onSelect})=>(
     <div style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:12,
-      padding:"12px 10px",cursor:"pointer"}} onClick={()=>onSelect(art)}>
-      <div style={{fontSize:24,marginBottom:6,textAlign:"center"}}>{art.icon}</div>
-      <div style={{fontSize:12,fontWeight:600,color:C.text,lineHeight:1.4,marginBottom:6,textAlign:"center"}}>
-        {art.title}
+      padding:"10px 8px",cursor:"pointer"}} onClick={()=>onSelect(art)}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginBottom:6}}>
+        <span style={{fontSize:18}}>{art.icon}</span>
+        <span style={{fontSize:12,padding:"2px 8px",background:"rgba(46,204,138,0.12)",borderRadius:8,color:C.green,fontWeight:600}}>{art.tag}</span>
       </div>
-      <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"center"}}>
-        <span style={{fontSize:10,padding:"2px 6px",background:"rgba(46,204,138,0.12)",borderRadius:8,color:C.green}}>{art.tag}</span>
-        {art.builtin&&<span style={{fontSize:10,padding:"2px 6px",background:"rgba(90,180,255,0.12)",borderRadius:8,color:C.blue}}>內建</span>}
+      <div style={{fontSize:12,fontWeight:600,color:C.text,lineHeight:1.4,textAlign:"center"}}>
+        {art.title}
       </div>
     </div>
   );
