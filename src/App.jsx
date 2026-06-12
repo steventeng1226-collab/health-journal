@@ -3881,24 +3881,43 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
                 </button>
               ))}
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-              {MEDICINE_ITEMS.filter(m=>m.type===medSubTab)
-                .sort((a,b)=>(b.taking?1:0)-(a.taking?1:0))
-                .map(m=>(
-                <div key={m.id} style={{background:C.bgCard,
+            {(()=>{
+              const items = MEDICINE_ITEMS.filter(m=>m.type===medSubTab);
+              const takingItems = items.filter(m=>m.taking);
+              const otherItems = items.filter(m=>!m.taking);
+              const MedCard=({m})=>(
+                <div style={{background:C.bgCard,
                   border:`1px solid ${m.taking?C.green:C.border}`,borderRadius:10,
                   padding:"8px 8px",cursor:"pointer"}}
                   onClick={()=>setSelectedMedicine(m)}>
                   <div style={{fontSize:18,textAlign:"center",marginBottom:4}}>{m.icon}</div>
                   <div style={{fontSize:11,fontWeight:600,color:C.text,textAlign:"center",lineHeight:1.4}}>{m.name}</div>
-                  {m.taking?(
-                    <div style={{fontSize:10,color:C.green,textAlign:"center",marginTop:3,fontWeight:700}}>✅ 服用中</div>
-                  ):m.personal?.startsWith("⭐")?(
+                  {!m.taking&&m.personal?.startsWith("⭐")&&(
                     <div style={{fontSize:10,color:C.amber,textAlign:"center",marginTop:3}}>⭐ 推薦</div>
-                  ):null}
+                  )}
                 </div>
-              ))}
-            </div>
+              );
+              return(
+                <>
+                  {takingItems.length>0&&(
+                    <>
+                      <div style={{fontSize:12,fontWeight:700,color:C.green,letterSpacing:1,marginBottom:8}}>✅ 目前使用</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:16}}>
+                        {takingItems.map(m=><MedCard key={m.id} m={m}/>)}
+                      </div>
+                    </>
+                  )}
+                  {otherItems.length>0&&(
+                    <>
+                      <div style={{fontSize:12,fontWeight:700,color:C.textMuted,letterSpacing:1,marginBottom:8}}>📖 參考資訊</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                        {otherItems.map(m=><MedCard key={m.id} m={m}/>)}
+                      </div>
+                    </>
+                  )}
+                </>
+              );
+            })()}
           </>
         )}
       </div>
