@@ -2040,48 +2040,48 @@ const analyzeTrend = (key, data) => {
       </div>
       <div style={{fontSize:11,color:C.textMuted,letterSpacing:2,marginBottom:8}}>LATEST VALUES</div>
       <div className="grid-2">
-        <div className="card" style={{cursor:"pointer"}} onClick={()=>{setTab("trend");setTrendItem("glucose")}}>
-          <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>🩸 血糖</div>
+        <div className="card" style={{cursor:"pointer",padding:"10px 12px"}} onClick={()=>{setTab("trend");setTrendItem("glucose")}}>
+          <div style={{fontSize:10,color:C.textMuted,marginBottom:4}}>🩸 血糖</div>
           {latestGlucose?<>
-            <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:28,color:C.amber,lineHeight:1}}>{latestGlucose.value_mgdl}</span>
-              <span style={{fontSize:12,color:C.textMuted}}>mg/dL</span>
+            <div style={{display:"flex",alignItems:"baseline",gap:4}}>
+              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:C.amber,lineHeight:1}}>{latestGlucose.value_mgdl}</span>
+              <span style={{fontSize:10,color:C.textMuted}}>mg/dL</span>
             </div>
-            <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>{latestGlucose.timePoint} · {daysSince(latestGlucose.date)}</div>
-            <span className={`source-tag ${latestGlucose.source==="醫院"?"source-hospital":"source-daily"}`} style={{marginTop:6,display:"inline-flex"}}>{latestGlucose.source==="醫院"?"🏥 醫院":"🏠 日常"}</span>
-          </>:<div style={{fontSize:12,color:C.textMuted,marginTop:8}}>尚無資料</div>}
+            <div style={{fontSize:9,color:C.textMuted,marginTop:3}}>{latestGlucose.timePoint} · {daysSince(latestGlucose.date)}</div>
+            <span className={`source-tag ${latestGlucose.source==="醫院"?"source-hospital":"source-daily"}`} style={{marginTop:5,display:"inline-flex"}}>{latestGlucose.source==="醫院"?"🏥 醫院":"🏠 日常"}</span>
+          </>:<div style={{fontSize:11,color:C.textMuted,marginTop:6}}>尚無資料</div>}
         </div>
-        <div className="card" style={{cursor:"pointer"}} onClick={()=>{setTab("trend");setTrendItem("bp")}}>
-          <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>💓 血壓</div>
+        <div className="card" style={{cursor:"pointer",padding:"10px 12px"}} onClick={()=>{setTab("trend");setTrendItem("bp")}}>
+          <div style={{fontSize:10,color:C.textMuted,marginBottom:4}}>💓 血壓</div>
           {latestBP?<>
             <div style={{display:"flex",alignItems:"baseline",gap:4}}>
-              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:C.green,lineHeight:1}}>{latestBP.systolic}</span>
-              <span style={{fontSize:12,color:C.textMuted}}>/{latestBP.diastolic}</span>
+              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:C.green,lineHeight:1}}>{latestBP.systolic}</span>
+              <span style={{fontSize:10,color:C.textMuted}}>/{latestBP.diastolic}</span>
             </div>
-            <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>mmHg · {daysSince(latestBP.date)}</div>
-            <span className={`source-tag ${latestBP.source==="醫院"?"source-hospital":"source-daily"}`} style={{marginTop:6,display:"inline-flex"}}>{latestBP.source==="醫院"?"🏥 醫院":"🏠 日常"}</span>
-          </>:<div style={{fontSize:12,color:C.textMuted,marginTop:8}}>尚無資料</div>}
+            <div style={{fontSize:9,color:C.textMuted,marginTop:3}}>mmHg · {daysSince(latestBP.date)}</div>
+            <span className={`source-tag ${latestBP.source==="醫院"?"source-hospital":"source-daily"}`} style={{marginTop:5,display:"inline-flex"}}>{latestBP.source==="醫院"?"🏥 醫院":"🏠 日常"}</span>
+          </>:<div style={{fontSize:11,color:C.textMuted,marginTop:6}}>尚無資料</div>}
         </div>
-        <div className="card" style={{cursor:"pointer"}} onClick={()=>{setTab("trend");setTrendItem("weight")}}>
-          <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>⚖️ 體重</div>
+        <div className="card" style={{cursor:"pointer",padding:"10px 12px"}} onClick={()=>{setTab("trend");setTrendItem("weight")}}>
+          <div style={{fontSize:10,color:C.textMuted,marginBottom:4}}>⚖️ 體重</div>
           {latestWeight?<>
-            <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:28,lineHeight:1}}>{latestWeight.value_kg}</span>
-              <span style={{fontSize:12,color:C.textMuted}}>kg</span>
+            <div style={{display:"flex",alignItems:"baseline",gap:4}}>
+              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:22,lineHeight:1}}>{latestWeight.value_kg}</span>
+              <span style={{fontSize:10,color:C.textMuted}}>kg</span>
             </div>
-            <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>{daysSince(latestWeight.date)}</div>
-          </>:<div style={{fontSize:12,color:C.textMuted,marginTop:8}}>尚無資料</div>}
+            <div style={{fontSize:9,color:C.textMuted,marginTop:3}}>{daysSince(latestWeight.date)}</div>
+          </>:<div style={{fontSize:11,color:C.textMuted,marginTop:6}}>尚無資料</div>}
         </div>
-        <div className="card" style={{cursor:"pointer"}} onClick={()=>setSelectedKnowledge(KNOWLEDGE_ITEMS[0])}>
-          <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>📊 HbA1c</div>
+        <div className="card" style={{cursor:"pointer",padding:"10px 12px"}} onClick={()=>setSelectedKnowledge(KNOWLEDGE_ITEMS[0])}>
+          <div style={{fontSize:10,color:C.textMuted,marginBottom:4}}>📊 HbA1c</div>
           {latestLab?<>
-            <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:28,color:C.amber,lineHeight:1}}>{latestLab.hba1c}</span>
-              <span style={{fontSize:12,color:C.textMuted}}>%</span>
+            <div style={{display:"flex",alignItems:"baseline",gap:4}}>
+              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:C.amber,lineHeight:1}}>{latestLab.hba1c}</span>
+              <span style={{fontSize:10,color:C.textMuted}}>%</span>
             </div>
-            <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>{daysSince(latestLab.date)}</div>
-            <span className="status-chip status-warn" style={{marginTop:6,display:"inline-flex"}}>前期範圍</span>
-          </>:<div style={{fontSize:12,color:C.textMuted,marginTop:8}}>尚無資料</div>}
+            <div style={{fontSize:9,color:C.textMuted,marginTop:3}}>{daysSince(latestLab.date)}</div>
+            <span className="status-chip status-warn" style={{marginTop:5,display:"inline-flex"}}>前期範圍</span>
+          </>:<div style={{fontSize:11,color:C.textMuted,marginTop:6}}>尚無資料</div>}
         </div>
       </div>
       <div className="card">
@@ -3682,19 +3682,19 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
               }));
               return(
                 <>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:4}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:4}}>
                     {groupList.map(({group,items,isOpen})=>(
                       <div key={group}
-                        style={{padding:"10px 12px",background:isOpen?"rgba(46,204,138,0.12)":C.bgCard,
+                        style={{padding:"7px 10px",background:isOpen?"rgba(46,204,138,0.12)":C.bgCard,
                           borderRadius:"10px",border:`1px solid ${isOpen?C.green:C.border}`,
                           cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}}
                         onClick={()=>setOpenGroup(isOpen?null:group)}>
                         <div>
-                          <div style={{fontSize:16}}>{group.split(" ")[0]}</div>
-                          <div style={{fontSize:11,color:isOpen?C.green:C.text,fontWeight:isOpen?700:400,lineHeight:1.4}}>
+                          <div style={{fontSize:14}}>{group.split(" ")[0]}</div>
+                          <div style={{fontSize:10,color:isOpen?C.green:C.text,fontWeight:isOpen?700:400,lineHeight:1.4}}>
                             {group.replace(/^[^\s]+\s/,"")}
                           </div>
-                          <div style={{fontSize:10,color:C.textMuted}}>{items.length}項</div>
+                          <div style={{fontSize:9,color:C.textMuted}}>{items.length}項</div>
                         </div>
                         <span style={{color:isOpen?C.green:C.textMuted,fontSize:11}}>
                           {isOpen?"▲":"▼"}
