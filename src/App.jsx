@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.17";
+const VERSION = "v4.18";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -907,6 +907,55 @@ const MEDICINE_ITEMS = [
    personal:"你的尿酸7.52偏高，若無法透過飲食控制至7.0以下可考慮"},
 ];
 
+// ── 健康雷達計分 ─────────────────────────────────────
+// 每面向0-10分：10=理想值，5=異常臨界，0=嚴重異常。線性換算後夾在0-10。
+const clamp10=(v)=>Math.max(0,Math.min(10,v));
+// score(value, ideal, bad)：value=ideal→10分，value=bad→5分，超過bad持續扣分
+const linScore=(val,ideal,bad)=>{
+  if(val==null||isNaN(val))return null;
+  return clamp10(10-5*Math.abs(val-ideal)/Math.abs(bad-ideal));
+};
+const computeRadarScores=(lab,bp)=>{
+  if(!lab)return null;
+  const f=k=>{const v=parseFloat(lab[k]);return isNaN(v)?null:v;};
+  const avg=(arr)=>{const a=arr.filter(v=>v!=null);return a.length?a.reduce((s,v)=>s+v,0)/a.length:null;};
+  // 血糖代謝：HbA1c(理想5.3/臨界6.5) + 空腹血糖(理想90/臨界126)
+  const dimGlucose=avg([linScore(f("hba1c"),5.3,6.5),linScore(f("glucose_ac"),90,126)]);
+  // 血脂：HDL(理想60/臨界40，越高越好) + TG(理想100/臨界200) + LDL(理想100/臨界160)
+  const hdlV=f("hdl");
+  const hdlScore=hdlV==null?null:clamp10(10-5*Math.max(0,60-hdlV)/20);
+  const dimLipid=avg([hdlScore,linScore(f("tg"),100,200),linScore(f("ldl"),100,160)]);
+  // 肝臟：ALT(理想25/臨界80) + GGT(理想30/臨界100)
+  const dimLiver=avg([linScore(f("alt"),25,80),linScore(f("ggt"),30,100)]);
+  // 腎臟：eGFR(理想90/臨界60，越高越好) + UPCR(理想15/臨界150)
+  const egfrV=f("egfr");
+  const egfrScore=egfrV==null?null:clamp10(10-5*Math.max(0,90-egfrV)/30);
+  const dimKidney=avg([egfrScore,linScore(f("upcr"),15,150)]);
+  // 心血管：收縮壓(理想115/臨界140) + 舒張壓(理想75/臨界90)
+  const sys=bp?parseFloat(bp.systolic):null;
+  const dia=bp?parseFloat(bp.diastolic):null;
+  const dimCV=avg([linScore(sys,115,140),linScore(dia,75,90)]);
+  // 血液：血小板(理想200/臨界100，越高越好至正常) + Hb(理想15/臨界11)
+  const pltV=f("platelet");
+  const pltScore=pltV==null?null:clamp10(10-5*Math.max(0,200-pltV)/100);
+  const dimBlood=avg([pltScore,linScore(f("hb"),15,11)]);
+  // 尿酸：理想5.5/臨界8.5
+  const dimUric=linScore(f("uric_acid"),5.5,8.5);
+  // 免疫/其他：TSH正常+HBsAg陰性=滿分基底，CRP理想0.1/臨界1
+  const crpV=f("crp");
+  const dimOther=crpV!=null?linScore(crpV,0.1,1):9;
+  return[
+    {label:"血糖代謝",score:dimGlucose},
+    {label:"血脂HDL",score:dimLipid},
+    {label:"肝臟",score:dimLiver},
+    {label:"腎臟",score:dimKidney},
+    {label:"心血管",score:dimCV},
+    {label:"血液",score:dimBlood},
+    {label:"尿酸",score:dimUric},
+    {label:"發炎/其他",score:dimOther},
+  ].map(d=>({...d,score:d.score==null?null:Math.round(d.score*10)/10}));
+};
+
 export default function HealthJournal(){
   const [tab,setTab]=useState("home");
   const [recordTab,setRecordTab]=useState("glucose");
@@ -974,6 +1023,7 @@ export default function HealthJournal(){
   const [trendAiResult,setTrendAiResult]=useState({});
   const [trendAiLoading,setTrendAiLoading]=useState(false);
   const [imagingForm,setImagingForm]=useState({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
+  const [breakfastLog,setBreakfastLog]=useState([]);
   const [imagingPhotos,setImagingPhotos]=useState([]);
   const imagingPhotoRef = React.useRef();
   const [lightboxUrl,setLightboxUrl]=useState(null);
@@ -1014,18 +1064,20 @@ export default function HealthJournal(){
     setLoading(true);
     setSyncStatus("syncing");
     try{
-      const [lab,glu,bp,wt,settings,imaging]=await Promise.all([
+      const [lab,glu,bp,wt,settings,imaging,bkf]=await Promise.all([
         api.get("getLabHistory"),
         api.get("getAll",{sheet:"daily_glucose"}),
         api.get("getAll",{sheet:"daily_bp"}),
         api.get("getAll",{sheet:"daily_weight"}),
         api.loadSettings(),
         api.get("getAll",{sheet:"imaging"}),
+        api.get("getAll",{sheet:"breakfast_log"}),
       ]);
       if(lab?.data)setLabHistory(lab.data);
       if(glu?.data)setGlucoseHistory(glu.data);
       if(bp?.data)setBpHistory(bp.data);
       if(wt?.data)setWeightHistory(wt.data);
+      if(bkf?.data)setBreakfastLog(bkf.data.filter(r=>r.date&&String(r.date).trim()));
       if(imaging?.data){
         // 過濾空白列（id或date或type為空/空白的）
         const validImaging = imaging.data.filter(r =>
@@ -2062,6 +2114,51 @@ const analyzeTrend = (key, data) => {
           <div style={{fontSize:11,color:C.textMuted}}>HbA1c {latestLab?.hba1c||"5.8"}% · 需積極管理</div>
         </div>
       </div>
+      {/* 修復早餐打卡 */}
+      {(()=>{
+        const dates=new Set(breakfastLog.map(r=>normalizeDate(r.date)));
+        const todayStr=today();
+        const checkedToday=dates.has(todayStr);
+        // 連續天數
+        let streak=0;
+        const d=new Date();
+        if(!checkedToday)d.setDate(d.getDate()-1);
+        while(true){
+          const ds=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+          if(dates.has(ds)){streak++;d.setDate(d.getDate()-1);}else break;
+        }
+        // 近30天達成率
+        let hit=0;
+        for(let i=0;i<30;i++){
+          const dd=new Date();dd.setDate(dd.getDate()-i);
+          const ds=`${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,"0")}-${String(dd.getDate()).padStart(2,"0")}`;
+          if(dates.has(ds))hit++;
+        }
+        return(
+          <div className="card" style={{padding:"12px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:700,color:C.text}}>🍳 修復早餐</div>
+              <div style={{fontSize:11,color:C.textMuted,marginTop:3}}>
+                🔥 連續 {streak} 天{breakfastLog.length>0?` · 近30天 ${Math.round(hit/30*100)}%`:""}
+              </div>
+            </div>
+            <button disabled={checkedToday}
+              onClick={async()=>{
+                const r=await api.post("append","breakfast_log",{date:todayStr,checked:1});
+                if(r&&!r.error){
+                  setBreakfastLog(prev=>[...prev,{date:todayStr,checked:1}]);
+                  showToast("✅ 早餐打卡成功！");
+                }else showToast("❌ 打卡失敗，請確認Sheets有breakfast_log分頁");
+              }}
+              style={{padding:"10px 18px",borderRadius:12,fontSize:13,fontWeight:700,cursor:checkedToday?"default":"pointer",
+                background:checkedToday?"rgba(46,204,138,0.12)":C.green,
+                border:"none",color:checkedToday?C.green:"#0a0a0a",
+                fontFamily:"'Noto Sans TC',sans-serif"}}>
+              {checkedToday?"✅ 已打卡":"打卡"}
+            </button>
+          </div>
+        );
+      })()}
       <div style={{fontSize:11,color:C.textMuted,letterSpacing:2,marginBottom:8}}>LATEST VALUES</div>
       <div className="grid-2">
         <div className="card" style={{cursor:"pointer",padding:"10px 12px"}} onClick={()=>{setTab("trend");setTrendItem("glucose")}}>
@@ -2260,7 +2357,7 @@ const analyzeTrend = (key, data) => {
 
   // ── 趨勢 ───────────────────────────────────────────────
   const TrendTab=()=>{
-    const BTNS=[{key:"glucose",label:"血糖"},{key:"bp",label:"血壓"},{key:"weight",label:"體重"},{key:"lab",label:"抽血指標"}];
+    const BTNS=[{key:"radar",label:"雷達"},{key:"glucose",label:"血糖"},{key:"bp",label:"血壓"},{key:"weight",label:"體重"},{key:"lab",label:"抽血指標"}];
     const gDaily=glucoseHistory.filter(r=>r.source!=="醫院").map(r=>({date:r.date,v:parseFloat(r.value_mgdl)}));
     const gHosp=glucoseHistory.filter(r=>r.source==="醫院").map(r=>({date:r.date,v:parseFloat(r.value_mgdl)}));
     const bpDaily=bpHistory.filter(r=>r.source!=="醫院");
@@ -2275,6 +2372,65 @@ const analyzeTrend = (key, data) => {
               style={{flex:1,padding:"8px 4px",fontSize:11}} onClick={()=>setTrendItem(t.key)}>{t.label}</button>
           ))}
         </div>
+        {trendItem==="radar"&&(()=>{
+          const sortedLabs=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+          const curLab=sortedLabs.length>0?sortedLabs[sortedLabs.length-1]:null;
+          const prevLab=sortedLabs.length>1?sortedLabs[sortedLabs.length-2]:null;
+          const cur=computeRadarScores(curLab,latestBP);
+          const prev=prevLab?computeRadarScores(prevLab,null):null;
+          if(!cur)return<div className="card"><div className="empty-state">尚無抽血資料</div></div>;
+          const N=cur.length, CX=170, CY=160, R=110;
+          const pt=(i,score)=>{
+            const ang=-Math.PI/2+i*2*Math.PI/N;
+            const r=R*(score==null?0:score)/10;
+            return[CX+r*Math.cos(ang),CY+r*Math.sin(ang)];
+          };
+          const poly=(scores)=>scores.map((d,i)=>pt(i,d.score).join(",")).join(" ");
+          const weak=cur.filter(d=>d.score!=null&&d.score<6.5).sort((a,b)=>a.score-b.score);
+          return(
+            <div className="card">
+              <div className="card-title">健康雷達（依抽血+血壓計分）</div>
+              <div style={{display:"flex",gap:12,marginBottom:4}}>
+                <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>本次 {fmtDate(curLab.date)}</span></div>
+                {prev&&<div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:0,borderTop:`2px dashed ${C.blue}`}}/><span style={{fontSize:11,color:C.textMuted}}>上次 {fmtDate(prevLab.date)}</span></div>}
+              </div>
+              <svg viewBox="0 0 340 320" style={{width:"100%"}}>
+                {[2,4,6,8,10].map(lv=>(
+                  <polygon key={lv} points={Array.from({length:N},(_,i)=>{
+                    const ang=-Math.PI/2+i*2*Math.PI/N;
+                    return[CX+R*lv/10*Math.cos(ang),CY+R*lv/10*Math.sin(ang)].join(",");
+                  }).join(" ")} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
+                ))}
+                {cur.map((d,i)=>{
+                  const ang=-Math.PI/2+i*2*Math.PI/N;
+                  const lx=CX+(R+24)*Math.cos(ang), ly=CY+(R+24)*Math.sin(ang);
+                  return(
+                    <g key={i}>
+                      <line x1={CX} y1={CY} x2={CX+R*Math.cos(ang)} y2={CY+R*Math.sin(ang)} stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
+                      <text x={lx} y={ly} textAnchor="middle" fontSize="11" fill={d.score!=null&&d.score<6.5?C.amber:C.textMuted}>{d.label}</text>
+                      <text x={lx} y={ly+13} textAnchor="middle" fontSize="11" fontWeight="700" fill={d.score==null?C.textMuted:d.score<5?C.red:d.score<6.5?C.amber:C.green}>{d.score==null?"–":d.score}</text>
+                    </g>
+                  );
+                })}
+                {prev&&<polygon points={poly(prev)} fill="rgba(90,180,255,0.08)" stroke={C.blue} strokeWidth="1.5" strokeDasharray="5,4"/>}
+                <polygon points={poly(cur)} fill="rgba(46,204,138,0.15)" stroke={C.green} strokeWidth="2"/>
+                {cur.map((d,i)=>{const[x,y]=pt(i,d.score);return<circle key={i} cx={x} cy={y} r="3" fill={C.green}/>;})}
+              </svg>
+              {weak.length>0&&(
+                <div style={{background:"rgba(255,179,71,0.08)",border:"1px solid rgba(255,179,71,0.25)",borderRadius:10,padding:10,marginTop:8}}>
+                  <div style={{fontSize:12,fontWeight:700,color:C.amber,marginBottom:4}}>⚠️ 待加強面向</div>
+                  <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>
+                    {weak.map(d=>`${d.label}（${d.score}分）`).join("、")}
+                    <br/>你的修復早餐正是針對血脂與肝臟設計，持續執行+下次抽血驗證！
+                  </div>
+                </div>
+              )}
+              <div style={{fontSize:10,color:C.textMuted,marginTop:8,lineHeight:1.6}}>
+                計分方式：各指標與理想值比較換算0-10分（10=理想、5=異常臨界），面向內多指標取平均。
+              </div>
+            </div>
+          );
+        })()}
         {trendItem==="glucose"&&(
           <div className="card">
             <div className="card-title">血糖趨勢</div>
