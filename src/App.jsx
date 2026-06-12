@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.18";
+const VERSION = "v4.19";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -815,6 +815,55 @@ T2D患者失智症風險是一般人的2倍。
 ✅ 控制HbA1c < 5.7%
 ✅ 確保睡眠7–8小時`,
   },
+  {
+    id:"a9",icon:"❤️",tag:"循環",
+    title:"性功能健康與血管循環",
+    content:`性功能健康和心血管健康是同一個系統的不同表現。
+
+**與你直接相關的因素**
+
+🩸 血管健康是核心
+勃起功能需要充足的血流，血管內皮健康直接決定效果。你的狀況：血壓130/90＋HDL偏低30.94＋脂肪肝，三者都會影響血管內皮功能。好消息是你正在積極改善這些指標。
+
+📊 你的指標與性功能關聯
+- HDL 30.94偏低→血管內皮保護不足→改善HDL=改善血流
+- 血壓130/90→長期高血壓損害微血管→需控制達標
+- 血糖前期→高血糖損害神經和血管→控制HbA1c<5.7%很重要
+- eGFR 68→腎臟與荷爾蒙調節相關→保護腎功能
+
+💊 你目前用藥的注意事項
+舒脈康（Amlodipine成分）：鈣離子阻斷劑對血管舒張有正面影響，本身不影響性功能。
+保栓通Plavix＋PDE5抑制劑（Viagra類）：兩者都有血管擴張效果，若考慮使用PDE5藥物，必須先告知開立Plavix的醫師確認安全性。
+平脂Statin類：少數人報告性功能改變，Pitavastatin的相關報告較其他Statin少，若有此困擾告知醫師。
+
+**有實證的自然改善方法**
+
+🥤 甜菜根粉（你已在吃！）
+硝酸鹽→一氧化氮→血管擴張，機轉與PDE5抑制劑部分類似，是最有力的天然血流補充品。每天3g持續使用。
+
+🫒 橄欖油（你已在吃！）
+地中海飲食研究顯示，橄欖油多酚改善血管內皮功能，與性功能改善直接相關。
+
+🧄 大蒜素
+每天半顆至1顆生蒜，含蒜素促進一氧化氮生成，擴張血管。
+
+🏃 規律有氧運動
+研究最強的單一介入方式。每週150分鐘中等強度有氧（快走、游泳）可改善性功能40%以上。
+
+😴 睡眠充足（7–8小時）
+睾固酮主要在深睡眠中分泌。睡眠不足直接影響荷爾蒙水平。
+
+🧘 壓力管理
+皮質醇（壓力荷爾蒙）抑制睾固酮。在越南工作的壓力需要主動管理。
+
+**你現在可以做的**
+✅ 繼續每天甜菜根粉3g（堅果奶昔中）
+✅ 繼續橄欖油+酪梨升HDL
+✅ 每天快走30分鐘（優先選擇）
+✅ 控制血壓達標<120/80
+✅ 確保睡眠7小時以上
+✅ 若考慮藥物輔助，告知醫師目前用藥清單`,
+  },
 ];
 
 // ── 藥物/保健品知識庫 ─────────────────────────────────
@@ -872,21 +921,21 @@ const MEDICINE_ITEMS = [
   {id:"m12",type:"medicine",icon:"💊",name:"舒脈康 Sevikar 5/40mg",taking:true,
    desc:"複方降血壓藥，含Amlodipine 5mg（鈣離子阻斷劑）+ Olmesartan 40mg（血管收縮素受體阻斷劑ARB），雙機轉控制血壓。",
    benefits:["Amlodipine放鬆血管平滑肌、降低血壓","Olmesartan阻斷血管收縮、同時保護腎臟","ARB類對糖尿病前期患者有腎臟保護作用","複方藥減少服藥顆數、提高順從性"],
-   dosage:"每日1錠，固定時間服用（通常早上），不受進食影響",
+   dosage:"每日1錠，固定時間服用（晚上），不受進食影響",
    caution:"可能腳踝水腫（Amlodipine常見副作用）；起身時注意姿勢性低血壓；定期追蹤腎功能和血鉀；避免高鉀飲食過量",
-   personal:"✅ 服用中：你的血壓130/90，ARB成分同時保護你的腎臟（eGFR 68.66 G2），是適合的選擇。在家定期量血壓記錄到App追蹤效果"},
+   personal:"✅ 服用中（2天1次·晚上）：你的血壓130/90，ARB成分同時保護你的腎臟（eGFR 68.66 G2），是適合的選擇。在家定期量血壓記錄到App追蹤效果",taking:true},
   {id:"m13",type:"medicine",icon:"💊",name:"平脂 Zulitor 4mg",taking:true,
    desc:"Pitavastatin（匹伐他汀），Statin類降血脂藥，降低LDL壞膽固醇，心血管保護。相比其他Statin對血糖影響較小。",
    benefits:["降低LDL壞膽固醇","穩定動脈粥狀斑塊","減少心血管事件風險","Pitavastatin對血糖影響在Statin中最小（對糖尿病前期友善）","可能輕微提升HDL"],
-   dosage:"每日1錠4mg，睡前或固定時間服用",
+   dosage:"每日1錠4mg，睡前或晚上固定時間服用",
    caution:"可能肌肉痠痛（出現需告知醫師、檢查CK）；定期追蹤肝功能（你的ALT 50.6偏高需注意）；避免大量葡萄柚汁",
-   personal:"✅ 服用中：注意你的ALT 50.6/GGT 66偏高，Statin需定期追蹤肝功能，建議每3-6個月驗ALT。Pitavastatin對血糖影響小，適合糖尿病前期的你"},
+   personal:"✅ 服用中（每天·晚上）：注意你的ALT 50.6/GGT 66偏高，Statin需定期追蹤肝功能，建議每3-6個月驗ALT。Pitavastatin對血糖影響小，適合糖尿病前期的你",taking:true},
   {id:"m14",type:"medicine",icon:"💊",name:"保栓通 Plavix 75mg",taking:true,
    desc:"Clopidogrel（氯吡格雷），抗血小板藥物，預防血栓形成，常用於心血管疾病預防或支架置放後。",
    benefits:["抑制血小板凝集、預防血栓","降低心肌梗塞和中風風險","支架置放後預防再阻塞的標準用藥"],
-   dosage:"每日1錠75mg，固定時間服用，不受進食影響",
+   dosage:"每日1錠75mg，晚上固定時間服用，不受進食影響",
    caution:"出血風險增加：刷牙流血、瘀青變多需注意；手術或拔牙前需告知醫師（通常需停藥5-7天）；避免與其他抗凝血藥/高劑量魚油/銀杏併用；你的血小板126偏低，更需注意出血徵兆",
-   personal:"✅ 服用中：⚠️ 重要提醒：你的血小板126偏低+服用抗血小板藥，出血風險較高。若有不明瘀青、牙齦出血不止、黑便，立即就醫。補充魚油前先諮詢醫師"},
+   personal:"✅ 服用中（每天·晚上）：⚠️ 重要提醒：你的血小板126偏低+服用抗血小板藥，出血風險較高。若有不明瘀青、牙齦出血不止、黑便，立即就醫。補充魚油前先諮詢醫師",taking:true},
   {id:"m8",type:"medicine",icon:"💊",name:"Metformin 二甲雙胍",
    desc:"T2D第一線用藥，也常用於糖尿病前期的預防介入，除降血糖外有多種代謝好處。",
    benefits:["降低肝糖生成","改善胰島素敏感性","輕微減重效果","可能改善脂肪肝","降低心血管風險"],
@@ -2114,7 +2163,7 @@ const analyzeTrend = (key, data) => {
           <div style={{fontSize:11,color:C.textMuted}}>HbA1c {latestLab?.hba1c||"5.8"}% · 需積極管理</div>
         </div>
       </div>
-      {/* 修復早餐打卡 */}
+      {/* 早餐打卡 */}
       {(()=>{
         const dates=new Set(breakfastLog.map(r=>normalizeDate(r.date)));
         const todayStr=today();
@@ -2137,7 +2186,7 @@ const analyzeTrend = (key, data) => {
         return(
           <div className="card" style={{padding:"12px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
             <div>
-              <div style={{fontSize:13,fontWeight:700,color:C.text}}>🍳 修復早餐</div>
+              <div style={{fontSize:13,fontWeight:700,color:C.text}}>🍳 我的早餐</div>
               <div style={{fontSize:11,color:C.textMuted,marginTop:3}}>
                 🔥 連續 {streak} 天{breakfastLog.length>0?` · 近30天 ${Math.round(hit/30*100)}%`:""}
               </div>
@@ -3854,7 +3903,7 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
         {/* Tab 切換 */}
         {!searchLower&&(
           <div style={{display:"flex",gap:6,marginBottom:16}}>
-            {[{key:"lab",label:"📊 指標"},{key:"articles",label:"📖 知識"},{key:"medicine",label:"💊 藥物"}].map(t=>(
+            {[{key:"lab",label:"📊 指標"},{key:"articles",label:"📖 知識"},{key:"medicine",label:"💊 藥物"},{key:"breakfast",label:"🍳 早餐"}].map(t=>(
               <button key={t.key} onClick={()=>{setKbTab(t.key);setSelectedMedicine(null);setSelectedArticle(null);setSelectedKnowledge(null);}}
                 style={{flex:1,padding:"9px 4px",borderRadius:10,border:`1px solid ${kbTab===t.key?C.green:C.border}`,
                   background:kbTab===t.key?"rgba(46,204,138,0.12)":"transparent",
@@ -4082,11 +4131,120 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
             })()}
           </>
         )}
+        {!searchLower&&kbTab==="breakfast"&&(()=>{
+          const MEALS=[
+            {order:1,label:"蛋白質＋蔬菜",items:[
+              {name:"雞蛋",qty:"2-3顆",benefits:["優質蛋白飽腹延緩血糖上升","卵磷脂護大腦和肝臟","維生素D+B12"],organs:["血糖","大腦","肝臟"]},
+              {name:"青菜",qty:"有就吃",benefits:["膳食纖維穩血糖","葉酸護心血管","低卡飽腹"],organs:["血糖","心血管"]},
+            ]},
+            {order:2,label:"好油",items:[
+              {name:"酪梨",qty:"180g",benefits:["單元不飽和脂肪直接升HDL","鉀降血壓","葉黃素護眼"],organs:["血脂HDL","心血管"]},
+              {name:"橄欖油",qty:"5ml 直接喝",benefits:["多酚Oleocanthal抗發炎護肝","升HDL","改善脂肪肝有實證"],organs:["肝臟","血脂HDL","發炎/其他"]},
+            ]},
+            {order:3,label:"🥤 堅果奶昔（果汁機攪拌）",isShake:true,items:[
+              {name:"核桃",qty:"20g",benefits:["ALA Omega-3護大腦和血管","降LDL","多酚抗氧化"],organs:["大腦","血脂HDL"]},
+              {name:"杏仁",qty:"10g",benefits:["維生素E強效抗氧化","降LDL","鎂降血壓"],organs:["血脂HDL","心血管"]},
+              {name:"南瓜子",qty:"15g",benefits:["鎂+鋅降血壓護前列腺","鐵改善血液","植物固醇降膽固醇"],organs:["心血管","血液"]},
+              {name:"奇亞籽",qty:"10g",benefits:["水溶性纖維穩血糖減峰值","Omega-3降TG","吸水膨脹增飽腹感"],organs:["血糖","血脂HDL"]},
+              {name:"亞麻籽",qty:"15g",benefits:["木酚素抗發炎降雌激素","Omega-3降TG","纖維護腸道"],organs:["血脂HDL","發炎/其他"]},
+              {name:"黑芝麻粉",qty:"10g",benefits:["芝麻素護肝抗氧化","鈣強骨","芝麻素輕微降血壓"],organs:["肝臟","心血管"]},
+              {name:"燕麥",qty:"20g",benefits:["β-葡聚醣降LDL有強力實證","穩血糖減峰值","腸道益生元"],organs:["血糖","血脂HDL"]},
+              {name:"無糖可可",qty:"3g",benefits:["黃烷醇擴張血管降血壓","護大腦認知","抗氧化"],organs:["心血管","大腦"]},
+              {name:"薑黃",qty:"1.5g＋少量胡椒",benefits:["薑黃素強效抗發炎，胡椒增吸收20倍","護肝減脂肪肝","可能改善胰島素敏感性"],organs:["發炎/其他","肝臟","血糖"]},
+              {name:"甜菜根粉",qty:"3g（Datino）",benefits:["硝酸鹽→一氧化氮→擴張血管降血壓","改善全身血液循環","運動耐力+性功能血流相關"],organs:["心血管","血脂HDL"]},
+            ]},
+            {order:4,label:"水果",items:[
+              {name:"蘋果",qty:"180g",benefits:["果膠降膽固醇護腸道","槲皮素抗發炎","低GI穩血糖"],organs:["血脂HDL","血糖"]},
+            ]},
+            {order:5,label:"補充品",items:[
+              {name:"B群、若元錠",qty:"依指示",benefits:["B群預防糖尿病神經病變","B12保護周邊神經","葉酸降同半胱胺酸保護心血管"],organs:["血糖","大腦","心血管"]},
+            ]},
+          ];
+          const DINNER=[
+            {name:"希臘酸奶",qty:"200g（Farmers Union）",benefits:["高蛋白16g助肌肉修復","益生菌改善腸道","鈣538mg強骨，No Sugar Added血糖友善","酪蛋白慢消化穩定夜間血糖"],organs:["血糖","腸道","骨骼"],meds:"💊 同時服藥：平脂 Zulitor、保栓通 Plavix（每天）；舒脈康 Sevikar（2天1次）"},
+            {name:"奇異果",qty:"1顆",benefits:["維生素C超高（每顆約100mg）抗氧化","鉀降血壓","纖維改善腸道","血清素前驅物助睡眠"],organs:["心血管","腸道","血液"]},
+          ];
+          const dates=new Set(breakfastLog.map(r=>normalizeDate(r.date)));
+          const todayStr=today();
+          const checkedToday=dates.has(todayStr);
+          let streak=0;
+          const d=new Date();
+          if(!checkedToday)d.setDate(d.getDate()-1);
+          while(true){
+            const ds=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+            if(dates.has(ds)){streak++;d.setDate(d.getDate()-1);}else break;
+          }
+          const ItemCard=({item,dinnerMode})=>(
+            <div style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px",marginBottom:6}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  <span style={{fontSize:13,fontWeight:700,color:C.text}}>{item.name}</span>
+                  <span style={{fontSize:11,color:C.textMuted}}>{item.qty}</span>
+                </div>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                  {item.organs.map(o=>(
+                    <span key={o} style={{fontSize:9,padding:"2px 6px",borderRadius:6,background:"rgba(46,204,138,0.12)",color:C.green,fontWeight:600}}>{o}</span>
+                  ))}
+                </div>
+              </div>
+              <div style={{fontSize:11,color:C.textMuted,lineHeight:1.7}}>
+                {item.benefits.map((b,i)=><div key={i}>• {b}</div>)}
+              </div>
+              {item.meds&&(
+                <div style={{marginTop:6,padding:"6px 8px",background:"rgba(90,180,255,0.08)",borderRadius:8,fontSize:11,color:C.blue,lineHeight:1.6}}>{item.meds}</div>
+              )}
+            </div>
+          );
+          return(
+            <>
+              {/* 打卡 */}
+              <div className="card" style={{padding:"12px",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>🍳 今日早餐</div>
+                  <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>🔥 連續 {streak} 天 · 共 {breakfastLog.length} 次</div>
+                </div>
+                <button disabled={checkedToday}
+                  onClick={async()=>{
+                    const r=await api.post("append","breakfast_log",{date:todayStr,checked:1});
+                    if(r&&!r.error){setBreakfastLog(prev=>[...prev,{date:todayStr,checked:1}]);showToast("✅ 早餐打卡成功！");}
+                    else showToast("❌ 打卡失敗");
+                  }}
+                  style={{padding:"10px 18px",borderRadius:12,fontSize:13,fontWeight:700,cursor:checkedToday?"default":"pointer",
+                    background:checkedToday?"rgba(46,204,138,0.12)":C.green,
+                    border:"none",color:checkedToday?C.green:"#0a0a0a",
+                    fontFamily:"'Noto Sans TC',sans-serif"}}>
+                  {checkedToday?"✅ 已打卡":"打卡"}
+                </button>
+              </div>
+              <div style={{background:"rgba(46,204,138,0.06)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:12,fontSize:12,color:C.textMuted,lineHeight:1.7}}>
+                💡 依吃的順序排列 · 綠標對應雷達圖弱項 · 每天執行+定期抽血驗證效果
+              </div>
+              {/* 早餐食材 */}
+              {MEALS.map(meal=>(
+                <div key={meal.order} style={{marginBottom:12}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                    <span style={{fontSize:11,fontWeight:700,color:meal.isShake?C.amber:C.textMuted,letterSpacing:0.5}}>
+                      {meal.isShake?"🥤":""} 順序{meal.order}
+                    </span>
+                    <span style={{fontSize:11,color:meal.isShake?C.amber:C.textMuted}}>{meal.label}</span>
+                  </div>
+                  {meal.items.map(item=><ItemCard key={item.name} item={item}/>)}
+                </div>
+              ))}
+              {/* 晚餐後 */}
+              <div style={{height:1,background:C.border,margin:"16px 0"}}/>
+              <div style={{fontSize:12,fontWeight:700,color:C.blue,letterSpacing:1,marginBottom:8}}>🌙 晚餐後（20:00–22:00）</div>
+              {DINNER.map(item=><ItemCard key={item.name} item={item}/>)}
+              <div style={{fontSize:11,color:C.textMuted,textAlign:"center",marginTop:8,lineHeight:1.7}}>
+                針對弱項：HDL 30.94 · 脂肪肝G1 · 血糖前期 · 血壓130/90<br/>
+                8週後抽血對照雷達圖驗證效果 💪
+              </div>
+            </>
+          );
+        })()}
       </div>
     );
   };
-
-  // 知識庫檢驗指標卡片
   const KnowledgeCard=({item,latestLab,onSelect})=>{
     const yourVal = latestLab?.[item.key];
     const hasVal = yourVal!==null&&yourVal!==undefined&&yourVal!=="";
