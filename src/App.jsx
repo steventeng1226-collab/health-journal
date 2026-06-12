@@ -3689,12 +3689,12 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
                           borderRadius:"10px",border:`1px solid ${isOpen?C.green:C.border}`,
                           cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}}
                         onClick={()=>setOpenGroup(isOpen?null:group)}>
-                        <div>
-                          <div style={{fontSize:14}}>{group.split(" ")[0]}</div>
-                          <div style={{fontSize:10,color:isOpen?C.green:C.text,fontWeight:isOpen?700:400,lineHeight:1.4}}>
+                        <div style={{display:"flex",alignItems:"center",gap:5,flex:1}}>
+                          <span style={{fontSize:14}}>{group.split(" ")[0]}</span>
+                          <span style={{fontSize:10,color:isOpen?C.green:C.text,fontWeight:isOpen?700:400}}>
                             {group.replace(/^[^\s]+\s/,"")}
-                          </div>
-                          <div style={{fontSize:9,color:C.textMuted}}>{items.length}項</div>
+                          </span>
+                          <span style={{fontSize:9,color:C.textMuted}}>{items.length}項</span>
                         </div>
                         <span style={{color:isOpen?C.green:C.textMuted,fontSize:11}}>
                           {isOpen?"▲":"▼"}
