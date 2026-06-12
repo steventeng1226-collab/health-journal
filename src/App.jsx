@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.19";
+const VERSION = "v4.20";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -917,6 +917,24 @@ const MEDICINE_ITEMS = [
    dosage:"每日15–30ml（1–2湯匙），可直接飲用或拌入食物，避免高溫烹調破壞多酚",
    caution:"熱量高（1湯匙約120大卡），控制總量避免體重增加；選擇深色瓶裝、酸度<0.8%的特級初榨",
    personal:"✅ 服用中：你每天早餐喝。對HDL偏低+脂肪肝Grade 1是極佳選擇，建議持續"},
+  {id:"m15",type:"supplement",icon:"💛",name:"EX NEO 力卡維他命",taking:true,
+   desc:"日本第3類醫藥品。每日2錠含B1（100mg）+B6（100mg）+B12（1,500μg）+維生素E（100mg）+菸鹼酸醯胺+泛酸+γ-穀維素，高劑量B群專為神經和疲勞設計。",
+   benefits:["B12 1,500μg超高劑量，預防糖尿病前期神經病變最重要的補充","B1+B6維持周邊神經傳導","維生素E強效抗氧化保護細胞","緩解眼疲勞、肩頸腰痛","γ-穀維素穩定自律神經"],
+   dosage:"每日2錠，早餐後服用",
+   caution:"日本OTC藥品，長期超量B6（>200mg/日）有神經毒性風險，此劑量100mg屬安全範圍",
+   personal:"✅ 服用中（2錠·早餐後）：你的糖尿病前期最需要B12神經保護，此劑量1,500μg是有效劑量，持續服用"},
+  {id:"m16",type:"supplement",icon:"🌿",name:"強力若元 Wakamoto",taking:true,
+   desc:"日本整腸保健品。含釀酒酵母、乳酸菌、澱粉酶三種天然成分，改善消化和腸道環境。",
+   benefits:["釀酒酵母含B群+礦物質天然補充","乳酸菌整腸改善腸道菌相","澱粉酶消化酵素幫助分解碳水化合物","與晚上希臘酸奶益生菌形成早晚加成效果","腸道健康與血糖控制和免疫力相關"],
+   dosage:"每日9粒，早上空腹或早餐時服用",
+   caution:"天然食品級，安全性高；若有乳製品過敏需確認成分",
+   personal:"✅ 服用中（9粒·早上）：你的腸道健康對血糖控制有直接影響，搭配晚上酸奶構成早晚雙益生菌策略"},
+  {id:"m17",type:"supplement",icon:"🐟",name:"ORIHIRO DHA+EPA",taking:true,
+   desc:"日本機能性表示食品。每日6粒含DHA 780mg + EPA 80mg，降中性脂肪、支持中高年記憶和認知功能。",
+   benefits:["DHA 780mg降中性脂肪（對你的血脂改善直接有效）","支持大腦記憶、判斷力、閱讀力","EPA抗發炎保護心血管","Omega-3組合對HDL偏低有輔助作用"],
+   dosage:"每日6粒，晚餐後服用",
+   caution:"⚠️ 重要：你同時服用保栓通Plavix（抗血小板藥），高劑量Omega-3也具抗凝血效果，兩者疊加出血風險增加。請告知開立Plavix的醫師確認此劑量（DHA 780mg）安全性。注意異常瘀青或出血徵兆",
+   personal:"✅ 服用中（6粒·晚餐後）：⚠️ Plavix+高劑量DHA/EPA請先確認醫師知情。效益方面對你的TG和大腦保護很好"},
   // 常見藥物
   {id:"m12",type:"medicine",icon:"💊",name:"舒脈康 Sevikar 5/40mg",taking:true,
    desc:"複方降血壓藥，含Amlodipine 5mg（鈣離子阻斷劑）+ Olmesartan 40mg（血管收縮素受體阻斷劑ARB），雙機轉控制血壓。",
@@ -2193,7 +2211,7 @@ const analyzeTrend = (key, data) => {
             </div>
             <button disabled={checkedToday}
               onClick={async()=>{
-                const r=await api.post("append","breakfast_log",{date:todayStr,checked:1});
+                const r=await api.post("append","breakfast_log",{id:Date.now(),date:todayStr,checked:1});
                 if(r&&!r.error){
                   setBreakfastLog(prev=>[...prev,{date:todayStr,checked:1}]);
                   showToast("✅ 早餐打卡成功！");
@@ -4157,11 +4175,13 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
               {name:"蘋果",qty:"180g",benefits:["果膠降膽固醇護腸道","槲皮素抗發炎","低GI穩血糖"],organs:["血脂HDL","血糖"]},
             ]},
             {order:5,label:"補充品",items:[
-              {name:"B群、若元錠",qty:"依指示",benefits:["B群預防糖尿病神經病變","B12保護周邊神經","葉酸降同半胱胺酸保護心血管"],organs:["血糖","大腦","心血管"]},
+              {name:"EX NEO 力卡維他命",qty:"2錠",benefits:["B1預防神經病變（糖尿病前期必備）","B12 1,500μg超高劑量護周邊神經","B6+E抗氧化，緩解眼疲勞肩頸腰痛"],organs:["血糖","大腦"]},
+              {name:"強力若元 Wakamoto",qty:"9粒",benefits:["釀酒酵母+乳酸菌整腸","澱粉酶幫助消化","與晚上希臘酸奶益生菌加成護腸道"],organs:["腸道","血糖"]},
             ]},
           ];
           const DINNER=[
             {name:"希臘酸奶",qty:"200g（Farmers Union）",benefits:["高蛋白16g助肌肉修復","益生菌改善腸道","鈣538mg強骨，No Sugar Added血糖友善","酪蛋白慢消化穩定夜間血糖"],organs:["血糖","腸道","骨骼"],meds:"💊 同時服藥：平脂 Zulitor、保栓通 Plavix（每天）；舒脈康 Sevikar（2天1次）"},
+            {name:"ORIHIRO DHA+EPA",qty:"6粒",benefits:["DHA 780mg降中性脂肪、護大腦記憶","EPA 80mg抗發炎保護心血管","Omega-3組合對你的HDL偏低有幫助"],organs:["血脂HDL","大腦","心血管"],meds:"⚠️ 注意：你同時服用保栓通Plavix（抗血小板），高劑量Omega-3也有抗凝血效果，出血風險疊加。建議告知開立Plavix的醫師確認此劑量安全性，並注意瘀青/出血徵兆"},
             {name:"奇異果",qty:"1顆",benefits:["維生素C超高（每顆約100mg）抗氧化","鉀降血壓","纖維改善腸道","血清素前驅物助睡眠"],organs:["心血管","腸道","血液"]},
           ];
           const dates=new Set(breakfastLog.map(r=>normalizeDate(r.date)));
@@ -4205,7 +4225,7 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
                 </div>
                 <button disabled={checkedToday}
                   onClick={async()=>{
-                    const r=await api.post("append","breakfast_log",{date:todayStr,checked:1});
+                    const r=await api.post("append","breakfast_log",{id:Date.now(),date:todayStr,checked:1});
                     if(r&&!r.error){setBreakfastLog(prev=>[...prev,{date:todayStr,checked:1}]);showToast("✅ 早餐打卡成功！");}
                     else showToast("❌ 打卡失敗");
                   }}
