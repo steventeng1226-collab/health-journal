@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.15";
+const VERSION = "v4.16";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -862,7 +862,31 @@ const MEDICINE_ITEMS = [
    dosage:"複合B群每日1顆，隨早餐服用",
    caution:"B6過量（>200mg/日長期）可能造成神經毒性",
    personal:"⭐ 推薦：糖尿病前期神經保護的基本補充"},
+  {id:"m11",type:"supplement",icon:"🫒",name:"橄欖油 Extra Virgin",taking:true,
+   desc:"特級初榨橄欖油富含單元不飽和脂肪酸和多酚類抗氧化物，是地中海飲食的核心，對心血管和肝臟健康有大量研究支持。",
+   benefits:["提升HDL好膽固醇（對你的HDL 30.94最直接有益）","降低發炎指數","改善脂肪肝（研究顯示可降低肝脂肪含量）","改善胰島素敏感性","保護心血管和大腦"],
+   dosage:"每日15–30ml（1–2湯匙），可直接飲用或拌入食物，避免高溫烹調破壞多酚",
+   caution:"熱量高（1湯匙約120大卡），控制總量避免體重增加；選擇深色瓶裝、酸度<0.8%的特級初榨",
+   personal:"✅ 服用中：你每天早餐喝。對HDL偏低+脂肪肝Grade 1是極佳選擇，建議持續"},
   // 常見藥物
+  {id:"m12",type:"medicine",icon:"💊",name:"舒脈康 Sevikar 5/40mg",taking:true,
+   desc:"複方降血壓藥，含Amlodipine 5mg（鈣離子阻斷劑）+ Olmesartan 40mg（血管收縮素受體阻斷劑ARB），雙機轉控制血壓。",
+   benefits:["Amlodipine放鬆血管平滑肌、降低血壓","Olmesartan阻斷血管收縮、同時保護腎臟","ARB類對糖尿病前期患者有腎臟保護作用","複方藥減少服藥顆數、提高順從性"],
+   dosage:"每日1錠，固定時間服用（通常早上），不受進食影響",
+   caution:"可能腳踝水腫（Amlodipine常見副作用）；起身時注意姿勢性低血壓；定期追蹤腎功能和血鉀；避免高鉀飲食過量",
+   personal:"✅ 服用中：你的血壓130/90，ARB成分同時保護你的腎臟（eGFR 68.66 G2），是適合的選擇。在家定期量血壓記錄到App追蹤效果"},
+  {id:"m13",type:"medicine",icon:"💊",name:"平脂 Zulitor 4mg",taking:true,
+   desc:"Pitavastatin（匹伐他汀），Statin類降血脂藥，降低LDL壞膽固醇，心血管保護。相比其他Statin對血糖影響較小。",
+   benefits:["降低LDL壞膽固醇","穩定動脈粥狀斑塊","減少心血管事件風險","Pitavastatin對血糖影響在Statin中最小（對糖尿病前期友善）","可能輕微提升HDL"],
+   dosage:"每日1錠4mg，睡前或固定時間服用",
+   caution:"可能肌肉痠痛（出現需告知醫師、檢查CK）；定期追蹤肝功能（你的ALT 50.6偏高需注意）；避免大量葡萄柚汁",
+   personal:"✅ 服用中：注意你的ALT 50.6/GGT 66偏高，Statin需定期追蹤肝功能，建議每3-6個月驗ALT。Pitavastatin對血糖影響小，適合糖尿病前期的你"},
+  {id:"m14",type:"medicine",icon:"💊",name:"保栓通 Plavix 75mg",taking:true,
+   desc:"Clopidogrel（氯吡格雷），抗血小板藥物，預防血栓形成，常用於心血管疾病預防或支架置放後。",
+   benefits:["抑制血小板凝集、預防血栓","降低心肌梗塞和中風風險","支架置放後預防再阻塞的標準用藥"],
+   dosage:"每日1錠75mg，固定時間服用，不受進食影響",
+   caution:"出血風險增加：刷牙流血、瘀青變多需注意；手術或拔牙前需告知醫師（通常需停藥5-7天）；避免與其他抗凝血藥/高劑量魚油/銀杏併用；你的血小板126偏低，更需注意出血徵兆",
+   personal:"✅ 服用中：⚠️ 重要提醒：你的血小板126偏低+服用抗血小板藥，出血風險較高。若有不明瘀青、牙齦出血不止、黑便，立即就醫。補充魚油前先諮詢醫師"},
   {id:"m8",type:"medicine",icon:"💊",name:"Metformin 二甲雙胍",
    desc:"T2D第一線用藥，也常用於糖尿病前期的預防介入，除降血糖外有多種代謝好處。",
    benefits:["降低肝糖生成","改善胰島素敏感性","輕微減重效果","可能改善脂肪肝","降低心血管風險"],
@@ -3344,6 +3368,16 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
   const KnowledgeTab=()=>{
     const [kbSearch, setKbSearch] = useState("");
     const [openGroup, setOpenGroup] = useState(null);
+    const [medSubTab, setMedSubTab] = useState("supplement");
+    const [myMeds, setMyMeds] = useState(()=>{
+      try{return JSON.parse(localStorage.getItem("hj_mymeds")||"[]");}catch(e){return[];}
+    });
+    const [showMedForm, setShowMedForm] = useState(false);
+    const [medForm, setMedForm] = useState({name:"",dose:"",timing:"早餐後",note:""});
+    const saveMyMeds = (list)=>{
+      setMyMeds(list);
+      localStorage.setItem("hj_mymeds", JSON.stringify(list));
+    };
     const [articleForm, setArticleForm] = useState({title:"",tag:"血糖",content:"",photos:[]});
     const [uploadingPhoto, setUploadingPhoto] = useState(false);
     const articlePhotoRef = React.useRef();
@@ -3768,35 +3802,100 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
         {/* 藥物/保健品 Tab */}
         {!searchLower&&kbTab==="medicine"&&(
           <>
-            <div style={{background:"rgba(46,204,138,0.06)",border:`1px solid ${C.border}`,borderRadius:12,padding:12,marginBottom:12}}>
-              <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>
+            <div style={{background:"rgba(46,204,138,0.06)",border:`1px solid ${C.border}`,borderRadius:12,padding:"8px 12px",marginBottom:10}}>
+              <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>
                 💡 以下資訊僅供參考，實際用藥請諮詢醫師或藥師。
               </div>
             </div>
-            {/* 保健品 */}
-            <div style={{fontSize:12,fontWeight:700,color:C.green,letterSpacing:1,marginBottom:8}}>💊 保健品</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:16}}>
-              {MEDICINE_ITEMS.filter(m=>m.type==="supplement").map(m=>(
-                <div key={m.id} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:10,
-                  padding:"8px 8px",cursor:"pointer"}}
-                  onClick={()=>setSelectedMedicine(m)}>
-                  <div style={{fontSize:18,textAlign:"center",marginBottom:4}}>{m.icon}</div>
-                  <div style={{fontSize:11,fontWeight:600,color:C.text,textAlign:"center",lineHeight:1.4}}>{m.name}</div>
-                  {m.personal?.startsWith("⭐")&&(
-                    <div style={{fontSize:10,color:C.amber,textAlign:"center",marginTop:3}}>⭐ 推薦</div>
-                  )}
+            {/* 我的用藥清單 */}
+            <div className="card" style={{padding:"12px",marginBottom:12}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:myMeds.length>0||showMedForm?8:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:C.green}}>📝 我的用藥清單</div>
+                <button onClick={()=>setShowMedForm(v=>!v)}
+                  style={{padding:"4px 12px",borderRadius:8,fontSize:12,cursor:"pointer",
+                    background:showMedForm?"transparent":"rgba(46,204,138,0.12)",
+                    border:`1px solid ${C.green}`,color:C.green,
+                    fontFamily:"'Noto Sans TC',sans-serif"}}>
+                  {showMedForm?"取消":"＋新增"}
+                </button>
+              </div>
+              {showMedForm&&(
+                <div style={{background:C.bg,borderRadius:10,padding:10,marginBottom:8}}>
+                  <input className="input-field" placeholder="藥品/保健品名稱（例：舒脈康 5/40mg）"
+                    value={medForm.name} onChange={e=>setMedForm(f=>({...f,name:e.target.value}))}
+                    style={{marginBottom:6}}/>
+                  <div style={{display:"flex",gap:6,marginBottom:6}}>
+                    <input className="input-field" placeholder="劑量（例：1錠）" style={{flex:1}}
+                      value={medForm.dose} onChange={e=>setMedForm(f=>({...f,dose:e.target.value}))}/>
+                    <select className="input-field" style={{flex:1}}
+                      value={medForm.timing} onChange={e=>setMedForm(f=>({...f,timing:e.target.value}))}>
+                      <option>早餐前</option><option>早餐後</option><option>午餐後</option>
+                      <option>晚餐後</option><option>睡前</option><option>每日固定</option>
+                    </select>
+                  </div>
+                  <input className="input-field" placeholder="備註（選填，例：醫師處方/自行補充）"
+                    value={medForm.note} onChange={e=>setMedForm(f=>({...f,note:e.target.value}))}
+                    style={{marginBottom:8}}/>
+                  <button className="btn-primary" style={{padding:"8px"}}
+                    onClick={()=>{
+                      if(!medForm.name.trim()){showToast("⚠️ 請輸入名稱");return;}
+                      saveMyMeds([...myMeds,{id:Date.now(),...medForm,startDate:today()}]);
+                      setMedForm({name:"",dose:"",timing:"早餐後",note:""});
+                      setShowMedForm(false);
+                      showToast("✅ 已加入清單");
+                    }}>儲存</button>
+                </div>
+              )}
+              {myMeds.length===0&&!showMedForm&&(
+                <div style={{fontSize:11,color:C.textMuted,marginTop:6}}>記錄你實際服用的藥物與保健品（存於手機本地）</div>
+              )}
+              {myMeds.map(med=>(
+                <div key={med.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                  padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600,color:C.text}}>{med.name}</div>
+                    <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>
+                      {[med.dose,med.timing,med.note].filter(Boolean).join(" · ")}
+                    </div>
+                  </div>
+                  <button onClick={()=>{
+                    if(window.confirm(`刪除「${med.name}」？`)){
+                      saveMyMeds(myMeds.filter(m=>m.id!==med.id));
+                      showToast("🗑️ 已刪除");
+                    }
+                  }}
+                    style={{background:"transparent",border:"none",color:C.textMuted,fontSize:16,cursor:"pointer",padding:"4px 8px"}}>×</button>
                 </div>
               ))}
             </div>
-            {/* 藥物 */}
-            <div style={{fontSize:12,fontWeight:700,color:C.blue,letterSpacing:1,marginBottom:8}}>💉 常見藥物</div>
+            {/* 保健品/藥物 子Tab切換 */}
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              {[{key:"supplement",label:"💊 保健品",color:C.green},{key:"medicine",label:"💉 藥物",color:C.blue}].map(t=>(
+                <button key={t.key} onClick={()=>setMedSubTab(t.key)}
+                  style={{flex:1,padding:"8px",borderRadius:10,fontSize:13,cursor:"pointer",
+                    background:medSubTab===t.key?`rgba(46,204,138,0.12)`:C.bgCard,
+                    border:`1px solid ${medSubTab===t.key?t.color:C.border}`,
+                    color:medSubTab===t.key?t.color:C.textMuted,
+                    fontFamily:"'Noto Sans TC',sans-serif",fontWeight:medSubTab===t.key?700:400}}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-              {MEDICINE_ITEMS.filter(m=>m.type==="medicine").map(m=>(
-                <div key={m.id} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:10,
+              {MEDICINE_ITEMS.filter(m=>m.type===medSubTab)
+                .sort((a,b)=>(b.taking?1:0)-(a.taking?1:0))
+                .map(m=>(
+                <div key={m.id} style={{background:C.bgCard,
+                  border:`1px solid ${m.taking?C.green:C.border}`,borderRadius:10,
                   padding:"8px 8px",cursor:"pointer"}}
                   onClick={()=>setSelectedMedicine(m)}>
                   <div style={{fontSize:18,textAlign:"center",marginBottom:4}}>{m.icon}</div>
                   <div style={{fontSize:11,fontWeight:600,color:C.text,textAlign:"center",lineHeight:1.4}}>{m.name}</div>
+                  {m.taking?(
+                    <div style={{fontSize:10,color:C.green,textAlign:"center",marginTop:3,fontWeight:700}}>✅ 服用中</div>
+                  ):m.personal?.startsWith("⭐")?(
+                    <div style={{fontSize:10,color:C.amber,textAlign:"center",marginTop:3}}>⭐ 推薦</div>
+                  ):null}
                 </div>
               ))}
             </div>
