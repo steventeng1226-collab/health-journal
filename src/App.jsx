@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.11";
+const VERSION = "v4.15";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -817,12 +817,79 @@ T2D患者失智症風險是一般人的2倍。
   },
 ];
 
+// ── 藥物/保健品知識庫 ─────────────────────────────────
+const MEDICINE_ITEMS = [
+  // 保健品
+  {id:"m1",type:"supplement",icon:"🐟",name:"魚油 Omega-3",
+   desc:"富含EPA和DHA，是心血管和大腦健康的重要補充品。",
+   benefits:["提升HDL好膽固醇","降低三酸甘油酯（對你最有幫助）","減少心血管發炎","改善大腦認知功能","可能改善脂肪肝"],
+   dosage:"EPA+DHA每日1000–3000mg，建議隨餐服用",
+   caution:"服用血液稀釋劑（如阿斯匹靈）需告知醫師",
+   personal:"⭐ 強烈推薦：你的HDL 30.94偏低、TG偏高，魚油是最有效的天然補充品"},
+  {id:"m2",type:"supplement",icon:"☀️",name:"維生素D3",
+   desc:"調節鈣磷代謝、免疫功能和胰島素敏感性，台灣和越南室內工作者普遍缺乏。",
+   benefits:["改善胰島素阻抗（對糖尿病前期有益）","強化骨骼","提升免疫力","改善情緒和睡眠"],
+   dosage:"每日1000–2000 IU，與含脂食物一起服用",
+   caution:"過量（>10000 IU/日）可能造成鈣過高",
+   personal:"⭐ 推薦：維生素D不足會加重胰島素阻抗"},
+  {id:"m3",type:"supplement",icon:"🌿",name:"鎂 Magnesium",
+   desc:"參與300多種酵素反應，T2D前期患者常見缺乏，改善睡眠和胰島素阻抗。",
+   benefits:["改善胰島素阻抗","改善睡眠品質","降低血壓","緩解肌肉痙攣","減少焦慮"],
+   dosage:"每日200–400mg，甘胺酸鎂或蘋果酸鎂吸收最佳，睡前服用",
+   caution:"腎功能不佳需謹慎",
+   personal:"⭐ 推薦：你的血壓130/90偏高、有胰島素阻抗，鎂有雙重幫助"},
+  {id:"m4",type:"supplement",icon:"🫐",name:"白藜蘆醇 Resveratrol",
+   desc:"強效抗氧化劑，存在於葡萄皮和藍莓中，對大腦保護和抗老化有研究支持。",
+   benefits:["保護大腦神經細胞","抗氧化和抗發炎","改善胰島素敏感性","保護心血管"],
+   dosage:"每日100–500mg，隨餐服用",
+   caution:"與血液稀釋劑有交互作用",
+   personal:"對預防失智症有潛在幫助"},
+  {id:"m5",type:"supplement",icon:"🦠",name:"益生菌 Probiotics",
+   desc:"改善腸道菌叢，越來越多研究顯示腸道健康與血糖控制、免疫和情緒密切相關。",
+   benefits:["改善腸道健康","可能改善血糖控制","提升免疫力","改善情緒（腸腦軸）","減少脂肪肝發炎"],
+   dosage:"每日至少100億CFU，空腹或隨餐均可",
+   caution:"免疫功能嚴重低下者需謹慎",
+   personal:"對你的脂肪肝改善有輔助作用"},
+  {id:"m6",type:"supplement",icon:"🌾",name:"葉黃素 Lutein",
+   desc:"保護眼睛黃斑部，糖尿病前期患者視網膜保護的重要補充品。",
+   benefits:["保護視網膜黃斑部","預防白內障","抗氧化","保護大腦"],
+   dosage:"每日10–20mg，與含脂食物一起服用",
+   caution:"通常安全，無重大禁忌",
+   personal:"⭐ 推薦：糖尿病前期患者視網膜是重要保護目標"},
+  {id:"m7",type:"supplement",icon:"🅱️",name:"維生素B群",
+   desc:"B1、B6、B12、葉酸等共同維持神經系統和能量代謝，預防神經病變。",
+   benefits:["維持神經健康（預防糖尿病神經病變）","促進能量代謝","改善疲勞","保護大腦","降低同半胱胺酸"],
+   dosage:"複合B群每日1顆，隨早餐服用",
+   caution:"B6過量（>200mg/日長期）可能造成神經毒性",
+   personal:"⭐ 推薦：糖尿病前期神經保護的基本補充"},
+  // 常見藥物
+  {id:"m8",type:"medicine",icon:"💊",name:"Metformin 二甲雙胍",
+   desc:"T2D第一線用藥，也常用於糖尿病前期的預防介入，除降血糖外有多種代謝好處。",
+   benefits:["降低肝糖生成","改善胰島素敏感性","輕微減重效果","可能改善脂肪肝","降低心血管風險"],
+   dosage:"通常500mg每日1–2次，隨餐服用減少腸胃不適",
+   caution:"腎功能eGFR<30需停用；可能影響維生素B12吸收，需補充",
+   personal:"若HbA1c繼續上升至6.0以上，可與醫師討論是否預防性使用"},
+  {id:"m9",type:"medicine",icon:"💊",name:"Statin 史他汀類（降血脂藥）",
+   desc:"最常用的降LDL藥物，心血管保護效果強。你目前LDL偏低，但若上升或心血管風險增加可能需要。",
+   benefits:["顯著降低LDL","減少心血管事件","穩定動脈斑塊","可能有輕微抗發炎效果"],
+   dosage:"依藥物種類不同，通常睡前服用",
+   caution:"可能造成肌肉疼痛；定期追蹤CK和肝功能；葡萄柚汁會增加濃度",
+   personal:"你目前LDL 44.47偏低，暫不需要，但HDL偏低是主要血脂問題"},
+  {id:"m10",type:"medicine",icon:"💊",name:"Allopurinol 別嘌醇（降尿酸藥）",
+   desc:"抑制尿酸生成的第一線藥物，尿酸持續偏高或有痛風發作史時使用。",
+   benefits:["有效降低血尿酸","預防痛風發作","保護腎臟（尿酸性腎病）"],
+   dosage:"通常100–300mg/日，隨餐服用，大量喝水",
+   caution:"開始服用可能誘發痛風急性發作；需追蹤腎功能；亞洲人服用前建議基因檢測(HLA-B*5801)",
+   personal:"你的尿酸7.52偏高，若無法透過飲食控制至7.0以下可考慮"},
+];
+
 export default function HealthJournal(){
   const [tab,setTab]=useState("home");
   const [recordTab,setRecordTab]=useState("glucose");
   const [selectedKnowledge,setSelectedKnowledge]=useState(null);
-  const [kbTab,setKbTab]=useState("lab"); // lab | articles
+  const [kbTab,setKbTab]=useState("lab");
   const [selectedArticle,setSelectedArticle]=useState(null);
+  const [selectedMedicine,setSelectedMedicine]=useState(null);
   const [customArticles,setCustomArticles]=useState(()=>{
     try{return JSON.parse(localStorage.getItem("hj_articles")||"[]");}catch(e){return[];}
   });
@@ -936,8 +1003,12 @@ export default function HealthJournal(){
       if(bp?.data)setBpHistory(bp.data);
       if(wt?.data)setWeightHistory(wt.data);
       if(imaging?.data){
-        // 過濾空白列（id為空的）
-        const validImaging = imaging.data.filter(r => r.id && r.date && r.type);
+        // 過濾空白列（id或date或type為空/空白的）
+        const validImaging = imaging.data.filter(r =>
+          r.id && String(r.id).trim() &&
+          r.date && String(r.date).trim() &&
+          r.type && String(r.type).trim()
+        );
         setImagingHistory(validImaging);
       }
       setSyncStatus("synced");
@@ -2025,42 +2096,104 @@ const analyzeTrend = (key, data) => {
         </div>
       </div>
       {/* 最新抽血報告數值 */}
-      {latestLab && (
-        <div className="card">
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <div className="card-title" style={{marginBottom:0}}>最新抽血報告</div>
-            <div style={{fontSize:11,color:C.textMuted}}>{latestLab.hospital} · {fmtDate(latestLab.date)}</div>
-          </div>
-          {[
-            {key:"hba1c",label:"HbA1c",unit:"%"},
-            {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL"},
-            {key:"alt",label:"ALT",unit:"U/L"},
-            {key:"hdl",label:"HDL-C",unit:"mg/dL"},
-            {key:"ldl",label:"LDL-C",unit:"mg/dL"},
-            {key:"tg",label:"三酸甘油酯",unit:"mg/dL"},
-            {key:"uric_acid",label:"尿酸",unit:"mg/dL"},
-            {key:"creatinine",label:"肌酸酐",unit:"mg/dL"},
-            {key:"upcr",label:"UPCR",unit:"mg/g"},
-            {key:"tsh",label:"TSH",unit:"uIU/mL"},
-            {key:"hb",label:"血紅素",unit:"g/dL"},
-            {key:"wbc",label:"WBC",unit:"K/uL"},
-            {key:"platelet",label:"血小板",unit:"K/uL"},
-          ].filter(f=>latestLab[f.key]!==null&&latestLab[f.key]!==undefined&&latestLab[f.key]!=="").map(f=>{
-            const st=getStatus(f.key,latestLab[f.key]);
-            const stColors={ok:C.green,warn:C.amber,alert:C.red};
-            return(
-              <div key={f.key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
-                <span style={{fontSize:13,color:C.textMuted}}>{f.label}</span>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:14,fontWeight:600,color:st?stColors[st]:C.text}}>{latestLab[f.key]}</span>
-                  <span style={{fontSize:11,color:C.textMuted}}>{f.unit}</span>
-                  <StatusDot status={st}/>
-                </div>
+      {latestLab && (()=>{
+        const CHECK_FIELDS = [
+          {key:"hba1c",label:"HbA1c",unit:"%"},
+          {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL"},
+          {key:"alt",label:"ALT",unit:"U/L"},
+          {key:"ggt",label:"GGT",unit:"U/L"},
+          {key:"hdl",label:"HDL-C",unit:"mg/dL"},
+          {key:"ldl",label:"LDL-C",unit:"mg/dL"},
+          {key:"tg",label:"三酸甘油酯",unit:"mg/dL"},
+          {key:"uric_acid",label:"尿酸",unit:"mg/dL"},
+          {key:"creatinine",label:"肌酸酐",unit:"mg/dL"},
+          {key:"upcr",label:"UPCR",unit:"mg/g"},
+          {key:"tsh",label:"TSH",unit:"uIU/mL"},
+          {key:"hb",label:"血紅素",unit:"g/dL"},
+          {key:"wbc",label:"WBC",unit:"K/uL"},
+          {key:"platelet",label:"血小板",unit:"K/uL"},
+          {key:"crp",label:"CRP",unit:""},
+          {key:"hbsag",label:"HBsAg",unit:""},
+        ];
+        const alerts = CHECK_FIELDS.filter(f=>{
+          const v = latestLab[f.key];
+          if(v===null||v===undefined||v==="")return false;
+          return getStatus(f.key,v)==="alert";
+        });
+        const warns = CHECK_FIELDS.filter(f=>{
+          const v = latestLab[f.key];
+          if(v===null||v===undefined||v==="")return false;
+          return getStatus(f.key,v)==="warn";
+        });
+        const TIPS_MAP = {
+          hba1c:["每3個月追蹤HbA1c","飯後散步15分鐘","減少精緻澱粉"],
+          glucose_ac:["減少宵夜和含糖飲料","規律有氧運動"],
+          alt:["減重5-10%可改善脂肪肝","每6個月追蹤肝功能"],
+          ggt:["減少飲酒","改善脂肪肝"],
+          hdl:["每週150分鐘有氧運動","攝取橄欖油、堅果"],
+          ldl:["減少飽和脂肪","增加膳食纖維"],
+          tg:["減少精緻糖和酒精","增加omega-3攝取"],
+          uric_acid:["每天喝水2000mL以上","減少紅肉和啤酒"],
+          creatinine:["多喝水","控制血糖血壓"],
+          upcr:["嚴格控制血糖","血壓目標<130/80"],
+          platelet:["追蹤血小板趨勢","避免NSAID類藥物"],
+          hbsag:["每6個月追蹤肝功能","追蹤AFP和腹部超音波"],
+        };
+        const tipKeys = [...new Set([...alerts,...warns].map(f=>f.key))];
+        const tips = tipKeys.flatMap(k=>TIPS_MAP[k]||[]).slice(0,4);
+        return(
+          <div className="card">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div className="card-title" style={{marginBottom:0}}>最新抽血報告</div>
+              <div style={{fontSize:11,color:C.textMuted}}>{fmtDate(latestLab.date)}</div>
+            </div>
+            {alerts.length===0&&warns.length===0?(
+              <div style={{fontSize:13,color:C.green,padding:"8px 0"}}>✅ 所有追蹤指標均正常</div>
+            ):(
+              <>
+                {alerts.length>0&&(
+                  <div style={{marginBottom:8}}>
+                    <span style={{fontSize:11,color:C.red,letterSpacing:1}}>❌ 異常</span>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:6}}>
+                      {alerts.map(f=>(
+                        <span key={f.key}
+                          onClick={()=>{setTab("knowledge");setSelectedKnowledge(KNOWLEDGE_ITEMS.find(i=>i.key===f.key)||null);}}
+                          style={{fontSize:12,padding:"4px 10px",background:"rgba(255,90,126,0.12)",borderRadius:8,color:C.red,cursor:"pointer"}}>
+                          {f.label} {fmtLabVal(f.key,latestLab[f.key])}{f.unit}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {warns.length>0&&(
+                  <div style={{marginBottom:8}}>
+                    <span style={{fontSize:11,color:C.amber,letterSpacing:1}}>⚠️ 需注意</span>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:6}}>
+                      {warns.map(f=>(
+                        <span key={f.key}
+                          onClick={()=>{setTab("knowledge");setSelectedKnowledge(KNOWLEDGE_ITEMS.find(i=>i.key===f.key)||null);}}
+                          style={{fontSize:12,padding:"4px 10px",background:"rgba(255,179,71,0.12)",borderRadius:8,color:C.amber,cursor:"pointer"}}>
+                          {f.label} {fmtLabVal(f.key,latestLab[f.key])}{f.unit}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+            {tips.length>0&&(
+              <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                <div style={{fontSize:11,color:C.textMuted,letterSpacing:1,marginBottom:6}}>📌 注意事項</div>
+                {tips.map((tip,i)=>(
+                  <div key={i} style={{fontSize:12,color:C.text,padding:"4px 0",display:"flex",gap:8}}>
+                    <span style={{color:C.green}}>•</span>{tip}
+                  </div>
+                ))}
               </div>
-            );
-          })}
-        </div>
-      )}
+            )}
+          </div>
+        );
+      })()}
 
       <div className="card">
         <div className="card-title">定期健康提醒</div>
@@ -2131,16 +2264,46 @@ const analyzeTrend = (key, data) => {
           </div>
         )}
         {trendItem==="bp"&&(
-          <div className="card">
-            <div className="card-title">血壓趨勢（收縮壓）</div>
-            <div style={{display:"flex",gap:12,marginBottom:12}}>
-              <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏠 日常</span></div>
-              <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.blue,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏥 醫院</span></div>
+          <>
+            <div className="card">
+              <div className="card-title">血壓趨勢（收縮壓）</div>
+              <div style={{display:"flex",gap:12,marginBottom:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏠 日常</span></div>
+                <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.blue,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏥 醫院</span></div>
+              </div>
+              <LineChart datasets={[{data:bpDaily.map(r=>({date:r.date,v:parseInt(r.systolic)}))},{data:bpHosp.map(r=>({date:r.date,v:parseInt(r.systolic)}))}]}
+                min={80} max={180}
+                refLines={[{v:120,label:"正常上限"},{v:130,label:"高血壓1"},{v:140,label:"高血壓2"}]}/>
             </div>
-            <LineChart datasets={[{data:bpDaily.map(r=>({date:r.date,v:parseInt(r.systolic)}))},{data:bpHosp.map(r=>({date:r.date,v:parseInt(r.systolic)}))}]}
-              min={80} max={180}
-              refLines={[{v:120,label:"正常上限"},{v:130,label:"高血壓1"},{v:140,label:"高血壓2"}]}/>
-          </div>
+            <div className="card">
+              <div className="card-title">血壓趨勢（舒張壓）</div>
+              <LineChart datasets={[{data:bpDaily.map(r=>({date:r.date,v:parseInt(r.diastolic)}))},{data:bpHosp.map(r=>({date:r.date,v:parseInt(r.diastolic)}))}]}
+                min={50} max={120}
+                refLines={[{v:80,label:"正常上限"},{v:90,label:"高血壓"}]}/>
+            </div>
+            {/* 血壓狀態分析 */}
+            {bpHistory.length>0&&(()=>{
+              const latest=bpHistory[bpHistory.length-1];
+              const sys=parseInt(latest.systolic);
+              const dia=parseInt(latest.diastolic);
+              let status,color,advice;
+              if(sys<120&&dia<80){status="正常";color=C.green;advice="維持良好生活習慣";}
+              else if(sys<130&&dia<80){status="偏高";color=C.amber;advice="減鈉、規律運動、控制體重";}
+              else if(sys<140||dia<90){status="高血壓第一期";color=C.amber;advice="積極生活調整，3個月後未改善建議就醫";}
+              else{status="高血壓第二期";color=C.red;advice="建議就醫評估是否需要藥物治療";}
+              return(
+                <div className="card" style={{border:`1px solid ${color}44`}}>
+                  <div className="card-title">最新血壓評估</div>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                    <span style={{fontSize:24,fontFamily:"'DM Serif Display',serif",color}}>{sys}/{dia}</span>
+                    <span style={{fontSize:13,fontWeight:700,color}}>{status}</span>
+                  </div>
+                  <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>💡 {advice}</div>
+                  <div style={{fontSize:11,color:C.textMuted,marginTop:6}}>測量日期：{fmtDate(latest.date)} {latest.source&&`(${latest.source})`}</div>
+                </div>
+              );
+            })()}
+          </>
         )}
         {trendItem==="weight"&&(
           <div className="card">
@@ -2203,6 +2366,18 @@ const analyzeTrend = (key, data) => {
                         <span style={{fontSize:13,fontWeight:600,color:colors[colorIdx]}}>{s.label}</span>
                         <div style={{display:"flex",alignItems:"center",gap:8}}>
                           <span style={{fontSize:11,color:C.textMuted}}>{s.unit}</span>
+                          {/* 最新值 + 上次值 */}
+                          {data.length>=2&&(()=>{
+                            const latest=data[data.length-1].v;
+                            const prev=data[data.length-2].v;
+                            const diff=latest-prev;
+                            const pct=Math.abs(Math.round(diff/prev*100));
+                            return(
+                              <span style={{fontSize:11,color:diff>0?C.red:diff<0?C.green:C.textMuted}}>
+                                {diff>0?"↑":"↓"}{pct}%
+                              </span>
+                            );
+                          })()}
                           {data.length>0&&<StatusDot status={getStatus(key,data[data.length-1].v)}/>}
                           {/* 上下移動按鈕 */}
                           <div style={{display:"flex",gap:2}}>
@@ -2304,13 +2479,17 @@ const analyzeTrend = (key, data) => {
     const [delConfirm, setDelConfirm] = useState(null);
     const [deleting, setDeleting] = useState(false);
     const [expanded, setExpanded] = useState(null);
+    const [sortDesc, setSortDesc] = useState(true);
 
     const allRecords = [
       ...labHistory.map(r=>({...r, _type:"lab", _icon:"🩸", _label:"抽血檢查",
         _summary:`HbA1c ${r.hba1c||"—"}% · 血糖 ${r.glucose_ac||"—"}`})),
       ...imagingHistory.map(r=>({...r, _type:"imaging", _icon:"🔬", _label:r.type||"影像檢查",
         _summary:r.finding?r.finding.slice(0,30)+(r.finding.length>30?"...":""):""})),
-    ].sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    ].sort((a,b)=>sortDesc
+      ? String(b.date).localeCompare(String(a.date))
+      : String(a.date).localeCompare(String(b.date))
+    );
 
     const handleDelete = async (record) => {
       setDeleting(true);
@@ -2425,10 +2604,17 @@ const analyzeTrend = (key, data) => {
     return(
       <div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <div style={{fontSize:14,fontWeight:600,color:C.text}}>檢查記錄</div>
-          <button className="btn-sm" onClick={loadData}>
-            <span className={loading?"spin":""}>⟳</span> 重新整理
-          </button>
+          <div style={{fontSize:14,fontWeight:600,color:C.text}}>
+            檢查記錄（{allRecords.length}筆）
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <button className="btn-sm" onClick={()=>setSortDesc(d=>!d)}>
+              {sortDesc?"⬇ 最新優先":"⬆ 最舊優先"}
+            </button>
+            <button className="btn-sm" onClick={loadData}>
+              <span className={loading?"spin":""}>⟳</span>
+            </button>
+          </div>
         </div>
 
         {allRecords.length===0?(
@@ -2451,11 +2637,15 @@ const analyzeTrend = (key, data) => {
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
                         <div style={{fontSize:12,color:C.green}}>{record._label}</div>
-                        {record._type==="lab"&&(
-                          <div style={{fontSize:10,color:C.textMuted,background:C.bg,borderRadius:10,padding:"1px 6px"}}>
-                            {Object.keys(record).filter(k=>!['id','date','hospital','country','doctor','fasting','note','extra_data','source_country','createdAt','_type','_icon','_label','_summary'].includes(k)&&record[k]!==null&&record[k]!==undefined&&record[k]!=="").length}筆
-                          </div>
-                        )}
+                        {record._type==="lab"&&(()=>{
+                          const cnt = Object.keys(record).filter(k=>!['id','date','hospital','country','doctor','fasting','note','extra_data','source_country','createdAt','_type','_icon','_label','_summary'].includes(k)&&record[k]!==null&&record[k]!==undefined&&record[k]!=="").length;
+                          return(
+                            <div style={{display:"flex",alignItems:"center",gap:4}}>
+                              <div style={{fontSize:10,color:C.textMuted,background:C.bg,borderRadius:10,padding:"1px 6px"}}>{cnt}筆</div>
+                              {cnt<40&&<div style={{fontSize:10,color:C.amber,background:"rgba(255,179,71,0.12)",borderRadius:10,padding:"1px 6px"}}>⚠️ 可補齊</div>}
+                            </div>
+                          );
+                        })()}
                       </div>
                       {!isExpanded&&record._summary&&(
                         <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>{record._summary}</div>
@@ -2599,11 +2789,24 @@ const analyzeTrend = (key, data) => {
                         )}
                       </>
                     )}
-                    {/* 刪除按鈕 */}
-                    <button onClick={()=>setDelConfirm(record)}
-                      style={{marginTop:12,width:"100%",padding:"8px",background:"transparent",border:`1px solid ${C.red}44`,borderRadius:8,color:C.red,fontSize:12,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}>
-                      🗑️ 刪除這筆記錄
-                    </button>
+                    {/* 刪除按鈕 inline */}
+                    {delConfirm?.id===record.id?(
+                      <div style={{marginTop:12,display:"flex",gap:8}}>
+                        <button onClick={()=>setDelConfirm(null)}
+                          style={{flex:1,padding:"10px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,color:C.textMuted,fontSize:13,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}>
+                          取消
+                        </button>
+                        <button onClick={()=>handleDelete(record)} disabled={deleting}
+                          style={{flex:2,padding:"10px",background:C.red,border:"none",borderRadius:8,color:"white",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}>
+                          {deleting?"刪除中...":"確認刪除 ⚠️"}
+                        </button>
+                      </div>
+                    ):(
+                      <button onClick={()=>setDelConfirm(record)}
+                        style={{marginTop:12,width:"100%",padding:"8px",background:"transparent",border:`1px solid ${C.red}44`,borderRadius:8,color:C.red,fontSize:12,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}>
+                        🗑️ 刪除這筆記錄
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -2622,25 +2825,6 @@ const analyzeTrend = (key, data) => {
           </div>
         )}
 
-        {delConfirm&&(
-          <div className="overlay">
-            <div className="overlay-sheet">
-              <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>確認刪除</div>
-              <div style={{fontSize:14,color:C.textMuted,marginBottom:16,lineHeight:1.7}}>
-                確定要刪除這筆記錄嗎？<br/>
-                <span style={{color:C.text}}>{fmtDate(delConfirm.date)} {delConfirm.hospital} {delConfirm._label}</span><br/>
-                <span style={{color:C.red,fontSize:12}}>刪除後無法復原</span>
-              </div>
-              <div style={{display:"flex",gap:10}}>
-                <button className="btn-secondary" style={{flex:1}} onClick={()=>setDelConfirm(null)}>取消</button>
-                <button style={{flex:2,padding:"14px",background:C.red,border:"none",borderRadius:12,color:"white",fontWeight:700,fontSize:15,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}
-                  onClick={()=>handleDelete(delConfirm)} disabled={deleting}>
-                  {deleting?"刪除中...":"確認刪除"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     );
   };
@@ -2666,11 +2850,38 @@ const analyzeTrend = (key, data) => {
           const mime = mealPhoto.split(";")[0].split(":")[1];
           content.push({type:"image",source:{type:"base64",media_type:mime,data:b64}});
         }
-        content.push({type:"text",text:`請分析以下食物，用繁體中文回答，只回傳JSON：
-${mealText||"（請從圖片辨識食物）"}
-回傳格式：{"foods":"食物名稱列表","calories":總熱量數字,"carbs":碳水克數,"protein":蛋白質克數,"fat":脂肪克數,"gi":"低/中/高","advice":"一句血糖建議"}`});
-        const result = await callClaude(content, 500);
-        const clean = result.replace(/\`\`\`json|\`\`\`/g,"").trim();
+        content.push({type:"text",text:`你是一位熟悉代謝疾病的營養師。請分析以下食物，用繁體中文回答，只回傳JSON，不要任何其他文字。
+
+食物：${mealText||"（請從圖片辨識食物）"}
+
+使用者背景（請針對此背景給出個人化分析）：
+- 糖尿病前期（HbA1c 5.97%，空腹血糖偏高）
+- 脂肪肝 Grade 1（ALT 偏高）
+- HDL 30.94 mg/dL（偏低）
+- 尿酸偏高（7.52 mg/dL）
+- 55歲男性，體重66kg，目標減重
+
+回傳JSON格式（所有欄位必填）：
+{
+  "foods": "食物名稱",
+  "calories": 熱量數字,
+  "carbs": 碳水克數,
+  "protein": 蛋白質克數,
+  "fat": 脂肪克數,
+  "gi": "低/中/高",
+  "advice": "針對糖尿病前期的一句建議",
+  "organs": {
+    "brain": "對大腦的影響（15字內）",
+    "heart": "對心血管的影響（15字內）",
+    "blood_sugar": "對血糖的影響（15字內）",
+    "liver": "對肝臟的影響（15字內）",
+    "kidney": "對腎臟的影響（15字內）",
+    "muscle": "對肌肉的影響（15字內）"
+  },
+  "personal_tip": "針對你的脂肪肝+HDL偏低+糖尿病前期的個人化建議（30字內）"
+}`});
+        const result = await callClaude(content, 800);
+        const clean = result.replace(/```json|```/g,"").trim();
         const parsed = JSON.parse(clean.slice(clean.indexOf("{"), clean.lastIndexOf("}")+1));
         setMealAnalysis(parsed);
       } catch(e) {
@@ -2726,7 +2937,7 @@ ${mealText||"（請從圖片辨識食物）"}
               <div style={{fontSize:11,color:C.textMuted,marginTop:4}}>AI 自動辨識食物</div>
             </div>
           )}
-          <input ref={mealPhotoRef} type="file" accept="image/*" capture="environment" style={{display:"none"}}
+          <input ref={mealPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}}
             onChange={async e=>{
               if(e.target.files[0]){
                 const dataUrl=await new Promise(res=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.readAsDataURL(e.target.files[0]);});
@@ -2743,17 +2954,50 @@ ${mealText||"（請從圖片辨識食物）"}
         {mealAnalysis && (
           <div style={{background:C.bg,borderRadius:10,padding:12,marginBottom:12,border:`1px solid ${C.borderBright}`}}>
             <div style={{fontSize:12,fontWeight:600,color:C.green,marginBottom:8}}>🤖 AI 分析結果</div>
-            <div style={{fontSize:13,color:C.text,marginBottom:6}}>{mealAnalysis.foods}</div>
+            <div style={{fontSize:13,color:C.text,marginBottom:8,fontWeight:600}}>{mealAnalysis.foods}</div>
+
+            {/* 營養數值 */}
             <div className="grid-3" style={{marginBottom:8}}>
-              {[["熱量",mealAnalysis.calories,"kcal"],[" 碳水",mealAnalysis.carbs,"g"],["蛋白質",mealAnalysis.protein,"g"]].map(([l,v,u])=>(
+              {[["熱量",mealAnalysis.calories,"kcal"],["碳水",mealAnalysis.carbs,"g"],["蛋白質",mealAnalysis.protein,"g"],["脂肪",mealAnalysis.fat,"g"],["GI值",mealAnalysis.gi,""]].map(([l,v,u])=>(
                 <div key={l} style={{textAlign:"center",background:C.bgCard2,borderRadius:8,padding:"6px 4px"}}>
                   <div style={{fontSize:10,color:C.textMuted}}>{l}</div>
-                  <div style={{fontSize:16,fontWeight:700,color:C.green}}>{v}</div>
-                  <div style={{fontSize:10,color:C.textMuted}}>{u}</div>
+                  <div style={{fontSize:15,fontWeight:700,color:C.green}}>{v}</div>
+                  {u&&<div style={{fontSize:10,color:C.textMuted}}>{u}</div>}
                 </div>
               ))}
             </div>
-            <div style={{fontSize:11,color:C.amber}}>GI值：{mealAnalysis.gi} · {mealAnalysis.advice}</div>
+
+            {/* 器官影響 */}
+            {mealAnalysis.organs&&(
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:11,color:C.textMuted,marginBottom:6,letterSpacing:1}}>對身體的影響</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                  {[
+                    {key:"brain",icon:"🧠",label:"大腦"},
+                    {key:"heart",icon:"🫀",label:"心血管"},
+                    {key:"blood_sugar",icon:"🩸",label:"血糖"},
+                    {key:"liver",icon:"🫀",label:"肝臟"},
+                    {key:"kidney",icon:"🫘",label:"腎臟"},
+                    {key:"muscle",icon:"💪",label:"肌肉"},
+                  ].map(o=>(
+                    <div key={o.key} style={{background:C.bgCard2,borderRadius:8,padding:"8px"}}>
+                      <div style={{fontSize:11,color:C.textMuted,marginBottom:3}}>{o.icon} {o.label}</div>
+                      <div style={{fontSize:11,color:C.text,lineHeight:1.5}}>{mealAnalysis.organs[o.key]||"—"}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 個人化建議 */}
+            {mealAnalysis.personal_tip&&(
+              <div style={{background:"rgba(255,179,71,0.08)",border:`1px solid ${C.amber}44`,borderRadius:8,padding:"10px",marginBottom:6}}>
+                <div style={{fontSize:11,color:C.amber,marginBottom:4}}>📌 個人化建議</div>
+                <div style={{fontSize:12,color:C.text,lineHeight:1.6}}>{mealAnalysis.personal_tip}</div>
+              </div>
+            )}
+
+            <div style={{fontSize:11,color:C.amber}}>💡 {mealAnalysis.advice}</div>
           </div>
         )}
 
@@ -3102,6 +3346,52 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
       showToast("🗑️ 已刪除");
     };
 
+    // ── 藥物詳細頁 ──
+    if(selectedMedicine){
+      const m = selectedMedicine;
+      return(
+        <div className="fade-in" style={{padding:"16px 16px 80px"}}>
+          <button className="btn-secondary" style={{marginBottom:16}} onClick={()=>setSelectedMedicine(null)}>← 返回知識庫</button>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+            <span style={{fontSize:40}}>{m.icon}</span>
+            <div>
+              <div style={{fontSize:18,fontWeight:700,color:C.text}}>{m.name}</div>
+              <span style={{fontSize:11,padding:"2px 8px",borderRadius:8,
+                background:m.type==="supplement"?"rgba(46,204,138,0.12)":"rgba(90,180,255,0.12)",
+                color:m.type==="supplement"?C.green:C.blue}}>
+                {m.type==="supplement"?"保健品":"藥物"}
+              </span>
+            </div>
+          </div>
+          <div className="card">
+            <div className="card-title">說明</div>
+            <div style={{fontSize:13,lineHeight:1.8,color:C.text}}>{m.desc}</div>
+          </div>
+          <div className="card">
+            <div className="card-title">主要好處</div>
+            {m.benefits.map((b,i)=>(
+              <div key={i} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                <span style={{color:C.green}}>✓</span>
+                <span style={{fontSize:13,color:C.text}}>{b}</span>
+              </div>
+            ))}
+          </div>
+          <div className="card">
+            <div className="card-title">建議用量</div>
+            <div style={{fontSize:13,color:C.text,lineHeight:1.8}}>{m.dosage}</div>
+          </div>
+          <div className="card">
+            <div className="card-title">注意事項</div>
+            <div style={{fontSize:13,color:C.amber,lineHeight:1.8}}>{m.caution}</div>
+          </div>
+          <div className="card" style={{border:`1px solid ${C.amber}44`,background:"rgba(255,179,71,0.06)"}}>
+            <div className="card-title">針對你的建議</div>
+            <div style={{fontSize:13,color:C.text,lineHeight:1.8}}>{m.personal}</div>
+          </div>
+        </div>
+      );
+    }
+
     // ── 文章詳細頁 ──
     if(selectedArticle){
       const art = selectedArticle;
@@ -3341,12 +3631,13 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
 
         {/* Tab 切換 */}
         {!searchLower&&(
-          <div style={{display:"flex",gap:8,marginBottom:16}}>
-            {[{key:"lab",label:"📊 檢驗指標"},{key:"articles",label:"📖 健康知識"}].map(t=>(
-              <button key={t.key} onClick={()=>setKbTab(t.key)}
-                style={{flex:1,padding:"10px",borderRadius:10,border:`1px solid ${kbTab===t.key?C.green:C.border}`,
+          <div style={{display:"flex",gap:6,marginBottom:16}}>
+            {[{key:"lab",label:"📊 指標"},{key:"articles",label:"📖 知識"},{key:"medicine",label:"💊 藥物"}].map(t=>(
+              <button key={t.key} onClick={()=>{setKbTab(t.key);setSelectedMedicine(null);setSelectedArticle(null);setSelectedKnowledge(null);}}
+                style={{flex:1,padding:"9px 4px",borderRadius:10,border:`1px solid ${kbTab===t.key?C.green:C.border}`,
                   background:kbTab===t.key?"rgba(46,204,138,0.12)":"transparent",
-                  color:kbTab===t.key?C.green:C.textMuted,fontSize:13,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif",fontWeight:kbTab===t.key?700:400}}>
+                  color:kbTab===t.key?C.green:C.textMuted,fontSize:12,cursor:"pointer",
+                  fontFamily:"'Noto Sans TC',sans-serif",fontWeight:kbTab===t.key?700:400}}>
                 {t.label}
               </button>
             ))}
@@ -3365,7 +3656,9 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
             {filteredArticles.length>0&&(
               <>
                 <div style={{fontSize:11,color:C.textMuted,letterSpacing:1,marginBottom:8,marginTop:12}}>健康知識（{filteredArticles.length}篇）</div>
-                {filteredArticles.map(art=><ArticleCard key={art.id} art={art} onSelect={setSelectedArticle}/>)}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  {filteredArticles.map(art=><ArticleCard key={art.id} art={art} onSelect={setSelectedArticle}/>)}
+                </div>
               </>
             )}
             {filteredLab.length===0&&filteredArticles.length===0&&(
@@ -3381,33 +3674,46 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
               <div style={{fontSize:13,fontWeight:700,color:C.amber,marginBottom:6}}>📌 糖尿病前期專區</div>
               <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>HbA1c 5.97% + 家族史 T2D = 高風險群<br/>好消息：糖尿病前期是可逆的，現在介入效果最好！</div>
             </div>
-            {groups.map(group=>{
-              const items = KNOWLEDGE_ITEMS.filter(i=>i.group===group);
-              const isOpen = openGroup===group;
+            {(()=>{
+              const groupList = groups.map(group=>({
+                group,
+                items: KNOWLEDGE_ITEMS.filter(i=>i.group===group),
+                isOpen: openGroup===group,
+              }));
               return(
-                <div key={group} style={{marginBottom:8}}>
-                  {/* 分組標題 */}
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-                    padding:"14px 16px",background:C.bgCard,borderRadius:isOpen?"12px 12px 0 0":"12px",
-                    border:`1px solid ${isOpen?C.green:C.border}`,cursor:"pointer"}}
-                    onClick={()=>setOpenGroup(isOpen?null:group)}>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <span style={{fontSize:18}}>{group.split(" ")[0]}</span>
-                      <span style={{fontSize:14,fontWeight:600,color:C.text}}>{group.replace(/^[^\s]+\s/,"")}</span>
-                      <span style={{fontSize:11,color:C.textMuted}}>（{items.length}項）</span>
-                    </div>
-                    <span style={{color:isOpen?C.green:C.textMuted,fontSize:14,transition:"transform 0.2s",
-                      transform:isOpen?"rotate(180deg)":"rotate(0deg)"}}>▼</span>
+                <>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:4}}>
+                    {groupList.map(({group,items,isOpen})=>(
+                      <div key={group}
+                        style={{padding:"10px 12px",background:isOpen?"rgba(46,204,138,0.12)":C.bgCard,
+                          borderRadius:"10px",border:`1px solid ${isOpen?C.green:C.border}`,
+                          cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}}
+                        onClick={()=>setOpenGroup(isOpen?null:group)}>
+                        <div>
+                          <div style={{fontSize:16}}>{group.split(" ")[0]}</div>
+                          <div style={{fontSize:11,color:isOpen?C.green:C.text,fontWeight:isOpen?700:400,lineHeight:1.4}}>
+                            {group.replace(/^[^\s]+\s/,"")}
+                          </div>
+                          <div style={{fontSize:10,color:C.textMuted}}>{items.length}項</div>
+                        </div>
+                        <span style={{color:isOpen?C.green:C.textMuted,fontSize:11}}>
+                          {isOpen?"▲":"▼"}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                  {/* 展開內容 */}
-                  {isOpen&&(
-                    <div style={{border:`1px solid ${C.green}`,borderTop:"none",borderRadius:"0 0 12px 12px",overflow:"hidden",marginBottom:2}}>
-                      {items.map(item=><KnowledgeCard key={item.key} item={item} latestLab={latestLab} onSelect={setSelectedKnowledge}/>)}
-                    </div>
-                  )}
-                </div>
+                  {/* 展開內容（跨全寬） */}
+                  {openGroup&&(()=>{
+                    const items = KNOWLEDGE_ITEMS.filter(i=>i.group===openGroup);
+                    return(
+                      <div style={{border:`1px solid ${C.green}`,borderRadius:"10px",overflow:"hidden",marginBottom:8}}>
+                        {items.map(item=><KnowledgeCard key={item.key} item={item} latestLab={latestLab} onSelect={setSelectedKnowledge}/>)}
+                      </div>
+                    );
+                  })()}
+                </>
               );
-            })}
+            })()}
           </>
         )}
 
@@ -3421,8 +3727,47 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
             {allArticles.length===0?(
               <div className="empty-state">尚無文章，點上方按鈕新增</div>
             ):(
-              allArticles.map(art=><ArticleCard key={art.id} art={art} onSelect={setSelectedArticle}/>)
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                {allArticles.map(art=><ArticleCard key={art.id} art={art} onSelect={setSelectedArticle}/>)}
+              </div>
             )}
+          </>
+        )}
+        {/* 藥物/保健品 Tab */}
+        {!searchLower&&kbTab==="medicine"&&(
+          <>
+            <div style={{background:"rgba(46,204,138,0.06)",border:`1px solid ${C.border}`,borderRadius:12,padding:12,marginBottom:12}}>
+              <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>
+                💡 以下資訊僅供參考，實際用藥請諮詢醫師或藥師。
+              </div>
+            </div>
+            {/* 保健品 */}
+            <div style={{fontSize:12,fontWeight:700,color:C.green,letterSpacing:1,marginBottom:8}}>💊 保健品</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+              {MEDICINE_ITEMS.filter(m=>m.type==="supplement").map(m=>(
+                <div key={m.id} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:12,
+                  padding:"12px 10px",cursor:"pointer"}}
+                  onClick={()=>setSelectedMedicine(m)}>
+                  <div style={{fontSize:22,textAlign:"center",marginBottom:6}}>{m.icon}</div>
+                  <div style={{fontSize:12,fontWeight:600,color:C.text,textAlign:"center",lineHeight:1.4}}>{m.name}</div>
+                  {m.personal?.startsWith("⭐")&&(
+                    <div style={{fontSize:10,color:C.amber,textAlign:"center",marginTop:4}}>⭐ 推薦</div>
+                  )}
+                </div>
+              ))}
+            </div>
+            {/* 藥物 */}
+            <div style={{fontSize:12,fontWeight:700,color:C.blue,letterSpacing:1,marginBottom:8}}>💉 常見藥物</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {MEDICINE_ITEMS.filter(m=>m.type==="medicine").map(m=>(
+                <div key={m.id} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:12,
+                  padding:"12px 10px",cursor:"pointer"}}
+                  onClick={()=>setSelectedMedicine(m)}>
+                  <div style={{fontSize:22,textAlign:"center",marginBottom:6}}>{m.icon}</div>
+                  <div style={{fontSize:12,fontWeight:600,color:C.text,textAlign:"center",lineHeight:1.4,marginBottom:4}}>{m.name}</div>
+                </div>
+              ))}
+            </div>
           </>
         )}
       </div>
@@ -3485,18 +3830,15 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
 
   // 健康知識文章卡片
   const ArticleCard=({art,onSelect})=>(
-    <div className="card" style={{cursor:"pointer",marginBottom:10}} onClick={()=>onSelect(art)}>
-      <div style={{display:"flex",alignItems:"center",gap:10}}>
-        <span style={{fontSize:28}}>{art.icon}</span>
-        <div style={{flex:1}}>
-          <div style={{fontSize:14,fontWeight:600,color:C.text}}>{art.title}</div>
-          <div style={{display:"flex",gap:6,marginTop:4,alignItems:"center"}}>
-            <span style={{fontSize:11,padding:"2px 8px",background:"rgba(46,204,138,0.12)",borderRadius:10,color:C.green}}>{art.tag}</span>
-            {art.builtin&&<span style={{fontSize:11,padding:"2px 8px",background:"rgba(90,180,255,0.12)",borderRadius:10,color:C.blue}}>內建</span>}
-            {art.photos&&art.photos.length>0&&<span style={{fontSize:11,color:C.textMuted}}>📷 {art.photos.length}張</span>}
-          </div>
-        </div>
-        <span style={{color:C.textMuted,fontSize:16}}>›</span>
+    <div style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:12,
+      padding:"12px 10px",cursor:"pointer"}} onClick={()=>onSelect(art)}>
+      <div style={{fontSize:24,marginBottom:6,textAlign:"center"}}>{art.icon}</div>
+      <div style={{fontSize:12,fontWeight:600,color:C.text,lineHeight:1.4,marginBottom:6,textAlign:"center"}}>
+        {art.title}
+      </div>
+      <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"center"}}>
+        <span style={{fontSize:10,padding:"2px 6px",background:"rgba(46,204,138,0.12)",borderRadius:8,color:C.green}}>{art.tag}</span>
+        {art.builtin&&<span style={{fontSize:10,padding:"2px 6px",background:"rgba(90,180,255,0.12)",borderRadius:8,color:C.blue}}>內建</span>}
       </div>
     </div>
   );
@@ -3634,6 +3976,75 @@ ALT：${latestLab?.alt||45}，HDL：${latestLab?.hdl||38.5}
                 showToast("🗑️ Cloudinary 設定已清除");
               }}>清除設定</button>
           )}
+        </div>
+
+        {/* 健康摘要匯出 */}
+        <div className="card">
+          <div className="card-title">📄 健康摘要報告</div>
+          <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.7}}>
+            產生完整健康摘要（最新數值、異常項目、追蹤事項），可列印或儲存為PDF帶去看診。
+          </div>
+          <button className="btn-primary" onClick={()=>{
+            const latest = labHistory.length>0?labHistory[labHistory.length-1]:null;
+            const latestBp = bpHistory.length>0?bpHistory[bpHistory.length-1]:null;
+            const latestWt = weightHistory.length>0?weightHistory[weightHistory.length-1]:null;
+            if(!latest){showToast("⚠️ 尚無抽血資料");return;}
+            const FIELDS = [
+              {key:"hba1c",label:"HbA1c",unit:"%"},
+              {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL"},
+              {key:"alt",label:"ALT",unit:"U/L"},
+              {key:"ast",label:"AST",unit:"U/L"},
+              {key:"ggt",label:"GGT",unit:"U/L"},
+              {key:"hdl",label:"HDL-C",unit:"mg/dL"},
+              {key:"ldl",label:"LDL-C",unit:"mg/dL"},
+              {key:"tg",label:"三酸甘油酯",unit:"mg/dL"},
+              {key:"cholesterol",label:"總膽固醇",unit:"mg/dL"},
+              {key:"uric_acid",label:"尿酸",unit:"mg/dL"},
+              {key:"creatinine",label:"肌酸酐",unit:"mg/dL"},
+              {key:"gfr",label:"eGFR",unit:""},
+              {key:"bun",label:"BUN",unit:"mg/dL"},
+              {key:"tsh",label:"TSH",unit:"uIU/mL"},
+              {key:"hb",label:"血紅素",unit:"g/dL"},
+              {key:"wbc",label:"WBC",unit:"K/uL"},
+              {key:"platelet",label:"血小板",unit:"K/uL"},
+            ];
+            const rows = FIELDS.filter(f=>latest[f.key]!==null&&latest[f.key]!==undefined&&latest[f.key]!=="")
+              .map(f=>{
+                const st=getStatus(f.key,latest[f.key]);
+                const mark=st==="alert"?"❌":st==="warn"?"⚠️":"✅";
+                return `<tr><td style="padding:6px 12px;border-bottom:1px solid #ddd">${f.label}</td><td style="padding:6px 12px;border-bottom:1px solid #ddd;text-align:right;font-weight:bold">${fmtLabVal(f.key,latest[f.key])} ${f.unit}</td><td style="padding:6px 12px;border-bottom:1px solid #ddd;text-align:center">${mark}</td></tr>`;
+              }).join("");
+            const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>健康摘要報告</title>
+<style>body{font-family:'Microsoft JhengHei',sans-serif;max-width:700px;margin:0 auto;padding:30px;color:#222}
+h1{font-size:22px;border-bottom:3px solid #2ecc8a;padding-bottom:8px}h2{font-size:16px;color:#1a8c5e;margin-top:24px}
+table{width:100%;border-collapse:collapse;font-size:14px}th{background:#f0f7f3;padding:8px 12px;text-align:left}
+.meta{color:#888;font-size:13px}.box{background:#f9f9f9;border-left:4px solid #2ecc8a;padding:12px;margin:12px 0;font-size:13px;line-height:1.8}
+@media print{body{padding:10px}}</style></head><body>
+<h1>📋 健康摘要報告</h1>
+<div class="meta">產生日期：${new Date().toLocaleDateString("zh-TW")} ｜ 最新抽血：${fmtDateFull(latest.date)}（${latest.hospital||""}）</div>
+<h2>基本資料</h2>
+<div class="box">55歲男性 ｜ 體重：${latestWt?latestWt.value_kg+" kg":"—"} ｜ 血壓：${latestBp?latestBp.systolic+"/"+latestBp.diastolic+" mmHg":"—"}<br/>
+已知狀況：糖尿病前期（HbA1c ${latest.hba1c||"—"}%）、脂肪肝 Grade 1、右腎囊腫 10×12mm</div>
+<h2>最新檢驗數值</h2>
+<table><tr><th>項目</th><th style="text-align:right">數值</th><th style="text-align:center">狀態</th></tr>${rows}</table>
+<h2>主要追蹤事項</h2>
+<div class="box">
+1. HbA1c 每3個月追蹤（目標 &lt; 5.7%）<br/>
+2. 肝功能（ALT/GGT）+ 腹部超音波每6個月（脂肪肝追蹤）<br/>
+3. HDL 偏低：規律有氧運動 + omega-3 補充<br/>
+4. 尿酸偏高：每日喝水2000mL+、限制高普林食物<br/>
+5. 血壓監測（目標 &lt; 130/80）<br/>
+6. 右腎囊腫每年超音波追蹤
+</div>
+<div class="meta" style="margin-top:30px">本報告由健康日誌App產生，僅供參考，實際診斷以醫師判斷為準。</div>
+</body></html>`;
+            const win = window.open("","_blank");
+            win.document.write(html);
+            win.document.close();
+            setTimeout(()=>win.print(),500);
+          }}>
+            📄 產生健康摘要（可列印/存PDF）
+          </button>
         </div>
 
         {/* 維護工具 */}
