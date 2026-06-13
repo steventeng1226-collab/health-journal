@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.45";
+const VERSION = "v4.47";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1844,12 +1844,11 @@ ${textPart}
       }
     }
     if(updated>0){
-      // 立即更新本地state（不必等loadData）
+      // 立即更新本地state（靜默，不顯示Toast）
       setReminders(prev=>prev.map(rem=>{
         const u=localUpdates.find(x=>x.id===rem.id);
         return u?{...rem,lastDate:u.lastDate,nextDate:u.nextDate}:rem;
       }));
-      showToast(`✅ 已自動更新 ${updated} 項追蹤提醒`);
     }
     return;
   };
@@ -5193,10 +5192,14 @@ ${exSummary}
     if(!loading)generateDailyGreeting();
   },[loading,sleepLog.length]);
 
-  // ── 載入後自動同步所有追蹤提醒日期（不需手動）──────────
+  // ── 載入後自動同步所有追蹤提醒日期（每天只跑一次，靜默）──
   React.useEffect(()=>{
     if(loading||!reminders||reminders.length===0)return;
     if(labHistory.length===0&&imagingHistory.length===0)return;
+    // 每天只跑一次
+    const todayStr=new Date().toISOString().split("T")[0];
+    const lastSync=localStorage.getItem("hj_reminder_sync_date");
+    if(lastSync===todayStr)return;
     // 提醒關鍵字 → 從哪種記錄抓最新日期 + 間隔月數
     const SYNC=[
       {remKeys:["肝功能","肝臟ALT","ALT","尿酸"],src:"lab",months:3},
@@ -5241,12 +5244,14 @@ ${exSummary}
         const r=await api.post("updateReminder","reminders",u);
         if(r?.success)ok++;
       }
+      // 無論有無更新，記錄今日已跑（避免重複執行）
+      localStorage.setItem("hj_reminder_sync_date", todayStr);
       if(ok>0){
         setReminders(prev=>prev.map(rem=>{
           const u=updates.find(x=>x.id===rem.id);
           return u?{...rem,lastDate:u.lastDate,nextDate:u.nextDate}:rem;
         }));
-        showToast(`✅ 已自動同步 ${ok} 項追蹤日期`);
+        // 靜默更新，不顯示 Toast
       }
     })();
   },[loading,labHistory.length,imagingHistory.length]);
