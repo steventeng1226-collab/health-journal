@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.52";
+const VERSION = "v4.53";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -3285,14 +3285,26 @@ const analyzeTrend = (key, data) => {
             if(series.length===0)return null;
             const latest=series[series.length-1].v;
             const prev=series.length>1?series[series.length-2].v:null;
-            // 方向判斷
+            // 方向判斷（以狀態+方向雙重判斷，避免正常範圍內誤判惡化）
             let trend="—",trendColor=C.textMuted;
             if(prev!=null){
               const diff=latest-prev;
+              const diffPct=prev!==0?Math.abs(diff/prev)*100:0;
+              // 判斷兩次是否都在正常範圍內
+              const latestOk=c.dir==="low"?latest<c.good:c.dir==="high"?latest>c.good:(latest>=c.lowB&&latest<=c.highB);
+              const prevOk=c.dir==="low"?prev<c.good:c.dir==="high"?prev>c.good:(prev>=c.lowB&&prev<=c.highB);
               const improving=c.dir==="low"?diff<0:c.dir==="high"?diff>0:Math.abs(latest-c.good)<Math.abs(prev-c.good);
-              if(Math.abs(diff)<0.01){trend="→";trendColor=C.textMuted;}
-              else if(improving){trend=diff>0?"▲":"▼";trendColor=C.green;}
-              else{trend=diff>0?"▲":"▼";trendColor=C.red;}
+              if(Math.abs(diff)<0.01||diffPct<3){
+                // 變化極小：穩定
+                trend="→";trendColor=C.textMuted;
+              } else if(latestOk&&prevOk){
+                // 兩次都在正常範圍：正常波動，不標紅
+                trend=diff>0?"▲":"▼";trendColor=C.textMuted;
+              } else if(improving){
+                trend=diff>0?"▲":"▼";trendColor=C.green;
+              } else {
+                trend=diff>0?"▲":"▼";trendColor=C.red;
+              }
             }
             // 狀態色（依目標/警戒）
             let statusColor=C.green;
@@ -3326,7 +3338,7 @@ const analyzeTrend = (key, data) => {
                     <div style={{flex:"0 0 54px",textAlign:"right"}}>
                       <div style={{fontSize:12,fontWeight:700,color:r.trendColor}}>{r.trend}</div>
                       <div style={{fontSize:9,color:r.trendColor,marginTop:1}}>
-                        {r.trend==="→"?"穩定":r.trendColor===C.green?"改善中":"惡化"}
+                        {r.trend==="→"?"穩定":r.trendColor===C.green?"改善中":r.trendColor===C.textMuted?"波動":"惡化"}
                       </div>
                     </div>
                   </div>
