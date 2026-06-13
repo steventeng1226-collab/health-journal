@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.42";
+const VERSION = "v4.43";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -123,6 +123,13 @@ const fmtDateFull=(d)=>{
   if(!s)return"—";
   const p=s.split("-");
   if(p.length===3)return`${p[0]}/${p[1]}/${p[2]}`;
+  return s;
+};
+const fmtDateShort=(d)=>{
+  const s=normalizeDate(d);
+  if(!s)return"";
+  const p=s.split("-");
+  if(p.length===3)return`${p[1]}/${p[2]}`;
   return s;
 };
 const daysSince=(d)=>{
@@ -2629,6 +2636,49 @@ const analyzeTrend = (key, data) => {
                 })()}
               </div>
             </div>
+            {/* 關鍵數據：血糖/血壓/體重 各一行 */}
+            {(()=>{
+              const latestGluc=[...glucoseHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+              const latestBP=[...bpHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+              const latestWt=[...weightHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+              const rows=[
+                {icon:"🩸",label:"血糖",
+                  val:latestGluc?`${latestGluc.value_mgdl||latestGluc.glucose||"—"} mg/dL`:"無記錄",
+                  date:latestGluc?fmtDateShort(latestGluc.date):"",
+                  color:latestGluc&&parseFloat(latestGluc.value_mgdl||latestGluc.glucose)>=126?C.red
+                    :latestGluc&&parseFloat(latestGluc.value_mgdl||latestGluc.glucose)>=100?C.amber:C.green,
+                  tab:"glucose"},
+                {icon:"💓",label:"血壓",
+                  val:latestBP?`${latestBP.systolic}/${latestBP.diastolic}`:"無記錄",
+                  date:latestBP?fmtDateShort(latestBP.date):"",
+                  color:latestBP&&parseFloat(latestBP.systolic)>=140?C.red
+                    :latestBP&&parseFloat(latestBP.systolic)>=130?C.amber:C.green,
+                  tab:"bp"},
+                {icon:"⚖️",label:"體重",
+                  val:latestWt?`${latestWt.value_kg||latestWt.value||"—"} kg`:"無記錄",
+                  date:latestWt?fmtDateShort(latestWt.date):"",
+                  color:C.text,tab:"weight"},
+              ];
+              return(
+                <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                  {rows.map((r,i)=>(
+                    <div key={r.label} onClick={()=>{setTab("record");setRecordTab(r.tab);}}
+                      style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                        padding:"8px 0",borderBottom:i<rows.length-1?`1px solid ${C.border}`:"none",cursor:"pointer"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <span style={{fontSize:16}}>{r.icon}</span>
+                        <span style={{fontSize:13,fontWeight:600,color:C.text}}>{r.label}</span>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <span style={{fontSize:14,fontWeight:700,color:r.color}}>{r.val}</span>
+                        {r.date&&<span style={{fontSize:10,color:C.textMuted,minWidth:42,textAlign:"right"}}>{r.date}</span>}
+                        <span style={{fontSize:12,color:C.textMuted}}>›</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
             {/* 運動類型選擇（未打卡時顯示） */}
             {!exToday&&(
               <div style={{display:"flex",gap:6,flexWrap:"wrap",paddingTop:8,borderTop:`1px solid ${C.border}`}}>
@@ -5170,6 +5220,64 @@ ${exSummary}
   React.useEffect(()=>{
     if(!loading)generateDailyGreeting();
   },[loading,sleepLog.length]);
+
+  // ── 載入後自動同步所有追蹤提醒日期（不需手動）──────────
+  React.useEffect(()=>{
+    if(loading||!reminders||reminders.length===0)return;
+    if(labHistory.length===0&&imagingHistory.length===0)return;
+    // 提醒關鍵字 → 從哪種記錄抓最新日期 + 間隔月數
+    const SYNC=[
+      {remKeys:["肝功能","肝臟ALT","ALT","尿酸"],src:"lab",months:3},
+      {remKeys:["血液常規","血常規","WBC","血小板"],src:"lab",months:3},
+      {remKeys:["腎功能","肌酸酐","eGFR"],src:"lab",months:6},
+      {remKeys:["眼底","視網膜","OCT"],src:"img",imgKey:"眼",months:6},
+      {remKeys:["視野"],src:"img",imgKey:"視野",months:4},
+      {remKeys:["心臟科","心電圖","心血管","LAD","冠狀"],src:"img",imgKey:"心",months:6},
+      {remKeys:["腹部","超音波","脂肪肝","肝囊","腎囊"],src:"img",imgKey:"腹",months:6},
+      {remKeys:["頸動脈"],src:"img",imgKey:"頸",months:12},
+    ];
+    const latestLabDate=labHistory.length>0
+      ?[...labHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0].date:null;
+    const getLatestImgDate=(kw)=>{
+      const m=[...imagingHistory].filter(r=>(r.type||"").includes(kw)||(r.finding||"").includes(kw))
+        .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+      return m.length>0?m[0].date:null;
+    };
+    const addMonths=(dateStr,months)=>{
+      const d=new Date(dateStr);if(isNaN(d.getTime()))return null;
+      d.setMonth(d.getMonth()+months);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    };
+    const updates=[];
+    for(const rem of reminders){
+      const title=rem.title||"";
+      const rule=SYNC.find(s=>s.remKeys.some(k=>title.includes(k)));
+      if(!rule)continue;
+      const srcDate=rule.src==="lab"?latestLabDate:getLatestImgDate(rule.imgKey);
+      if(!srcDate)continue;
+      // 只有當記錄日期比現有 lastDate 還新，才更新
+      if(rem.lastDate&&String(srcDate)<=String(rem.lastDate))continue;
+      const newNext=addMonths(srcDate,rule.months);
+      if(!newNext)continue;
+      updates.push({id:rem.id,lastDate:srcDate,nextDate:newNext});
+    }
+    if(updates.length===0)return;
+    // 寫回 Sheets + 更新本地
+    (async()=>{
+      let ok=0;
+      for(const u of updates){
+        const r=await api.post("updateReminder","reminders",u);
+        if(r?.success)ok++;
+      }
+      if(ok>0){
+        setReminders(prev=>prev.map(rem=>{
+          const u=updates.find(x=>x.id===rem.id);
+          return u?{...rem,lastDate:u.lastDate,nextDate:u.nextDate}:rem;
+        }));
+        showToast(`✅ 已自動同步 ${ok} 項追蹤日期`);
+      }
+    })();
+  },[loading,labHistory.length,imagingHistory.length]);
 
   const AITab=()=>{
     const [aiQuestion,setAiQuestion]=useState("");
