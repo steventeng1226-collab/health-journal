@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.43";
+const VERSION = "v4.45";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -180,6 +180,11 @@ const LAB_FIELDS = [
   {key:"hb",label:"血紅素 Hb (g/dL)",type:"number",placeholder:"14.4"},
   {key:"wbc",label:"白血球 WBC",type:"number",placeholder:"4.3"},
   {key:"platelet",label:"血小板 Platelet",type:"number",placeholder:"137"},
+  {key:"insulin",label:"胰島素 Insulin (μIU/mL)",type:"number",placeholder:""},
+  {key:"vitamin_d3",label:"維生素D3 (ng/mL)",type:"number",placeholder:""},
+  {key:"ferritin",label:"鐵蛋白 Ferritin (ng/mL)",type:"number",placeholder:""},
+  {key:"hs_crp",label:"高敏CRP hsCRP (mg/L)",type:"number",placeholder:""},
+  {key:"insulin_resistance",label:"HOMA-IR 胰島素阻抗",type:"number",placeholder:""},
   {key:"note",label:"備註",type:"textarea",placeholder:"其他說明..."},
 ];
 
@@ -1632,12 +1637,17 @@ ${overdues.length>0?`・追蹤提醒已過期：${overdues.join("、")}`:""}
    urine_urobilinogen=尿膽素原/Urobilinogen（negative填0，positive填1）
    urine_blood=尿潛血/Blood(Urine)（negative填0，positive填1）
    urine_leukocyte=尿白血球/Leukocyte(Urine)（negative填0，positive填1）
+   insulin=胰島素/Insulin（μIU/mL 或 mIU/L）
+   vitamin_d3=維生素D3/Vitamin D3/25(OH)D（ng/mL 或 nmol/L÷2.496換算）
+   ferritin=鐵蛋白/Ferritin（ng/mL 或 μg/L）
+   hs_crp=高敏CRP/hsCRP/hs-CRP（mg/L）
+   insulin_resistance=胰島素阻抗指數/HOMA-IR（計算值）
 
 報告內容：
 ${textPart}
 
 只回傳JSON格式，包含所有找到的欄位（有值的填數值，沒有的填null）：
-{"date":null,"hospital":null,"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"gfr2":null,"bun":null,"upcr":null,"urine_creatinine":null,"urine_protein":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"ck_mb":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"ne_pct":null,"ly_pct":null,"mo_pct":null,"eo_pct":null,"ba_pct":null,"ne_abs":null,"ly_abs":null,"mo_abs":null,"eo_abs":null,"ba_abs":null,"hbsag":null,"anti_hcv":null,"anti_hbs":null,"cea":null,"afp":null,"psa":null,"asto":null,"rf":null,"urine_glucose":null,"urine_bilirubin":null,"urine_ketone":null,"urine_sg":null,"urine_ph":null,"urine_nitrite":null,"urine_urobilinogen":null,"urine_blood":null,"urine_leukocyte":null,"note":null}`});
+{"date":null,"hospital":null,"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"gfr2":null,"bun":null,"upcr":null,"urine_creatinine":null,"urine_protein":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"ck_mb":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"ne_pct":null,"ly_pct":null,"mo_pct":null,"eo_pct":null,"ba_pct":null,"ne_abs":null,"ly_abs":null,"mo_abs":null,"eo_abs":null,"ba_abs":null,"hbsag":null,"anti_hcv":null,"anti_hbs":null,"cea":null,"afp":null,"psa":null,"asto":null,"rf":null,"urine_glucose":null,"urine_bilirubin":null,"urine_ketone":null,"urine_sg":null,"urine_ph":null,"urine_nitrite":null,"urine_urobilinogen":null,"urine_blood":null,"urine_leukocyte":null,"insulin":null,"vitamin_d3":null,"ferritin":null,"hs_crp":null,"insulin_resistance":null,"note":null}`});
 
       const rawText = await callClaude([{role:"user",content}], 1200);
       console.log("Raw text:",rawText.slice(0,500));
@@ -1701,7 +1711,7 @@ ${textPart}
         "cea","afp","psa","asto","rf",
         "urine_glucose","urine_bilirubin","urine_ketone","urine_sg","urine_ph",
         "urine_nitrite","urine_urobilinogen","urine_blood","urine_leukocyte",
-        "extra_data","source_country","createdAt","id",
+        "extra_data","source_country","createdAt","id","insulin","vitamin_d3","ferritin","hs_crp","insulin_resistance",
       ]);
       // 找出不在白名單的欄位
       const extraObj = {};
@@ -2387,19 +2397,26 @@ const analyzeTrend = (key, data) => {
             ))}
           </div>
 
-          {/* extra_data 兜底警告 */}
+          {/* 未對應欄位警告（明顯紅框） */}
           {labParsed._extraData && Object.keys(labParsed._extraData).length > 0 && (
-            <div className="card" style={{border:`1px solid ${C.amber}55`,background:"rgba(255,179,71,0.06)"}}>
-              <div className="card-title" style={{color:C.amber}}>⚠️ 已備份（欄位待新增）</div>
-              <div style={{fontSize:12,color:C.textMuted,marginBottom:8,lineHeight:1.7}}>
-                以下項目目前無對應欄位，已存入備份區，不會遺失：
+            <div className="card" style={{border:`2px solid ${C.red}88`,background:"rgba(255,80,80,0.06)",marginBottom:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <span style={{fontSize:18}}>🚨</span>
+                <div>
+                  <div style={{fontSize:13,fontWeight:700,color:C.red}}>以下項目無法存入！</div>
+                  <div style={{fontSize:11,color:C.textMuted}}>App尚無對應欄位，暫存備份區但不會出現在趨勢圖</div>
+                </div>
               </div>
               {Object.entries(labParsed._extraData).map(([k,v])=>(
-                <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:`1px solid ${C.border}`}}>
-                  <span style={{fontSize:12,color:C.amber}}>{k}</span>
-                  <span style={{fontSize:12,color:C.text,fontWeight:600}}>{String(v)}</span>
+                <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                  padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <span style={{fontSize:12,color:C.red,fontWeight:600}}>{k}</span>
+                  <span style={{fontSize:13,color:C.text,fontWeight:700}}>{String(v)}</span>
                 </div>
               ))}
+              <div style={{marginTop:8,fontSize:11,color:C.textMuted,lineHeight:1.6}}>
+                💡 請告知開發者新增這些欄位，下次匯入才能完整儲存
+              </div>
             </div>
           )}
 
@@ -2970,52 +2987,7 @@ const analyzeTrend = (key, data) => {
           </div>
         );
       })()}
-      <div style={{fontSize:11,color:C.textMuted,letterSpacing:2,marginBottom:8}}>LATEST VALUES</div>
-      <div className="grid-2">
-        <div className="card" style={{cursor:"pointer",padding:"10px 12px"}} onClick={()=>{setTab("trend");setTrendItem("glucose")}}>
-          <div style={{fontSize:10,color:C.textMuted,marginBottom:4}}>🩸 血糖</div>
-          {latestGlucose?<>
-            <div style={{display:"flex",alignItems:"baseline",gap:4}}>
-              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:C.amber,lineHeight:1}}>{latestGlucose.value_mgdl}</span>
-              <span style={{fontSize:10,color:C.textMuted}}>mg/dL</span>
-            </div>
-            <div style={{fontSize:9,color:C.textMuted,marginTop:3}}>{latestGlucose.timePoint} · {daysSince(latestGlucose.date)}</div>
-            <span className={`source-tag ${latestGlucose.source==="醫院"?"source-hospital":"source-daily"}`} style={{marginTop:5,display:"inline-flex"}}>{latestGlucose.source==="醫院"?"🏥 醫院":"🏠 日常"}</span>
-          </>:<div style={{fontSize:11,color:C.textMuted,marginTop:6}}>尚無資料</div>}
-        </div>
-        <div className="card" style={{cursor:"pointer",padding:"10px 12px"}} onClick={()=>{setTab("trend");setTrendItem("bp")}}>
-          <div style={{fontSize:10,color:C.textMuted,marginBottom:4}}>💓 血壓</div>
-          {latestBP?<>
-            <div style={{display:"flex",alignItems:"baseline",gap:4}}>
-              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:C.green,lineHeight:1}}>{latestBP.systolic}</span>
-              <span style={{fontSize:10,color:C.textMuted}}>/{latestBP.diastolic}</span>
-            </div>
-            <div style={{fontSize:9,color:C.textMuted,marginTop:3}}>mmHg · {daysSince(latestBP.date)}</div>
-            <span className={`source-tag ${latestBP.source==="醫院"?"source-hospital":"source-daily"}`} style={{marginTop:5,display:"inline-flex"}}>{latestBP.source==="醫院"?"🏥 醫院":"🏠 日常"}</span>
-          </>:<div style={{fontSize:11,color:C.textMuted,marginTop:6}}>尚無資料</div>}
-        </div>
-        <div className="card" style={{cursor:"pointer",padding:"10px 12px"}} onClick={()=>{setTab("trend");setTrendItem("weight")}}>
-          <div style={{fontSize:10,color:C.textMuted,marginBottom:4}}>⚖️ 體重</div>
-          {latestWeight?<>
-            <div style={{display:"flex",alignItems:"baseline",gap:4}}>
-              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:22,lineHeight:1}}>{latestWeight.value_kg}</span>
-              <span style={{fontSize:10,color:C.textMuted}}>kg</span>
-            </div>
-            <div style={{fontSize:9,color:C.textMuted,marginTop:3}}>{daysSince(latestWeight.date)}</div>
-          </>:<div style={{fontSize:11,color:C.textMuted,marginTop:6}}>尚無資料</div>}
-        </div>
-        <div className="card" style={{cursor:"pointer",padding:"10px 12px"}} onClick={()=>setSelectedKnowledge(KNOWLEDGE_ITEMS[0])}>
-          <div style={{fontSize:10,color:C.textMuted,marginBottom:4}}>📊 HbA1c</div>
-          {latestLab?<>
-            <div style={{display:"flex",alignItems:"baseline",gap:4}}>
-              <span style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:C.amber,lineHeight:1}}>{latestLab.hba1c}</span>
-              <span style={{fontSize:10,color:C.textMuted}}>%</span>
-            </div>
-            <div style={{fontSize:9,color:C.textMuted,marginTop:3}}>{daysSince(latestLab.date)}</div>
-            <span className="status-chip status-warn" style={{marginTop:5,display:"inline-flex"}}>前期範圍</span>
-          </>:<div style={{fontSize:11,color:C.textMuted,marginTop:6}}>尚無資料</div>}
-        </div>
-      </div>
+
       <div className="card">
         <div className="card-title">快速記錄</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
