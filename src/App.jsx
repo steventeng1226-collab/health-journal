@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.48";
+const VERSION = "v4.49";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -5250,9 +5250,9 @@ ${exSummary}
         return u?{...rem,lastDate:u.lastDate,nextDate:u.nextDate}:rem;
       });
       setReminders(newReminders);
-      // 同步寫回 user_settings（App讀取來源）
+      // 同步寫回 user_settings（App讀取來源，直接傳陣列不需stringify）
       try{
-        await api.saveSetting("reminders",JSON.stringify(newReminders));
+        await api.saveSetting("reminders", newReminders);
         localStorage.setItem("hj_reminders",JSON.stringify(newReminders));
       }catch(e){console.log("reminder sync error",e);}
       localStorage.setItem("hj_reminder_sync_date",todayStr);
@@ -6631,6 +6631,60 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
         {/* 維護工具 */}
         <div className="card">
           <div className="card-title">維護工具</div>
+          {/* 強制同步追蹤提醒 */}
+          <button className="btn-primary" style={{marginBottom:12}} onClick={async()=>{
+            showToast("⏳ 同步追蹤提醒中...");
+            const todayStr=new Date().toISOString().split("T")[0];
+            const SYNC=[
+              {remKeys:["肝功能","ALT","尿酸"],src:"lab",months:3},
+              {remKeys:["血液常規","血常規","WBC","血小板"],src:"lab",months:3},
+              {remKeys:["腎功能","肌酸酐","eGFR"],src:"lab",months:6},
+              {remKeys:["眼底","視網膜","OCT"],src:"img",imgKey:"眼",months:6},
+              {remKeys:["視野"],src:"img",imgKey:"視野",months:4},
+              {remKeys:["心臟科","心電圖","心血管","LAD","冠狀"],src:"img",imgKey:"心",months:6},
+              {remKeys:["腹部","超音波","脂肪肝","肝囊","腎囊"],src:"img",imgKey:"腹",months:6},
+              {remKeys:["頸動脈"],src:"img",imgKey:"頸",months:12},
+            ];
+            const latestLabDate=labHistory.length>0
+              ?[...labHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0].date:null;
+            const getLatestImgDate=(kw)=>{
+              const m=[...imagingHistory].filter(r=>(r.type||"").includes(kw)||(r.finding||"").includes(kw))
+                .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+              return m.length>0?m[0].date:null;
+            };
+            const addMonths=(dateStr,months)=>{
+              const d=new Date(dateStr);if(isNaN(d.getTime()))return null;
+              d.setMonth(d.getMonth()+months);
+              return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+            };
+            const updates=[];
+            for(const rem of reminders){
+              const title=rem.title||"";
+              const rule=SYNC.find(s=>s.remKeys.some(k=>title.includes(k)));
+              if(!rule)continue;
+              const srcDate=rule.src==="lab"?latestLabDate:getLatestImgDate(rule.imgKey);
+              if(!srcDate)continue;
+              if(rem.lastDate&&String(srcDate)<=String(rem.lastDate))continue;
+              const newNext=addMonths(srcDate,rule.months);
+              if(!newNext)continue;
+              updates.push({id:rem.id,lastDate:srcDate,nextDate:newNext});
+            }
+            if(updates.length===0){showToast("✅ 追蹤提醒已是最新");return;}
+            const newRems=reminders.map(rem=>{
+              const u=updates.find(x=>x.id===rem.id);
+              return u?{...rem,lastDate:u.lastDate,nextDate:u.nextDate}:rem;
+            });
+            try{
+              await api.saveSetting("reminders",newRems);
+              localStorage.setItem("hj_reminders",JSON.stringify(newRems));
+              localStorage.setItem("hj_reminder_sync_date",todayStr);
+              setReminders(newRems);
+              reminderSyncDone.current=true;
+              showToast(`✅ 已同步 ${updates.length} 項追蹤提醒`);
+            }catch(e){showToast("❌ 同步失敗："+e.message);}
+          }}>
+            🔄 強制同步追蹤提醒日期
+          </button>
           <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.6}}>
             更新 Google Sheets 欄位（新版本後執行一次）
           </div>
