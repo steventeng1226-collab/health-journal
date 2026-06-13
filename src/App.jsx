@@ -4247,20 +4247,63 @@ const analyzeTrend = (key, data) => {
           </div>
         )}
         {recordTab==="sleep"&&(()=>{
-          const [sleepForm,setSleepForm]=React.useState({
-            date:today(),totalMin:360,deepMin:0,remMin:0,lightMin:0,awakeMin:0,
-            bedTime:"23:30",wakeTime:"06:00",note:""
-          });
+          const emptyForm={
+            date:today(),bedtime:"23:30",waketime:"06:00",
+            total_min:360,actual_min:354,score:0,
+            deep_min:0,light_min:0,rem_min:0,awake_min:0,
+            spo2_avg:0,spo2_below90_min:0,hr_avg:0,breath_rate:0,note:""
+          };
+          const [sleepForm,setSleepForm]=React.useState(emptyForm);
+          const [pasteText,setPasteText]=React.useState("");
+          const [showPaste,setShowPaste]=React.useState(false);
           const [sleepAnalysis,setSleepAnalysis]=React.useState(null);
           const [analyzing,setAnalyzing]=React.useState(false);
           const savedSleep=sleepLog.filter(r=>r.date).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+
+          // ── 解析 ChatGPT 輸出的固定格式文字 ──
+          const parsePasteText=()=>{
+            const lines=pasteText.split("\n").map(l=>l.trim()).filter(Boolean);
+            const get=(key)=>{
+              const line=lines.find(l=>l.startsWith(key));
+              if(!line)return "";
+              return line.split("：")[1]?.trim()||"";
+            };
+            const toInt=(s)=>parseInt(s)||0;
+            const toFloat=(s)=>parseFloat(s)||0;
+            const parsed={
+              date:get("日期")||today(),
+              bedtime:get("上床時間")||"23:30",
+              waketime:get("起床時間")||"06:00",
+              total_min:toInt(get("總時間（分鐘）")),
+              actual_min:toInt(get("實際睡眠（分鐘）")),
+              score:toInt(get("睡眠評分")),
+              deep_min:toInt(get("深層睡眠（分鐘）")),
+              light_min:toInt(get("淺層睡眠（分鐘）")),
+              rem_min:toInt(get("REM（分鐘）")),
+              awake_min:toInt(get("清醒（分鐘）")),
+              spo2_avg:toInt(get("血氧平均（%）")),
+              spo2_below90_min:toFloat(get("血氧低於90%（分鐘）")),
+              hr_avg:toInt(get("平均心跳（次/分）")),
+              breath_rate:toFloat(get("呼吸速率（次/分）")),
+              note:get("備註")||"",
+            };
+            if(!parsed.total_min&&!parsed.score){
+              showToast("⚠️ 格式不符，請確認是否貼上正確格式");
+              return;
+            }
+            setSleepForm(parsed);
+            setShowPaste(false);
+            setPasteText("");
+            showToast("✅ 解析完成，請確認後儲存");
+          };
+
           const analyzeSleep=async()=>{
             const key=localStorage.getItem("hj_apikey")||apiKey||"";
             if(!key){showToast("⚠️ 請先設定API金鑰");return;}
             setAnalyzing(true);
             try{
               const weekData=savedSleep.slice(0,7).map(r=>
-                `${r.date}: 總${r.totalMin}分/深層${r.deepMin}分(${Math.round(r.deepMin/r.totalMin*100)||0}%)/REM ${r.remMin}分/清醒${r.awakeMin}分`
+                `${r.date}: 總${r.total_min}分/實際${r.actual_min}分/評分${r.score}/深層${r.deep_min}分(${Math.round(r.deep_min/(r.total_min||1)*100)}%)/REM ${r.rem_min}分/清醒${r.awake_min}分/血氧${r.spo2_avg}%`
               ).join("\n");
               const prompt=`你是睡眠醫學專家，請分析以下Samsung Watch 7睡眠數據，用繁體中文回答，不用markdown符號：
 
@@ -4282,113 +4325,197 @@ ${weekData||"尚無記錄"}
             }catch(e){showToast("❌ "+e.message);}
             setAnalyzing(false);
           };
+
           const saveSleepRecord=async()=>{
             const r=await api.post("append","sleep_log",{
-              id:Date.now(),date:sleepForm.date,
-              totalMin:sleepForm.totalMin,deepMin:sleepForm.deepMin,
-              remMin:sleepForm.remMin,lightMin:sleepForm.lightMin,
-              awakeMin:sleepForm.awakeMin,bedTime:sleepForm.bedTime,
-              wakeTime:sleepForm.wakeTime,note:sleepForm.note,
+              id:"SLP"+Date.now(),
+              date:sleepForm.date,
+              bedtime:sleepForm.bedtime,
+              waketime:sleepForm.waketime,
+              total_min:sleepForm.total_min,
+              actual_min:sleepForm.actual_min,
+              score:sleepForm.score,
+              deep_min:sleepForm.deep_min,
+              light_min:sleepForm.light_min,
+              rem_min:sleepForm.rem_min,
+              awake_min:sleepForm.awake_min,
+              spo2_avg:sleepForm.spo2_avg,
+              spo2_below90_min:sleepForm.spo2_below90_min,
+              hr_avg:sleepForm.hr_avg,
+              breath_rate:sleepForm.breath_rate,
+              note:sleepForm.note,
             });
             if(r?.success){
               setSleepLog(prev=>[...prev,{...sleepForm}]);
+              setSleepForm(emptyForm);
               showToast("✅ 睡眠記錄已儲存");
             }else showToast("❌ 儲存失敗，請確認Sheets有sleep_log分頁");
           };
+
           return(
             <div>
               <div className="card" style={{marginBottom:12}}>
                 <div className="card-title">😴 輸入 Watch 7 睡眠數據</div>
-                <div style={{fontSize:11,color:C.textMuted,marginBottom:10,lineHeight:1.6}}>
-                  從三星健康App → 睡眠 → 選日期 → 輸入各階段時間
+
+                {/* 貼上解析區 */}
+                <button onClick={()=>setShowPaste(v=>!v)}
+                  style={{width:"100%",padding:"10px",marginBottom:10,background:C.green+"22",
+                    border:`1px solid ${C.green}`,borderRadius:8,color:C.green,fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                  📋 {showPaste?"▲ 收起":"▼ 貼上 ChatGPT 解析文字 → 自動填入"}
+                </button>
+
+                {showPaste&&(
+                  <div style={{marginBottom:12}}>
+                    <div style={{fontSize:11,color:C.textMuted,marginBottom:6,lineHeight:1.7}}>
+                      用 ChatGPT 分析截圖後，複製輸出文字貼到下方，點「解析並填入」自動填好所有欄位。
+                    </div>
+                    <textarea
+                      style={{width:"100%",minHeight:160,background:C.card,border:`1px solid ${C.border}`,
+                        borderRadius:8,color:C.text,fontSize:11,padding:10,lineHeight:1.6,
+                        boxSizing:"border-box",resize:"vertical"}}
+                      placeholder={`日期：2025/06/12\n上床時間：00:15\n起床時間：06:33\n總時間（分鐘）：378\n實際睡眠（分鐘）：354\n睡眠評分：78\n深層睡眠（分鐘）：68\n淺層睡眠（分鐘）：188\nREM（分鐘）：98\n清醒（分鐘）：24\n血氧平均（%）：92\n血氧低於90%（分鐘）：19.8\n平均心跳（次/分）：59\n呼吸速率（次/分）：15.2\n備註：`}
+                      value={pasteText}
+                      onChange={e=>setPasteText(e.target.value)}
+                    />
+                    <button onClick={parsePasteText}
+                      style={{width:"100%",marginTop:8,padding:"10px",background:C.green,
+                        border:"none",borderRadius:8,color:"#000",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                      ✨ 解析並填入欄位
+                    </button>
+                  </div>
+                )}
+
+                <div style={{fontSize:11,color:C.textMuted,marginBottom:8,lineHeight:1.6}}>
+                  或手動輸入各項數值：
                 </div>
+
                 <div className="grid-2" style={{marginBottom:8}}>
                   <div><div className="field-label">日期</div>
                     <input className="input-field" type="date" value={sleepForm.date}
                       onChange={e=>setSleepForm(v=>({...v,date:e.target.value}))}/></div>
-                  <div><div className="field-label">總睡眠時間（分鐘）</div>
-                    <input className="input-field" type="number" value={sleepForm.totalMin}
-                      onChange={e=>setSleepForm(v=>({...v,totalMin:parseInt(e.target.value)||0}))}/></div>
+                  <div><div className="field-label">睡眠評分</div>
+                    <input className="input-field" type="number" value={sleepForm.score||""}
+                      placeholder="78"
+                      onChange={e=>setSleepForm(v=>({...v,score:parseInt(e.target.value)||0}))}/></div>
+                </div>
+                <div className="grid-2" style={{marginBottom:8}}>
+                  <div><div className="field-label">🛏️ 上床時間</div>
+                    <input className="input-field" type="time" value={sleepForm.bedtime}
+                      onChange={e=>setSleepForm(v=>({...v,bedtime:e.target.value}))}/></div>
+                  <div><div className="field-label">☀️ 起床時間</div>
+                    <input className="input-field" type="time" value={sleepForm.waketime}
+                      onChange={e=>setSleepForm(v=>({...v,waketime:e.target.value}))}/></div>
+                </div>
+                <div className="grid-2" style={{marginBottom:8}}>
+                  <div><div className="field-label">總時間（分鐘）</div>
+                    <input className="input-field" type="number" value={sleepForm.total_min||""}
+                      onChange={e=>setSleepForm(v=>({...v,total_min:parseInt(e.target.value)||0}))}/></div>
+                  <div><div className="field-label">實際睡眠（分鐘）</div>
+                    <input className="input-field" type="number" value={sleepForm.actual_min||""}
+                      onChange={e=>setSleepForm(v=>({...v,actual_min:parseInt(e.target.value)||0}))}/></div>
                 </div>
                 <div className="grid-2" style={{marginBottom:8}}>
                   <div><div className="field-label">🌙 深層睡眠（分鐘）</div>
-                    <input className="input-field" type="number" value={sleepForm.deepMin}
-                      onChange={e=>setSleepForm(v=>({...v,deepMin:parseInt(e.target.value)||0}))}/></div>
-                  <div><div className="field-label">💭 REM快速動眼（分鐘）</div>
-                    <input className="input-field" type="number" value={sleepForm.remMin}
-                      onChange={e=>setSleepForm(v=>({...v,remMin:parseInt(e.target.value)||0}))}/></div>
+                    <input className="input-field" type="number" value={sleepForm.deep_min||""}
+                      onChange={e=>setSleepForm(v=>({...v,deep_min:parseInt(e.target.value)||0}))}/></div>
+                  <div><div className="field-label">💭 REM（分鐘）</div>
+                    <input className="input-field" type="number" value={sleepForm.rem_min||""}
+                      onChange={e=>setSleepForm(v=>({...v,rem_min:parseInt(e.target.value)||0}))}/></div>
                 </div>
                 <div className="grid-2" style={{marginBottom:8}}>
                   <div><div className="field-label">😪 淺層睡眠（分鐘）</div>
-                    <input className="input-field" type="number" value={sleepForm.lightMin}
-                      onChange={e=>setSleepForm(v=>({...v,lightMin:parseInt(e.target.value)||0}))}/></div>
-                  <div><div className="field-label">⚡ 清醒時間（分鐘）</div>
-                    <input className="input-field" type="number" value={sleepForm.awakeMin}
-                      onChange={e=>setSleepForm(v=>({...v,awakeMin:parseInt(e.target.value)||0}))}/></div>
+                    <input className="input-field" type="number" value={sleepForm.light_min||""}
+                      onChange={e=>setSleepForm(v=>({...v,light_min:parseInt(e.target.value)||0}))}/></div>
+                  <div><div className="field-label">⚡ 清醒（分鐘）</div>
+                    <input className="input-field" type="number" value={sleepForm.awake_min||""}
+                      onChange={e=>setSleepForm(v=>({...v,awake_min:parseInt(e.target.value)||0}))}/></div>
                 </div>
                 <div className="grid-2" style={{marginBottom:8}}>
-                  <div><div className="field-label">🛏️ 入睡時間</div>
-                    <input className="input-field" type="time" value={sleepForm.bedTime}
-                      onChange={e=>setSleepForm(v=>({...v,bedTime:e.target.value}))}/></div>
-                  <div><div className="field-label">☀️ 起床時間</div>
-                    <input className="input-field" type="time" value={sleepForm.wakeTime}
-                      onChange={e=>setSleepForm(v=>({...v,wakeTime:e.target.value}))}/></div>
+                  <div><div className="field-label">🩸 血氧平均（%）</div>
+                    <input className="input-field" type="number" value={sleepForm.spo2_avg||""}
+                      onChange={e=>setSleepForm(v=>({...v,spo2_avg:parseInt(e.target.value)||0}))}/></div>
+                  <div><div className="field-label">⚠️ 血氧低於90%（分鐘）</div>
+                    <input className="input-field" type="number" step="0.1" value={sleepForm.spo2_below90_min||""}
+                      onChange={e=>setSleepForm(v=>({...v,spo2_below90_min:parseFloat(e.target.value)||0}))}/></div>
                 </div>
+                <div className="grid-2" style={{marginBottom:8}}>
+                  <div><div className="field-label">❤️ 平均心跳（次/分）</div>
+                    <input className="input-field" type="number" value={sleepForm.hr_avg||""}
+                      onChange={e=>setSleepForm(v=>({...v,hr_avg:parseInt(e.target.value)||0}))}/></div>
+                  <div><div className="field-label">🌬️ 呼吸速率（次/分）</div>
+                    <input className="input-field" type="number" step="0.1" value={sleepForm.breath_rate||""}
+                      onChange={e=>setSleepForm(v=>({...v,breath_rate:parseFloat(e.target.value)||0}))}/></div>
+                </div>
+
                 {/* 即時計算 */}
-                {sleepForm.totalMin>0&&(
+                {sleepForm.total_min>0&&(
                   <div style={{background:C.bg,borderRadius:8,padding:"8px 10px",marginBottom:10}}>
                     <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>即時計算</div>
                     <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
                       {[
-                        {label:"深層%",v:`${Math.round(sleepForm.deepMin/sleepForm.totalMin*100)}%`,
-                          color:sleepForm.deepMin/sleepForm.totalMin>=0.18?C.green:C.amber},
-                        {label:"REM%",v:`${Math.round(sleepForm.remMin/sleepForm.totalMin*100)}%`,
-                          color:sleepForm.remMin/sleepForm.totalMin>=0.20?C.green:C.amber},
-                        {label:"總計",v:`${Math.floor(sleepForm.totalMin/60)}h${sleepForm.totalMin%60}m`,
-                          color:sleepForm.totalMin>=420?C.green:C.red},
+                        {label:"評分",v:sleepForm.score||"-",color:sleepForm.score>=80?C.green:sleepForm.score>=60?C.amber:C.red},
+                        {label:"深層%",v:`${Math.round(sleepForm.deep_min/sleepForm.total_min*100)}%`,
+                          color:sleepForm.deep_min/sleepForm.total_min>=0.18?C.green:C.amber},
+                        {label:"REM%",v:`${Math.round(sleepForm.rem_min/sleepForm.total_min*100)}%`,
+                          color:sleepForm.rem_min/sleepForm.total_min>=0.20?C.green:C.amber},
+                        {label:"總計",v:`${Math.floor(sleepForm.total_min/60)}h${sleepForm.total_min%60}m`,
+                          color:sleepForm.total_min>=420?C.green:C.red},
+                        {label:"血氧",v:sleepForm.spo2_avg?`${sleepForm.spo2_avg}%`:"-",
+                          color:sleepForm.spo2_avg>=95?C.green:sleepForm.spo2_avg>=90?C.amber:C.red},
                       ].map(s=>(
                         <div key={s.label} style={{textAlign:"center"}}>
                           <div style={{fontSize:14,fontWeight:700,color:s.color}}>{s.v}</div>
                           <div style={{fontSize:10,color:C.textMuted}}>{s.label}</div>
                         </div>
                       ))}
-                      <div style={{textAlign:"center"}}>
-                        <div style={{fontSize:11,color:sleepForm.deepMin/sleepForm.totalMin>=0.18?C.green:C.amber,fontWeight:700}}>
-                          {sleepForm.deepMin/sleepForm.totalMin>=0.18?"✅ 達標":"⚠️ 深層不足"}
+                      {sleepForm.spo2_below90_min>10&&(
+                        <div style={{textAlign:"center"}}>
+                          <div style={{fontSize:11,color:C.red,fontWeight:700}}>⚠️ 低氧{sleepForm.spo2_below90_min}分</div>
+                          <div style={{fontSize:10,color:C.textMuted}}>建議告知醫師</div>
                         </div>
-                        <div style={{fontSize:10,color:C.textMuted}}>目標深層≥18%</div>
-                      </div>
+                      )}
                     </div>
                   </div>
                 )}
+
                 <input className="input-field" placeholder="備註（是否吃悠樂丁？壓力大？）" style={{marginBottom:10}}
                   value={sleepForm.note} onChange={e=>setSleepForm(v=>({...v,note:e.target.value}))}/>
                 <button className="btn-primary" onClick={saveSleepRecord}>💾 儲存睡眠記錄</button>
               </div>
+
               {/* 近期睡眠記錄 */}
               {savedSleep.length>0&&(
                 <div className="card" style={{marginBottom:12}}>
                   <div className="card-title">近期睡眠記錄</div>
                   {savedSleep.slice(0,7).map((r,i)=>{
-                    const deepPct=Math.round(r.deepMin/(r.totalMin||1)*100);
+                    const deepPct=Math.round(r.deep_min/(r.total_min||1)*100);
                     return(
-                      <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-                        padding:"7px 0",borderBottom:i<savedSleep.length-1?`1px solid ${C.border}`:"none"}}>
-                        <div>
-                          <div style={{fontSize:12,fontWeight:600,color:C.text}}>{fmtDateFull(r.date)}</div>
-                          <div style={{fontSize:10,color:C.textMuted}}>{r.bedTime}→{r.wakeTime}</div>
-                        </div>
-                        <div style={{textAlign:"right"}}>
-                          <div style={{fontSize:13,fontWeight:700,color:r.totalMin>=420?C.green:C.red}}>
-                            {Math.floor(r.totalMin/60)}h{r.totalMin%60}m
+                      <div key={i} style={{padding:"8px 0",borderBottom:i<Math.min(savedSleep.length,7)-1?`1px solid ${C.border}`:"none"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                          <div>
+                            <div style={{fontSize:12,fontWeight:600,color:C.text}}>{fmtDateFull(r.date)}</div>
+                            <div style={{fontSize:10,color:C.textMuted}}>{r.bedtime}→{r.waketime}</div>
                           </div>
-                          <div style={{fontSize:10,color:deepPct>=18?C.green:C.amber}}>深層{deepPct}%</div>
+                          <div style={{textAlign:"right"}}>
+                            <div style={{fontSize:13,fontWeight:700,color:r.total_min>=420?C.green:C.red}}>
+                              {Math.floor(r.total_min/60)}h{r.total_min%60}m
+                            </div>
+                            {r.score>0&&<div style={{fontSize:10,color:r.score>=80?C.green:r.score>=60?C.amber:C.red}}>評分 {r.score}</div>}
+                          </div>
+                        </div>
+                        <div style={{display:"flex",gap:10,marginTop:4,flexWrap:"wrap"}}>
+                          <span style={{fontSize:10,color:deepPct>=18?C.green:C.amber}}>深層{deepPct}%</span>
+                          {r.rem_min>0&&<span style={{fontSize:10,color:C.textMuted}}>REM {Math.round(r.rem_min/(r.total_min||1)*100)}%</span>}
+                          {r.spo2_avg>0&&<span style={{fontSize:10,color:r.spo2_avg>=95?C.green:C.amber}}>血氧{r.spo2_avg}%</span>}
+                          {r.spo2_below90_min>0&&<span style={{fontSize:10,color:C.red}}>低氧{r.spo2_below90_min}分</span>}
+                          {r.hr_avg>0&&<span style={{fontSize:10,color:C.textMuted}}>心跳{r.hr_avg}</span>}
                         </div>
                       </div>
                     );
                   })}
                 </div>
               )}
+
               {/* AI每週分析 */}
               <div className="card">
                 <div className="card-title">🤖 每週睡眠AI分析</div>
