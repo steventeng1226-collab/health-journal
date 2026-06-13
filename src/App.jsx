@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.51";
+const VERSION = "v4.52";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -2117,22 +2117,49 @@ const analyzeTrend = (key, data) => {
   const diffPct = prev !== 0 ? ((diff/prev)*100).toFixed(1) : 0;
   const isReverse = s.reverse; // HDL/eGFR 等越高越好
 
-  // 趨勢方向
+  // 趨勢方向（以狀態變化為主，不只看數值方向）
   let direction, color, icon, message;
 
   if (Math.abs(diffPct) < 3) {
+    // 變化 < 3% 視為持平
     direction = "stable";
-    icon = "➡️";
+    icon = "→";
     color = C.textMuted;
-    message = "持平";
-  } else if ((!isReverse && diff > 0) || (isReverse && diff < 0)) {
+    message = "穩定";
+  } else if (lastStatus === "ok" && prevStatus === "ok") {
+    // 兩次都正常：正常波動，不算惡化也不算改善
+    direction = "stable";
+    icon = "→";
+    color = C.textMuted;
+    message = "正常範圍內波動";
+  } else if (
+    (lastStatus === "warn" || lastStatus === "alert") &&
+    (prevStatus === "ok" || (prevStatus === "warn" && lastStatus === "alert"))
+  ) {
+    // 狀態變差：ok→warn 或 warn→alert
     direction = "worse";
-    icon = lastStatus === "alert" ? "🔴" : lastStatus === "warn" ? "⚠️" : "📈";
-    color = lastStatus === "alert" ? C.red : lastStatus === "warn" ? C.amber : C.textMuted;
-    message = `上升 ${Math.abs(diffPct)}%`;
-  } else {
+    icon = lastStatus === "alert" ? "🔴" : "⚠️";
+    color = lastStatus === "alert" ? C.red : C.amber;
+    message = `偏高 ${Math.abs(diffPct)}%`;
+  } else if (
+    lastStatus === "ok" &&
+    (prevStatus === "warn" || prevStatus === "alert")
+  ) {
+    // 狀態改善：warn/alert→ok
     direction = "better";
-    icon = lastStatus === "ok" ? "✅" : "📉";
+    icon = "✅";
+    color = C.green;
+    message = `回到正常範圍`;
+  } else if ((!isReverse && diff > 0) || (isReverse && diff < 0)) {
+    // 同狀態內數值惡化方向（如 warn 內繼續升高）
+    direction = "worse";
+    icon = "▲";
+    color = lastStatus === "alert" ? C.red : C.amber;
+    message = `持續上升 ${Math.abs(diffPct)}%`;
+  } else {
+    // 同狀態內數值改善方向
+    direction = "better";
+    icon = lastStatus === "ok" ? "✅" : "▼";
     color = lastStatus === "ok" ? C.green : C.amber;
     message = `下降 ${Math.abs(diffPct)}%`;
   }
