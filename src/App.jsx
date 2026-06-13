@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.47";
+const VERSION = "v4.48";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -5192,17 +5192,21 @@ ${exSummary}
     if(!loading)generateDailyGreeting();
   },[loading,sleepLog.length]);
 
-  // ── 載入後自動同步所有追蹤提醒日期（每天只跑一次，靜默）──
+  // ── 載入後自動同步所有追蹤提醒日期（session只跑一次）──
+  const reminderSyncDone=React.useRef(false);
   React.useEffect(()=>{
-    if(loading||!reminders||reminders.length===0)return;
+    if(loading)return;
+    if(!reminders||reminders.length===0)return;
     if(labHistory.length===0&&imagingHistory.length===0)return;
-    // 每天只跑一次
+    if(reminderSyncDone.current)return; // session內只跑一次
+    // 每天只跑一次（跨session保護）
     const todayStr=new Date().toISOString().split("T")[0];
-    const lastSync=localStorage.getItem("hj_reminder_sync_date");
-    if(lastSync===todayStr)return;
-    // 提醒關鍵字 → 從哪種記錄抓最新日期 + 間隔月數
+    if(localStorage.getItem("hj_reminder_sync_date")===todayStr){
+      reminderSyncDone.current=true;return;
+    }
+    reminderSyncDone.current=true; // 先鎖定，防止重複
     const SYNC=[
-      {remKeys:["肝功能","肝臟ALT","ALT","尿酸"],src:"lab",months:3},
+      {remKeys:["肝功能","ALT","尿酸"],src:"lab",months:3},
       {remKeys:["血液常規","血常規","WBC","血小板"],src:"lab",months:3},
       {remKeys:["腎功能","肌酸酐","eGFR"],src:"lab",months:6},
       {remKeys:["眼底","視網膜","OCT"],src:"img",imgKey:"眼",months:6},
@@ -5230,31 +5234,30 @@ ${exSummary}
       if(!rule)continue;
       const srcDate=rule.src==="lab"?latestLabDate:getLatestImgDate(rule.imgKey);
       if(!srcDate)continue;
-      // 只有當記錄日期比現有 lastDate 還新，才更新
       if(rem.lastDate&&String(srcDate)<=String(rem.lastDate))continue;
       const newNext=addMonths(srcDate,rule.months);
       if(!newNext)continue;
       updates.push({id:rem.id,lastDate:srcDate,nextDate:newNext});
     }
-    if(updates.length===0)return;
-    // 寫回 Sheets + 更新本地
+    if(updates.length===0){
+      localStorage.setItem("hj_reminder_sync_date",todayStr);
+      return;
+    }
     (async()=>{
-      let ok=0;
-      for(const u of updates){
-        const r=await api.post("updateReminder","reminders",u);
-        if(r?.success)ok++;
-      }
-      // 無論有無更新，記錄今日已跑（避免重複執行）
-      localStorage.setItem("hj_reminder_sync_date", todayStr);
-      if(ok>0){
-        setReminders(prev=>prev.map(rem=>{
-          const u=updates.find(x=>x.id===rem.id);
-          return u?{...rem,lastDate:u.lastDate,nextDate:u.nextDate}:rem;
-        }));
-        // 靜默更新，不顯示 Toast
-      }
+      // 直接更新本地state
+      const newReminders=reminders.map(rem=>{
+        const u=updates.find(x=>x.id===rem.id);
+        return u?{...rem,lastDate:u.lastDate,nextDate:u.nextDate}:rem;
+      });
+      setReminders(newReminders);
+      // 同步寫回 user_settings（App讀取來源）
+      try{
+        await api.saveSetting("reminders",JSON.stringify(newReminders));
+        localStorage.setItem("hj_reminders",JSON.stringify(newReminders));
+      }catch(e){console.log("reminder sync error",e);}
+      localStorage.setItem("hj_reminder_sync_date",todayStr);
     })();
-  },[loading,labHistory.length,imagingHistory.length]);
+  },[loading]);
 
   const AITab=()=>{
     const [aiQuestion,setAiQuestion]=useState("");
