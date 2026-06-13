@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.34";
+const VERSION = "v4.35";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -104,6 +104,12 @@ const normalizeDate=(d)=>{
   }
   if(s.length>=10)return s.slice(0,10);
   return s;
+};
+const normalizeHospital=(name)=>{
+  if(!name)return name;
+  const aliases=["海防國際","海防國際醫院","越南海防國際醫院","Hai Phong International","HIH","海防國際綜合醫院","BV DKQT HAI PHONG","hih"];
+  if(aliases.some(a=>name.includes(a)))return"海防國際綜合醫院";
+  return name;
 };
 const fmtDate=(d)=>{
   const s=normalizeDate(d);
@@ -1186,6 +1192,7 @@ export default function HealthJournal(){
     }catch(e){return DEFAULT_REMINDERS;}
   });
   const [editReminder,setEditReminder]=useState(null);
+  const [sleepLog,setSleepLog]=useState([]);
   const [showOverdue,setShowOverdue]=useState(false);
   const [trackItems,setTrackItems]=useState(()=>{
     try{ const s=localStorage.getItem("hj_track"); return s?JSON.parse(s):DEFAULT_TRACK; }
@@ -2146,8 +2153,9 @@ const analyzeTrend = (key, data) => {
           </div>
           <textarea className="paste-area"
             placeholder="長按此處 → 貼上&#10;&#10;範例：&#10;HbA1c: 5.8 %&#10;Glucose AC: 104 mg/dL&#10;ALT: 45 U/L&#10;..."
-            value={labInputText}
-            onChange={e=>setLabInputText(e.target.value)}
+            defaultValue={labInputText}
+            onBlur={e=>setLabInputText(e.target.value)}
+            onInput={e=>setLabInputText(e.target.value)}
           />
         </div>
 
@@ -2513,15 +2521,22 @@ const analyzeTrend = (key, data) => {
         ];
         const tip=SLEEP_TIPS[now.getDate()%SLEEP_TIPS.length];
         return(
-          <div style={{background:"rgba(90,180,255,0.06)",border:`1px solid rgba(90,180,255,0.2)`,borderRadius:12,padding:"10px 12px",marginBottom:8,
-            display:"flex",alignItems:"flex-start",gap:8,cursor:"pointer"}}
-            onClick={()=>{setTab("knowledge");setKbTab("articles");}}>
-            <div style={{fontSize:18,flexShrink:0}}>{tip.icon}</div>
-            <div style={{flex:1}}>
-              <div style={{fontSize:10,fontWeight:700,color:C.blue,marginBottom:2}}>😴 睡眠提醒</div>
-              <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{tip.text}</div>
+          <div style={{background:"rgba(90,180,255,0.06)",border:`1px solid rgba(90,180,255,0.2)`,borderRadius:12,padding:"10px 12px",marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"flex-start",gap:8,cursor:"pointer",marginBottom:6}}
+              onClick={()=>{setTab("knowledge");setKbTab("articles");}}>
+              <div style={{fontSize:18,flexShrink:0}}>{tip.icon}</div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.blue,marginBottom:2}}>😴 睡眠提醒</div>
+                <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{tip.text}</div>
+              </div>
+              <div style={{fontSize:10,color:C.blue,flexShrink:0}}>了解 →</div>
             </div>
-            <div style={{fontSize:10,color:C.blue,flexShrink:0}}>了解 →</div>
+            <button onClick={()=>{setTab("record");setRecordTab("sleep");}}
+              style={{width:"100%",padding:"7px",borderRadius:8,fontSize:11,cursor:"pointer",
+                background:"rgba(90,180,255,0.12)",border:`1px solid rgba(90,180,255,0.3)`,
+                color:C.blue,fontFamily:"'Noto Sans TC',sans-serif",fontWeight:600}}>
+              📊 記錄本週睡眠數據（Watch 7）→ 每週分析
+            </button>
           </div>
         );
       })()}
@@ -2530,23 +2545,58 @@ const analyzeTrend = (key, data) => {
         const alerts=detectHealthAlerts();
         if(alerts.length===0)return null;
         const colorMap={alert:C.red,warn:C.amber,info:C.blue};
+        const ALERT_DETAILS={
+          "肝臟需重點關注":{
+            impact:"脂肪肝若持續惡化可能進展到肝纖維化→肝硬化→肝癌。ALT持續偏高表示肝細胞正在受損。",
+            improve:"①每天快走30分鐘（最有效）②減少精緻碳水（麵食/白飯）③你的堅果奶昔+橄欖油方向正確④3個月複查ALT，目標降到40以下⑤咖啡每天1杯護肝有實證",
+          },
+          "血小板偏低":{
+            impact:"血小板負責止血。你的145偏低（正常150-450），加上服用Plavix抗血小板藥，出血風險疊加。輕微的影響：瘀青容易出現、傷口較難止血。嚴重情況（<50才要擔心）：自發性出血。",
+            improve:"①145屬於輕度偏低，無需特別緊張②告知醫師你的血小板數值，評估Plavix劑量是否需調整③避免劇烈碰撞運動④每次抽血追蹤，若持續下降再積極處理⑤增加深色蔬菜（菠菜、花椰菜）補充維生素K",
+          },
+          "代謝負擔警訊":{
+            impact:"ALT與尿酸同時偏高是代謝症候群的典型表現。肝臟同時處理脂肪代謝和嘌呤代謝的負擔，兩者超標代表代謝系統整體超負荷。",
+            improve:"①最重要：減重（體重每降1kg，尿酸降約0.3mg/dL）②大量飲水（每天>2000ml，幫助尿酸排出）③減少高嘌呤食物（內臟、海鮮、啤酒）④你的低碳飲食方向正確",
+          },
+          "待複評：左心室後壁":{
+            impact:"LVPWd影像值18.3mm超過正常12mm，但醫師報告判正常，可能是測量角度問題或確實有高血壓性心臟病早期表現。目前不確定，需要第二意見。",
+            improve:"①回台灣安排心臟科複查心臟超音波②告知醫師這個數值和你的血壓130/90③繼續服用舒脈康控制血壓，這是最重要的預防",
+          },
+        };
+        const [expandedAlert,setExpandedAlert]=React.useState(null);
         return(
           <div style={{marginBottom:8}}>
             <div style={{fontSize:11,fontWeight:700,color:C.amber,letterSpacing:1,marginBottom:6,
               display:"flex",alignItems:"center",gap:6}}>
               🚨 健康警報（{alerts.length}）
-              <span style={{fontSize:9,color:C.textMuted,fontWeight:400}}>自動偵測異常與趨勢</span>
+              <span style={{fontSize:9,color:C.textMuted,fontWeight:400}}>點選了解影響與改善</span>
             </div>
-            {alerts.map((a,i)=>(
-              <div key={i} style={{background:`${colorMap[a.level]}11`,border:`1px solid ${colorMap[a.level]}44`,
-                borderRadius:10,padding:"9px 11px",marginBottom:6,display:"flex",alignItems:"flex-start",gap:8}}>
-                <span style={{fontSize:16,flexShrink:0}}>{a.icon}</span>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:12,fontWeight:700,color:colorMap[a.level],marginBottom:2}}>{a.title}</div>
-                  <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{a.desc}</div>
+            {alerts.map((a,i)=>{
+              const detail=ALERT_DETAILS[a.title];
+              const isOpen=expandedAlert===i;
+              return(
+                <div key={i} style={{background:`${colorMap[a.level]}11`,border:`1px solid ${colorMap[a.level]}44`,
+                  borderRadius:10,padding:"9px 11px",marginBottom:6}}>
+                  <div style={{display:"flex",alignItems:"flex-start",gap:8,cursor:detail?"pointer":"default"}}
+                    onClick={()=>detail&&setExpandedAlert(isOpen?null:i)}>
+                    <span style={{fontSize:16,flexShrink:0}}>{a.icon}</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:12,fontWeight:700,color:colorMap[a.level],marginBottom:2}}>{a.title}</div>
+                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{a.desc}</div>
+                    </div>
+                    {detail&&<span style={{fontSize:11,color:colorMap[a.level],flexShrink:0}}>{isOpen?"▲":"▼"}</span>}
+                  </div>
+                  {isOpen&&detail&&(
+                    <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${colorMap[a.level]}33`}}>
+                      <div style={{fontSize:11,fontWeight:700,color:C.red,marginBottom:4}}>⚠️ 對身體的影響</div>
+                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.7,marginBottom:8}}>{detail.impact}</div>
+                      <div style={{fontSize:11,fontWeight:700,color:C.green,marginBottom:4}}>✅ 改善方法</div>
+                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.7}}>{detail.improve}</div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         );
       })()}
@@ -2870,9 +2920,12 @@ const analyzeTrend = (key, data) => {
                     <div style={{flex:1,textAlign:"right"}}>
                       <span style={{fontSize:15,fontWeight:700,color:r.statusColor}}>{r.latest}</span>
                     </div>
-                    {/* 箭頭 */}
-                    <div style={{flex:"0 0 44px",textAlign:"right",fontSize:12,fontWeight:700,color:r.trendColor}}>
-                      {r.trend}{r.prev!=null&&r.trend!=="—"&&r.trend!=="→"?` ${Math.abs(r.latest-r.prev).toFixed(r.latest<10?1:0)}`:""}
+                    {/* 箭頭+狀態 */}
+                    <div style={{flex:"0 0 54px",textAlign:"right"}}>
+                      <div style={{fontSize:12,fontWeight:700,color:r.trendColor}}>{r.trend}</div>
+                      <div style={{fontSize:9,color:r.trendColor,marginTop:1}}>
+                        {r.trend==="→"?"穩定":r.trendColor===C.green?"改善中":"惡化"}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -3479,8 +3532,8 @@ const analyzeTrend = (key, data) => {
                     <span style={{fontSize:24}}>{record._icon}</span>
                     <div style={{flex:1}}>
                       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
-                        <span style={{fontSize:14,fontWeight:600,color:C.text}}>{fmtDate(record.date)}</span>
-                        <span style={{fontSize:12,color:C.textMuted}}>{record.hospital}</span>
+                        <span style={{fontSize:14,fontWeight:600,color:C.text}}>{fmtDateFull(record.date)}</span>
+                        <span style={{fontSize:12,color:C.textMuted}}>{normalizeHospital(record.hospital)}</span>
                         {record.fasting&&<span style={{fontSize:10,color:C.textMuted}}>({record.fasting})</span>}
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -3907,7 +3960,7 @@ const analyzeTrend = (key, data) => {
 
   // ── 記錄 ───────────────────────────────────────────────
   const RecordTab=()=>{
-    const SUBS=[{key:"history",label:"📂歷史"},{key:"glucose",label:"🩸血糖"},{key:"bp",label:"💓血壓"},{key:"weight",label:"⚖️體重"},{key:"lab",label:"📋抽血"},{key:"imaging",label:"🔬影像"},{key:"meal",label:"🍱飲食"},{key:"exercise",label:"🏃運動"}];
+    const SUBS=[{key:"history",label:"📂歷史"},{key:"glucose",label:"🩸血糖"},{key:"bp",label:"💓血壓"},{key:"weight",label:"⚖️體重"},{key:"lab",label:"📋抽血"},{key:"imaging",label:"🔬影像"},{key:"meal",label:"🍱飲食"},{key:"exercise",label:"🏃運動"},{key:"sleep",label:"😴睡眠"}];
     return(
       <div className="fade-in" style={{padding:"16px 16px 80px"}}>
         <div className="section-header">📝 記錄</div>
@@ -4148,6 +4201,164 @@ const analyzeTrend = (key, data) => {
             <button className="btn-primary" onClick={()=>showToast("✅ 運動記錄已儲存")}>儲存</button>
           </div>
         )}
+        {recordTab==="sleep"&&(()=>{
+          const [sleepForm,setSleepForm]=React.useState({
+            date:today(),totalMin:360,deepMin:0,remMin:0,lightMin:0,awakeMin:0,
+            bedTime:"23:30",wakeTime:"06:00",note:""
+          });
+          const [sleepAnalysis,setSleepAnalysis]=React.useState(null);
+          const [analyzing,setAnalyzing]=React.useState(false);
+          const savedSleep=sleepLog.filter(r=>r.date).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+          const analyzeSleep=async()=>{
+            const key=localStorage.getItem("hj_apikey")||apiKey||"";
+            if(!key){showToast("⚠️ 請先設定API金鑰");return;}
+            setAnalyzing(true);
+            try{
+              const weekData=savedSleep.slice(0,7).map(r=>
+                `${r.date}: 總${r.totalMin}分/深層${r.deepMin}分(${Math.round(r.deepMin/r.totalMin*100)||0}%)/REM ${r.remMin}分/清醒${r.awakeMin}分`
+              ).join("\n");
+              const prompt=`你是睡眠醫學專家，請分析以下Samsung Watch 7睡眠數據，用繁體中文回答，不用markdown符號：
+
+近期睡眠數據：
+${weekData||"尚無記錄"}
+
+病患背景：55歲男性，越南工作，平均睡眠5小時58分，深層睡眠目前10-15%偏低，目標18-22%。
+已知影響：深層睡眠不足→血糖控制差（HbA1c 5.7%臨界）、血壓藥效打折、睾固酮下降。
+偶爾服用悠樂丁Eurodin 2mg（BZD，抑制深層睡眠）。
+
+請分析：
+一、本週睡眠總評（總時數/深層比例達標情況）
+二、最差的夜晚（是否有使用悠樂丁？）
+三、對身體的具體影響（結合你的血糖/血壓/荷爾蒙狀況）
+四、本週三個改善行動（具體可執行）
+五、長期追蹤目標（何時深層睡眠能達到18%）`;
+              const result=await callClaude([{role:"user",content:prompt}],1200);
+              setSleepAnalysis(result);
+            }catch(e){showToast("❌ "+e.message);}
+            setAnalyzing(false);
+          };
+          const saveSleepRecord=async()=>{
+            const r=await api.post("append","sleep_log",{
+              id:Date.now(),date:sleepForm.date,
+              totalMin:sleepForm.totalMin,deepMin:sleepForm.deepMin,
+              remMin:sleepForm.remMin,lightMin:sleepForm.lightMin,
+              awakeMin:sleepForm.awakeMin,bedTime:sleepForm.bedTime,
+              wakeTime:sleepForm.wakeTime,note:sleepForm.note,
+            });
+            if(r?.success){
+              setSleepLog(prev=>[...prev,{...sleepForm}]);
+              showToast("✅ 睡眠記錄已儲存");
+            }else showToast("❌ 儲存失敗，請確認Sheets有sleep_log分頁");
+          };
+          return(
+            <div>
+              <div className="card" style={{marginBottom:12}}>
+                <div className="card-title">😴 輸入 Watch 7 睡眠數據</div>
+                <div style={{fontSize:11,color:C.textMuted,marginBottom:10,lineHeight:1.6}}>
+                  從三星健康App → 睡眠 → 選日期 → 輸入各階段時間
+                </div>
+                <div className="grid-2" style={{marginBottom:8}}>
+                  <div><div className="field-label">日期</div>
+                    <input className="input-field" type="date" value={sleepForm.date}
+                      onChange={e=>setSleepForm(v=>({...v,date:e.target.value}))}/></div>
+                  <div><div className="field-label">總睡眠時間（分鐘）</div>
+                    <input className="input-field" type="number" value={sleepForm.totalMin}
+                      onChange={e=>setSleepForm(v=>({...v,totalMin:parseInt(e.target.value)||0}))}/></div>
+                </div>
+                <div className="grid-2" style={{marginBottom:8}}>
+                  <div><div className="field-label">🌙 深層睡眠（分鐘）</div>
+                    <input className="input-field" type="number" value={sleepForm.deepMin}
+                      onChange={e=>setSleepForm(v=>({...v,deepMin:parseInt(e.target.value)||0}))}/></div>
+                  <div><div className="field-label">💭 REM快速動眼（分鐘）</div>
+                    <input className="input-field" type="number" value={sleepForm.remMin}
+                      onChange={e=>setSleepForm(v=>({...v,remMin:parseInt(e.target.value)||0}))}/></div>
+                </div>
+                <div className="grid-2" style={{marginBottom:8}}>
+                  <div><div className="field-label">😪 淺層睡眠（分鐘）</div>
+                    <input className="input-field" type="number" value={sleepForm.lightMin}
+                      onChange={e=>setSleepForm(v=>({...v,lightMin:parseInt(e.target.value)||0}))}/></div>
+                  <div><div className="field-label">⚡ 清醒時間（分鐘）</div>
+                    <input className="input-field" type="number" value={sleepForm.awakeMin}
+                      onChange={e=>setSleepForm(v=>({...v,awakeMin:parseInt(e.target.value)||0}))}/></div>
+                </div>
+                <div className="grid-2" style={{marginBottom:8}}>
+                  <div><div className="field-label">🛏️ 入睡時間</div>
+                    <input className="input-field" type="time" value={sleepForm.bedTime}
+                      onChange={e=>setSleepForm(v=>({...v,bedTime:e.target.value}))}/></div>
+                  <div><div className="field-label">☀️ 起床時間</div>
+                    <input className="input-field" type="time" value={sleepForm.wakeTime}
+                      onChange={e=>setSleepForm(v=>({...v,wakeTime:e.target.value}))}/></div>
+                </div>
+                {/* 即時計算 */}
+                {sleepForm.totalMin>0&&(
+                  <div style={{background:C.bg,borderRadius:8,padding:"8px 10px",marginBottom:10}}>
+                    <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>即時計算</div>
+                    <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+                      {[
+                        {label:"深層%",v:`${Math.round(sleepForm.deepMin/sleepForm.totalMin*100)}%`,
+                          color:sleepForm.deepMin/sleepForm.totalMin>=0.18?C.green:C.amber},
+                        {label:"REM%",v:`${Math.round(sleepForm.remMin/sleepForm.totalMin*100)}%`,
+                          color:sleepForm.remMin/sleepForm.totalMin>=0.20?C.green:C.amber},
+                        {label:"總計",v:`${Math.floor(sleepForm.totalMin/60)}h${sleepForm.totalMin%60}m`,
+                          color:sleepForm.totalMin>=420?C.green:C.red},
+                      ].map(s=>(
+                        <div key={s.label} style={{textAlign:"center"}}>
+                          <div style={{fontSize:14,fontWeight:700,color:s.color}}>{s.v}</div>
+                          <div style={{fontSize:10,color:C.textMuted}}>{s.label}</div>
+                        </div>
+                      ))}
+                      <div style={{textAlign:"center"}}>
+                        <div style={{fontSize:11,color:sleepForm.deepMin/sleepForm.totalMin>=0.18?C.green:C.amber,fontWeight:700}}>
+                          {sleepForm.deepMin/sleepForm.totalMin>=0.18?"✅ 達標":"⚠️ 深層不足"}
+                        </div>
+                        <div style={{fontSize:10,color:C.textMuted}}>目標深層≥18%</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <input className="input-field" placeholder="備註（是否吃悠樂丁？壓力大？）" style={{marginBottom:10}}
+                  value={sleepForm.note} onChange={e=>setSleepForm(v=>({...v,note:e.target.value}))}/>
+                <button className="btn-primary" onClick={saveSleepRecord}>💾 儲存睡眠記錄</button>
+              </div>
+              {/* 近期睡眠記錄 */}
+              {savedSleep.length>0&&(
+                <div className="card" style={{marginBottom:12}}>
+                  <div className="card-title">近期睡眠記錄</div>
+                  {savedSleep.slice(0,7).map((r,i)=>{
+                    const deepPct=Math.round(r.deepMin/(r.totalMin||1)*100);
+                    return(
+                      <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                        padding:"7px 0",borderBottom:i<savedSleep.length-1?`1px solid ${C.border}`:"none"}}>
+                        <div>
+                          <div style={{fontSize:12,fontWeight:600,color:C.text}}>{fmtDateFull(r.date)}</div>
+                          <div style={{fontSize:10,color:C.textMuted}}>{r.bedTime}→{r.wakeTime}</div>
+                        </div>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{fontSize:13,fontWeight:700,color:r.totalMin>=420?C.green:C.red}}>
+                            {Math.floor(r.totalMin/60)}h{r.totalMin%60}m
+                          </div>
+                          <div style={{fontSize:10,color:deepPct>=18?C.green:C.amber}}>深層{deepPct}%</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {/* AI每週分析 */}
+              <div className="card">
+                <div className="card-title">🤖 每週睡眠AI分析</div>
+                {sleepAnalysis
+                  ?<div style={{fontSize:12,lineHeight:1.9,whiteSpace:"pre-wrap",color:C.text}}>{sleepAnalysis}</div>
+                  :<div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>
+                    輸入至少1筆睡眠記錄後，讓AI分析本週睡眠品質、對身體的影響，並給出具體改善建議。
+                  </div>}
+                <button className="btn-primary" style={{marginTop:10}} onClick={analyzeSleep} disabled={analyzing||savedSleep.length===0}>
+                  {analyzing?"⏳ 分析中...":"📊 產生本週睡眠分析"}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   };
@@ -5202,6 +5413,30 @@ ${imgSummary}
                     fontFamily:"'Noto Sans TC',sans-serif"}}>
                   {checkedToday?"✅ 已打卡":"打卡"}
                 </button>
+              </div>
+              {/* 早餐整體策略摘要 */}
+              <div className="card" style={{marginBottom:12,background:"rgba(46,204,138,0.04)",border:`1px solid ${C.green}44`}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                  <span style={{fontSize:18}}>🎯</span>
+                  <div style={{fontSize:13,fontWeight:700,color:C.green}}>早餐策略總目標</div>
+                </div>
+                <div style={{fontSize:12,color:C.textMuted,lineHeight:1.8,marginBottom:8}}>
+                  這份早餐是針對你的<span style={{color:C.amber}}>三大弱項</span>設計的「治療性飲食」，不是普通早餐。
+                </div>
+                {[
+                  {icon:"🩸",label:"血糖控制",desc:"蛋白質→好油→纖維→水果的進食順序，讓血糖峰值降低20-30%。目標：HbA1c從5.7%降回正常值5.6%以下"},
+                  {icon:"❤️",label:"升高HDL",desc:"五種好油來源（酪梨/橄欖油/核桃/杏仁/亞麻籽）持續攝取，8週驗血看HDL是否從35升高到40"},
+                  {icon:"🫁",label:"護肝降ALT",desc:"黑咖啡護肝+低碳飲食減少肝臟負擔。目標：ALT從63降到40以下，配合不吃白飯策略"},
+                  {icon:"🔥",label:"持續的關鍵",desc:"每天吃才有效。打卡記錄用於追蹤達成率，8週後抽血驗證效果——這是你唯一能知道策略有沒有效的方法"},
+                ].map((item,i)=>(
+                  <div key={i} style={{display:"flex",gap:8,padding:"6px 0",borderTop:i===0?`1px solid ${C.border}`:`1px solid ${C.border}`}}>
+                    <span style={{fontSize:14,flexShrink:0}}>{item.icon}</span>
+                    <div>
+                      <div style={{fontSize:11,fontWeight:700,color:C.text,marginBottom:1}}>{item.label}</div>
+                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{item.desc}</div>
+                    </div>
+                  </div>
+                ))}
               </div>
               <div style={{background:"rgba(46,204,138,0.06)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:12,fontSize:12,color:C.textMuted,lineHeight:1.7}}>
                 💡 依吃的順序排列 · 綠標對應雷達圖弱項 · 每天執行+定期抽血驗證效果
