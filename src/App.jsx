@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.30";
+const VERSION = "v4.34";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -480,6 +480,53 @@ const IMAGING_TYPES = [
   "腦電圖EEG","神經傳導檢查","眼科綜合","眼底攝影","視野檢查",
   "大腸鏡","胃鏡","X光","骨密度","住院摘要","其他"
 ];
+
+// 器官系統分組（影像跨年串連用）
+const ORGAN_SYSTEMS = [
+  {
+    key:"cardio", icon:"🫀", name:"心血管系統",
+    types:["心臟超音波","心臟MRI","心臟CT","頸動脈超音波","腹部CTA血管造影"],
+    watch:["LAD1冠狀動脈35%狹窄","雙側髂總動脈瘤","頸動脈輕度粥樣硬化"],
+    nextCheck:"2025-09-19", interval:"每6個月心臟科",
+  },
+  {
+    key:"abdomen", icon:"🫁", name:"肝膽腸胃腎",
+    types:["腹部超音波","腹部MRI","腹部CT"],
+    watch:["脂肪肝 Grade II（G1→G2惡化）","右腎囊腫9mm（追大小）","雙腎鈣化點"],
+    nextCheck:"2025-09-19", interval:"每6個月腹超",
+  },
+  {
+    key:"neuro", icon:"🧠", name:"神經系統",
+    types:["腦部MRI","頭部CT","腦電圖EEG","神經傳導檢查","脊椎MRI"],
+    watch:["左側眼瞼反射R1傳導異常（已緩解）"],
+    nextCheck:"", interval:"症狀復發再追蹤",
+  },
+  {
+    key:"eye", icon:"👁️", name:"眼睛",
+    types:["眼科綜合","眼底攝影","視野檢查"],
+    watch:["右眼視野輕度異常","視網膜退行性變化","黃斑部亮度差（需葉黃素）"],
+    nextCheck:"2025-07-19", interval:"視野3-6個月、眼底6個月",
+  },
+  {
+    key:"lung", icon:"🌬️", name:"肺部",
+    types:["肺部CT","X光"],
+    watch:[],
+    nextCheck:"", interval:"每年X光",
+  },
+  {
+    key:"gi", icon:"🔬", name:"腸胃鏡",
+    types:["大腸鏡","胃鏡"],
+    watch:[],
+    nextCheck:"", interval:"大腸鏡5年、胃鏡視情況",
+  },
+  {
+    key:"other", icon:"📋", name:"其他",
+    types:["甲狀腺超音波","骨密度","住院摘要","其他"],
+    watch:[],
+    nextCheck:"", interval:"",
+  },
+];
+
 const KNOWLEDGE_ITEMS=[
   // 🩸 血糖
   {key:"hba1c",group:"🩸 血糖",title:"HbA1c 糖化血色素",icon:"🩸",color:C.red,fullName:"Glycated Hemoglobin",desc:"反映過去2-3個月的平均血糖水準，不受單次波動影響，是糖尿病診斷與追蹤的黃金指標。",range:"正常 < 5.7%　糖尿病前期 5.7–6.4%　糖尿病 ≥ 6.5%",high:"長期血糖偏高，增加心血管、腎臟、視網膜等併發症風險。",low:"通常無問題，過低（<4%）可能代表溶血性貧血。",tips:["每3個月追蹤一次","減少精緻澱粉：白飯、麵包、含糖飲料","飯後30分鐘散步15分鐘","體重每減1kg，HbA1c約可降0.1%"],related:"與空腹血糖、體重、三酸甘油酯密切相關"},
@@ -1101,7 +1148,7 @@ export default function HealthJournal(){
     try{return JSON.parse(localStorage.getItem("hj_articles")||"[]");}catch(e){return[];}
   });
   const [showAddArticle,setShowAddArticle]=useState(false);
-  const [trendItem,setTrendItem]=useState("lab");
+  const [trendItem,setTrendItem]=useState("overview");
   const [toast,setToast]=useState("");
   const [loading,setLoading]=useState(false);
   const [isOnline,setIsOnline]=useState(navigator.onLine);
@@ -1197,6 +1244,21 @@ export default function HealthJournal(){
     return null;
   });
   const [aiLoading,setAiLoading]=useState(false);
+  const [overallReport,setOverallReport]=useState(()=>{
+    try{
+      const cache=JSON.parse(localStorage.getItem("hj_overall_cache")||"null");
+      if(cache)return cache.report;
+    }catch(e){}
+    return null;
+  });
+  const [overallDate,setOverallDate]=useState(()=>{
+    try{
+      const cache=JSON.parse(localStorage.getItem("hj_overall_cache")||"null");
+      if(cache)return cache.date;
+    }catch(e){}
+    return null;
+  });
+  const [overallLoading,setOverallLoading]=useState(false);
   const [showApiInput,setShowApiInput]=useState(false);
   const photoInputRef=useRef();
 
@@ -2463,6 +2525,31 @@ const analyzeTrend = (key, data) => {
           </div>
         );
       })()}
+      {/* 健康警報（階段四自動標記）*/}
+      {(()=>{
+        const alerts=detectHealthAlerts();
+        if(alerts.length===0)return null;
+        const colorMap={alert:C.red,warn:C.amber,info:C.blue};
+        return(
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.amber,letterSpacing:1,marginBottom:6,
+              display:"flex",alignItems:"center",gap:6}}>
+              🚨 健康警報（{alerts.length}）
+              <span style={{fontSize:9,color:C.textMuted,fontWeight:400}}>自動偵測異常與趨勢</span>
+            </div>
+            {alerts.map((a,i)=>(
+              <div key={i} style={{background:`${colorMap[a.level]}11`,border:`1px solid ${colorMap[a.level]}44`,
+                borderRadius:10,padding:"9px 11px",marginBottom:6,display:"flex",alignItems:"flex-start",gap:8}}>
+                <span style={{fontSize:16,flexShrink:0}}>{a.icon}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:12,fontWeight:700,color:colorMap[a.level],marginBottom:2}}>{a.title}</div>
+                  <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{a.desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
       <div style={{fontSize:11,color:C.textMuted,letterSpacing:2,marginBottom:8}}>LATEST VALUES</div>
       <div className="grid-2">
         <div className="card" style={{cursor:"pointer",padding:"10px 12px"}} onClick={()=>{setTab("trend");setTrendItem("glucose")}}>
@@ -2685,7 +2772,7 @@ const analyzeTrend = (key, data) => {
 
   // ── 趨勢 ───────────────────────────────────────────────
   const TrendTab=()=>{
-    const BTNS=[{key:"radar",label:"雷達"},{key:"glucose",label:"血糖"},{key:"bp",label:"血壓"},{key:"weight",label:"體重"},{key:"lab",label:"抽血指標"}];
+    const BTNS=[{key:"overview",label:"📊總覽"},{key:"radar",label:"雷達"},{key:"organ",label:"🫀器官"},{key:"glucose",label:"血糖"},{key:"bp",label:"血壓"},{key:"weight",label:"體重"},{key:"lab",label:"抽血指標"}];
     const gDaily=glucoseHistory.filter(r=>r.source!=="醫院").map(r=>({date:r.date,v:parseFloat(r.value_mgdl)}));
     const gHosp=glucoseHistory.filter(r=>r.source==="醫院").map(r=>({date:r.date,v:parseFloat(r.value_mgdl)}));
     const bpDaily=bpHistory.filter(r=>r.source!=="醫院");
@@ -2694,12 +2781,108 @@ const analyzeTrend = (key, data) => {
     return(
       <div className="fade-in" style={{padding:"16px 16px 80px"}}>
         <div className="section-header">📈 健康趨勢</div>
-        <div style={{display:"flex",gap:8,marginBottom:16}}>
+        <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
           {BTNS.map(t=>(
             <button key={t.key} className={`btn-sm ${trendItem===t.key?"active":""}`}
-              style={{flex:1,padding:"8px 4px",fontSize:11}} onClick={()=>setTrendItem(t.key)}>{t.label}</button>
+              style={{flex:"1 1 28%",padding:"8px 4px",fontSize:11}} onClick={()=>setTrendItem(t.key)}>{t.label}</button>
           ))}
         </div>
+        {trendItem==="overview"&&(()=>{
+          const sorted=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+          // 核心指標定義：key, 標籤, 單位, 方向(low=越低越好/high=越高越好), 目標值, 警戒值
+          const CORE=[
+            {k:"hba1c",label:"HbA1c",unit:"%",dir:"low",good:5.7,bad:6.5},
+            {k:"glucose_ac",label:"空腹血糖",unit:"",dir:"low",good:100,bad:126},
+            {k:"hdl",label:"HDL",unit:"",dir:"high",good:40,bad:35},
+            {k:"ldl",label:"LDL",unit:"",dir:"low",good:100,bad:160},
+            {k:"tg",label:"三酸甘油酯",unit:"",dir:"low",good:150,bad:200},
+            {k:"alt",label:"ALT肝",unit:"",dir:"low",good:40,bad:80},
+            {k:"ast",label:"AST肝",unit:"",dir:"low",good:37,bad:80},
+            {k:"uric_acid",label:"尿酸",unit:"",dir:"low",good:7.0,bad:8.5},
+            {k:"creatinine",label:"肌酸酐",unit:"",dir:"low",good:1.0,bad:1.3},
+            {k:"wbc",label:"白血球",unit:"",dir:"mid",good:5.5,lowB:4,highB:10},
+            {k:"platelet",label:"血小板",unit:"",dir:"high",good:200,bad:150},
+            {k:"crp",label:"CRP發炎",unit:"",dir:"low",good:1,bad:3},
+          ];
+          const Spark=({series})=>{
+            if(series.length<2)return <div style={{width:60,height:24}}/>;
+            const vals=series.map(s=>s.v);
+            const mn=Math.min(...vals),mx=Math.max(...vals),rg=mx-mn||1;
+            const W=60,H=24;
+            const pts=series.map((s,i)=>{
+              const x=series.length===1?W/2:(i/(series.length-1))*W;
+              const y=H-((s.v-mn)/rg)*(H-4)-2;
+              return `${x.toFixed(1)},${y.toFixed(1)}`;
+            }).join(" ");
+            return(
+              <svg width={W} height={H} style={{display:"block"}}>
+                <polyline points={pts} fill="none" stroke={C.blue} strokeWidth="1.5"
+                  strokeLinejoin="round" strokeLinecap="round"/>
+                {series.map((s,i)=>{
+                  const x=series.length===1?W/2:(i/(series.length-1))*W;
+                  const y=H-((s.v-mn)/rg)*(H-4)-2;
+                  return <circle key={i} cx={x} cy={y} r={i===series.length-1?2.2:1.2}
+                    fill={i===series.length-1?C.green:C.blue}/>;
+                })}
+              </svg>
+            );
+          };
+          const rows=CORE.map(c=>{
+            const series=sorted.filter(r=>r[c.k]!==null&&r[c.k]!==undefined&&r[c.k]!=="")
+              .map(r=>({date:r.date,v:parseFloat(r[c.k])})).filter(s=>!isNaN(s.v));
+            if(series.length===0)return null;
+            const latest=series[series.length-1].v;
+            const prev=series.length>1?series[series.length-2].v:null;
+            // 方向判斷
+            let trend="—",trendColor=C.textMuted;
+            if(prev!=null){
+              const diff=latest-prev;
+              const improving=c.dir==="low"?diff<0:c.dir==="high"?diff>0:Math.abs(latest-c.good)<Math.abs(prev-c.good);
+              if(Math.abs(diff)<0.01){trend="→";trendColor=C.textMuted;}
+              else if(improving){trend=diff>0?"▲":"▼";trendColor=C.green;}
+              else{trend=diff>0?"▲":"▼";trendColor=C.red;}
+            }
+            // 狀態色（依目標/警戒）
+            let statusColor=C.green;
+            if(c.dir==="low"){statusColor=latest>=c.bad?C.red:latest>c.good?C.amber:C.green;}
+            else if(c.dir==="high"){statusColor=latest<=c.bad?C.red:latest<c.good?C.amber:C.green;}
+            else{statusColor=(latest<c.lowB||latest>c.highB)?C.amber:C.green;}
+            return{...c,series,latest,prev,trend,trendColor,statusColor};
+          }).filter(Boolean);
+          if(rows.length===0)return <div className="card"><div className="empty-state">尚無抽血資料</div></div>;
+          return(
+            <div>
+              <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7,marginBottom:12,
+                background:"rgba(46,204,138,0.06)",border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px"}}>
+                📊 所有核心指標一覽。左側色點為目前狀態（綠正常/橘注意/紅警戒），右側箭頭為相對上次的方向（綠=改善、紅=惡化）。
+              </div>
+              <div className="card" style={{padding:"4px 0"}}>
+                {rows.map((r,idx)=>(
+                  <div key={r.k} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 12px",
+                    borderBottom:idx<rows.length-1?`1px solid ${C.border}`:"none"}}>
+                    {/* 狀態點 */}
+                    <div style={{width:8,height:8,borderRadius:"50%",background:r.statusColor,flexShrink:0}}/>
+                    {/* 名稱 */}
+                    <div style={{flex:"0 0 72px",fontSize:12,color:C.text}}>{r.label}</div>
+                    {/* sparkline */}
+                    <div style={{flex:"0 0 60px"}}><Spark series={r.series}/></div>
+                    {/* 數值 */}
+                    <div style={{flex:1,textAlign:"right"}}>
+                      <span style={{fontSize:15,fontWeight:700,color:r.statusColor}}>{r.latest}</span>
+                    </div>
+                    {/* 箭頭 */}
+                    <div style={{flex:"0 0 44px",textAlign:"right",fontSize:12,fontWeight:700,color:r.trendColor}}>
+                      {r.trend}{r.prev!=null&&r.trend!=="—"&&r.trend!=="→"?` ${Math.abs(r.latest-r.prev).toFixed(r.latest<10?1:0)}`:""}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{fontSize:10,color:C.textMuted,marginTop:8,textAlign:"center"}}>
+                共 {rows.length} 項核心指標 · 點「抽血指標」可看個別詳細趨勢
+              </div>
+            </div>
+          );
+        })()}
         {trendItem==="radar"&&(()=>{
           const sortedLabs=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
           const [compareIdx,setCompareIdx]=React.useState(sortedLabs.length>1?sortedLabs.length-2:-1);
@@ -2782,6 +2965,90 @@ const analyzeTrend = (key, data) => {
               <div style={{fontSize:10,color:C.textMuted,marginTop:8,lineHeight:1.6}}>
                 計分方式：各指標與理想值比較換算0-10分（10=理想、5=異常臨界），面向內多指標取平均。心血管取近7筆血壓均值。
               </div>
+            </div>
+          );
+        })()}
+        {trendItem==="organ"&&(()=>{
+          const today=new Date();
+          // 把每筆影像歸到對應器官系統
+          const byOrgan=ORGAN_SYSTEMS.map(sys=>{
+            const records=imagingHistory
+              .filter(r=>sys.types.includes(r.type))
+              .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+            return {...sys, records};
+          });
+          return(
+            <div>
+              <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7,marginBottom:12,
+                background:"rgba(90,180,255,0.06)",border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px"}}>
+                🩺 依器官系統串連歷年影像，追蹤每個部位的變化與下次檢查時間。紅字為需持續監控的項目。
+              </div>
+              {byOrgan.map(sys=>{
+                if(sys.records.length===0&&sys.watch.length===0)return null;
+                // 下次檢查到期判斷
+                const nextD=sys.nextCheck?new Date(sys.nextCheck):null;
+                const overdue=nextD&&nextD<=today;
+                const daysLeft=nextD?Math.ceil((nextD-today)/(1000*60*60*24)):null;
+                return(
+                  <div key={sys.key} className="card" style={{marginBottom:10}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <span style={{fontSize:20}}>{sys.icon}</span>
+                        <span style={{fontSize:14,fontWeight:700,color:C.text}}>{sys.name}</span>
+                      </div>
+                      <span style={{fontSize:10,color:C.textMuted,background:C.bg,borderRadius:8,padding:"2px 8px"}}>
+                        {sys.records.length} 次檢查
+                      </span>
+                    </div>
+                    {/* 需監控項目 */}
+                    {sys.watch.length>0&&(
+                      <div style={{marginBottom:8,padding:"8px 10px",background:"rgba(255,107,107,0.06)",borderRadius:8}}>
+                        <div style={{fontSize:10,fontWeight:700,color:C.red,marginBottom:4}}>⚠️ 追蹤中</div>
+                        {sys.watch.map((w,i)=>(
+                          <div key={i} style={{fontSize:11,color:C.red,lineHeight:1.6}}>• {w}</div>
+                        ))}
+                      </div>
+                    )}
+                    {/* 歷年檢查時間軸 */}
+                    {sys.records.length>0?(
+                      <div style={{position:"relative",paddingLeft:16}}>
+                        <div style={{position:"absolute",left:4,top:4,bottom:4,width:2,background:C.border}}/>
+                        {sys.records.map((r,i)=>(
+                          <div key={i} style={{position:"relative",marginBottom:8,cursor:"pointer"}}
+                            onClick={()=>{setTab("record");setRecordTab("history");}}>
+                            <div style={{position:"absolute",left:-15,top:4,width:8,height:8,borderRadius:"50%",
+                              background:i===0?C.green:C.textMuted,border:`2px solid ${C.bgCard}`}}/>
+                            <div style={{fontSize:12,fontWeight:600,color:i===0?C.green:C.text}}>
+                              {r.date} · {r.type}
+                            </div>
+                            <div style={{fontSize:11,color:C.textMuted,lineHeight:1.5,marginTop:2}}>
+                              {(r.finding||"").slice(0,55)}{(r.finding||"").length>55?"...":""}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ):(
+                      <div style={{fontSize:11,color:C.textMuted,fontStyle:"italic"}}>尚無此系統影像記錄</div>
+                    )}
+                    {/* 下次檢查 */}
+                    {sys.interval&&(
+                      <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`,
+                        display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                        <span style={{fontSize:11,color:C.textMuted}}>⏰ {sys.interval}</span>
+                        {nextD&&(
+                          <span style={{fontSize:11,fontWeight:700,
+                            color:overdue?C.red:daysLeft<=30?C.amber:C.green}}>
+                            {overdue?"已到期！":`下次 ${sys.nextCheck}（${daysLeft}天）`}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {imagingHistory.length===0&&(
+                <div className="empty-state">📂 尚無影像記錄<br/>到「記錄→🔬影像」新增，並補齊去年的CT/MRI做基準線</div>
+              )}
             </div>
           );
         })()}
@@ -3805,9 +4072,31 @@ const analyzeTrend = (key, data) => {
               )}
               {imagingPhotos.length<3&&(
                 <div style={{border:`2px dashed ${C.border}`,borderRadius:10,padding:"16px",textAlign:"center",cursor:"pointer"}}
-                  onClick={()=>imagingPhotoRef.current?.click()}>
+                  onClick={()=>imagingPhotoRef.current?.click()}
+                  tabIndex={0}
+                  onPaste={async e=>{
+                    const cloudName=localStorage.getItem("cloudinary_name");
+                    if(!cloudName){showToast("⚠️ 請先在設定頁填入 Cloudinary 設定");return;}
+                    const items=Array.from(e.clipboardData?.items||[]);
+                    const imgItems=items.filter(it=>it.type.startsWith("image/"));
+                    if(imgItems.length===0)return;
+                    e.preventDefault();
+                    const files=imgItems.map(it=>it.getAsFile()).filter(Boolean).slice(0,3-imagingPhotos.length);
+                    showToast(`⏳ 貼上上傳中（0/${files.length}）...`);
+                    const urls=[];
+                    for(let i=0;i<files.length;i++){
+                      try{
+                        const url=await uploadToCloudinary(files[i]);
+                        urls.push(url);
+                        showToast(`⏳ 上傳中（${i+1}/${files.length}）...`);
+                      }catch(err){showToast("❌ 上傳失敗："+err.message);return;}
+                    }
+                    setImagingPhotos(prev=>[...prev,...urls].slice(0,3));
+                    showToast(`✅ 貼上 ${urls.length} 張照片成功`);
+                  }}>
                   <div style={{fontSize:24,marginBottom:4}}>📷</div>
                   <div style={{fontSize:12,color:C.textMuted}}>點擊上傳照片</div>
+                  <div style={{fontSize:10,color:C.blue,marginTop:4}}>💻 電腦版：點此區後可直接 Ctrl+V 貼上截圖</div>
                 </div>
               )}
               <input ref={imagingPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}}
@@ -3948,6 +4237,151 @@ ${radarStr}
     setAiLoading(false);
   };
 
+  // ── 階段四：異常/矛盾自動標記引擎 ───────────────────
+  const detectHealthAlerts=()=>{
+    const alerts=[];
+    const sorted=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    // 規則1：指標連續惡化（最近3次同方向）
+    const checkTrend=(key,label,dir,unit="")=>{
+      const series=sorted.filter(r=>r[key]!==null&&r[key]!==undefined&&r[key]!=="")
+        .map(r=>({date:r.date,v:parseFloat(r[key])})).filter(s=>!isNaN(s.v));
+      if(series.length<3)return;
+      const last3=series.slice(-3);
+      const worsening=dir==="low"
+        ?last3[0].v<last3[1].v&&last3[1].v<last3[2].v
+        :last3[0].v>last3[1].v&&last3[1].v>last3[2].v;
+      if(worsening){
+        alerts.push({level:"warn",icon:"📈",
+          title:`${label}連續${dir==="low"?"上升":"下降"}`,
+          desc:`近3次 ${last3.map(s=>s.v).join("→")}${unit}，持續惡化，建議追蹤原因`});
+      }
+    };
+    checkTrend("alt","ALT肝指數","low");
+    checkTrend("ast","AST肝指數","low");
+    checkTrend("uric_acid","尿酸","low");
+    checkTrend("ldl","LDL膽固醇","low");
+    checkTrend("creatinine","肌酸酐","low");
+    checkTrend("hdl","HDL好膽固醇","high");
+    checkTrend("platelet","血小板","high");
+    // 規則2：最新值超過警戒線
+    const latest=sorted[sorted.length-1];
+    if(latest){
+      const checkThreshold=(key,label,bad,dir="high")=>{
+        const v=parseFloat(latest[key]);
+        if(isNaN(v))return;
+        if((dir==="high"&&v>=bad)||(dir==="low"&&v<=bad)){
+          alerts.push({level:"warn",icon:"⚠️",title:`${label}偏${dir==="high"?"高":"低"}`,
+            desc:`最新 ${v}，已${dir==="high"?"超過":"低於"}警戒值 ${bad}`});
+        }
+      };
+      checkThreshold("alt","ALT",80,"high");
+      checkThreshold("uric_acid","尿酸",8.5,"high");
+      checkThreshold("wbc","白血球",4,"low");
+      checkThreshold("platelet","血小板",150,"low");
+      checkThreshold("hba1c","HbA1c",6.5,"high");
+    }
+    // 規則3：跨指標關聯（ALT高+脂肪肝）
+    const latestAlt=latest?parseFloat(latest.alt):NaN;
+    const hasFattyLiver=imagingHistory.some(r=>(r.finding||"").includes("脂肪肝")&&(r.finding||"").includes("II"));
+    if(!isNaN(latestAlt)&&latestAlt>50&&hasFattyLiver){
+      alerts.push({level:"alert",icon:"🔴",title:"肝臟需重點關注",
+        desc:`ALT ${latestAlt}偏高 + 脂肪肝Grade II，兩者互相印證，建議控制體重+減少精緻碳水，3個月複查肝功能`});
+    }
+    // 規則4：尿酸+ALT同時偏高
+    const latestUric=latest?parseFloat(latest.uric_acid):NaN;
+    if(!isNaN(latestAlt)&&!isNaN(latestUric)&&latestAlt>50&&latestUric>7.5){
+      alerts.push({level:"warn",icon:"🔗",title:"代謝負擔警訊",
+        desc:`ALT與尿酸同時偏高，常見於代謝症候群，注意飲食控制與水分攝取`});
+    }
+    // 規則5：結構性問題矛盾標記
+    const hasLVPW=imagingHistory.some(r=>(r.finding||"").includes("LVPWd")&&(r.finding||"").includes("18"));
+    if(hasLVPW){
+      alerts.push({level:"info",icon:"📋",title:"待複評：左心室後壁",
+        desc:"LVPWd影像值18.3mm偏高但報告判正常，建議回台灣時請心臟科複評確認"});
+    }
+    return alerts;
+  };
+
+  // ── 整體健康評估（讀取全部歷史做縱向+橫向分析）──────
+  const generateOverallReport=async()=>{
+    const key=localStorage.getItem("hj_apikey")||apiKey||"";
+    if(!key){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");return;}
+    if(labHistory.length===0){showToast("⚠️ 尚無抽血資料可分析");return;}
+    setOverallLoading(true);
+    try{
+      showToast("⏳ 讀取全部歷史分析中，約30秒...");
+      // 核心指標的歷次序列（依日期排序）
+      const sorted=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+      const trackKeys=[
+        {k:"hba1c",label:"HbA1c(%)"},{k:"glucose_ac",label:"空腹血糖"},
+        {k:"alt",label:"ALT"},{k:"ast",label:"AST"},{k:"ggt",label:"GGT"},
+        {k:"hdl",label:"HDL"},{k:"ldl",label:"LDL"},{k:"tg",label:"TG"},
+        {k:"uric_acid",label:"尿酸"},{k:"creatinine",label:"肌酸酐"},
+        {k:"wbc",label:"WBC"},{k:"platelet",label:"血小板"},{k:"crp",label:"CRP"},
+      ];
+      const trendLines=trackKeys.map(t=>{
+        const series=sorted.filter(r=>r[t.k]!==null&&r[t.k]!==undefined&&r[t.k]!=="")
+          .map(r=>`${String(r.date).slice(5)}:${r[t.k]}`);
+        return series.length>0?`${t.label}: ${series.join(" → ")}`:null;
+      }).filter(Boolean).join("\n");
+      // 血壓趨勢
+      const bpSorted=[...bpHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+      const bpLine=bpSorted.length>0
+        ?`血壓: ${bpSorted.slice(-10).map(r=>`${String(r.date).slice(5)}:${r.systolic}/${r.diastolic}`).join(" → ")}`
+        :"血壓: 尚無記錄";
+      // 影像診斷摘要
+      const imgSummary=imagingHistory.length>0
+        ?imagingHistory.map(r=>`・${r.date} ${r.type}: ${(r.finding||"").slice(0,60)}`).join("\n")
+        :"無影像記錄";
+      const prompt=`你是一位資深內科主治醫師，正在為一位長期追蹤的病患做完整健康評估。請綜觀所有歷史數據，用繁體中文產生整體健康評估報告。
+
+【病患基本資料】
+55歲台灣男性，越南工作，父親T2D家族史。
+
+【2025/03/19海防國際醫院住院確診（7項）】
+①眼瞼肌束顫動（左側，已緩解）②高血壓③雙側髂總動脈瘤④左前降支LAD1冠狀動脈35%狹窄⑤肝酶升高⑥高尿酸血症⑦脂肪肝GradeII
+
+【核心指標歷次趨勢（時間序列）】
+${trendLines}
+${bpLine}
+
+【影像/結構診斷】
+${imgSummary}
+
+【目前用藥】舒脈康5/40（2天1次）、平脂4mg、保栓通Plavix75mg、悠樂丁2mg（偶爾）
+【保健品】橄欖油、堅果奶昔、DHA+EPA、希臘酸奶+奇異果
+
+請依以下結構分析，不要用markdown符號或*號：
+
+【整體健康評估報告】
+
+一、健康全貌（2-3句總結這個人的核心健康主軸）
+
+二、核心指標趨勢解讀（針對上面的時間序列，指出每個重要指標是改善、惡化還是持平，用箭頭表示方向）
+
+三、指標間的關聯（找出指標之間互相影響的關係，例如血糖改善但肝酶惡化的可能原因）
+
+四、結構性問題追蹤重點（動脈瘤、冠狀動脈狹窄、視網膜退化等不會出現在抽血但需長期監控的問題）
+
+五、需要立即注意的紅旗（列出2-4項最需要關注或矛盾的發現）
+
+六、下次抽血/看診的重點建議（具體該追蹤什麼）
+
+七、一句總結與鼓勵`;
+      const result=await callClaude([{role:"user",content:prompt}],2000);
+      setOverallReport(result||"分析失敗");
+      const stamp=new Date().toISOString().split("T")[0];
+      setOverallDate(stamp);
+      localStorage.setItem("hj_overall_cache",JSON.stringify({date:stamp,report:result}));
+    }catch(e){
+      if(e.message==="NO_API_KEY"){showToast("⚠️ 請先設定API金鑰");setTab("setting");}
+      else if(e.message.includes("401")){showToast("❌ API金鑰無效");setTab("setting");}
+      else if(e.message.includes("429")){showToast("❌ API使用量超限");}
+      else{setOverallReport("❌ 分析失敗："+e.message);showToast("❌ "+e.message);}
+    }
+    setOverallLoading(false);
+  };
+
   const AITab=()=>{
     const [aiQuestion,setAiQuestion]=useState("");
     const [aiAnswer,setAiAnswer]=useState(null);
@@ -3977,6 +4411,47 @@ ${radarStr}
             </div>
             <span style={{color:C.textMuted,marginLeft:"auto",fontSize:18}}>›</span>
           </div>
+        </div>
+      )}
+      {/* 整體健康評估（階段一：讀取全部歷史）*/}
+      <div className="ai-bubble" style={{marginBottom:12,border:`1px solid ${C.green}44`}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:36,height:36,borderRadius:"50%",background:`linear-gradient(135deg,${C.blue},${C.green})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🩺</div>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,color:C.green}}>整體健康評估</div>
+              <div style={{fontSize:10,color:C.textMuted}}>讀取全部 {labHistory.length} 筆抽血 + {imagingHistory.length} 筆影像</div>
+            </div>
+          </div>
+          {overallReport&&(
+            <button onClick={()=>{
+              if(navigator.share){navigator.share({title:"整體健康評估",text:overallReport});}
+              else{navigator.clipboard?.writeText(overallReport).then(()=>showToast("✅ 已複製，可貼給醫師"));}
+            }}
+              style={{padding:"5px 10px",borderRadius:8,fontSize:11,background:"transparent",border:`1px solid ${C.border}`,color:C.textMuted,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}>
+              📋 複製
+            </button>
+          )}
+        </div>
+        {overallReport
+          ?<div style={{fontSize:13,lineHeight:1.9,whiteSpace:"pre-wrap",color:C.text}}>{overallReport}</div>
+          :<div style={{fontSize:12,color:C.textMuted,lineHeight:1.8}}>
+            讓 AI 綜觀你的<b style={{color:C.green}}>全部</b>歷史數據，產生主治醫師等級的完整評估：<br/>
+            健康全貌 · 指標趨勢 · 指標關聯 · 結構追蹤 · 紅旗標記 · 看診建議<br/>
+            <span style={{color:C.amber}}>看診前複製給醫師，一次掌握你的完整狀況</span>
+          </div>}
+      </div>
+      <button className="btn-primary" style={{marginBottom:4,background:`linear-gradient(135deg,${C.blue},${C.green})`}}
+        onClick={generateOverallReport} disabled={overallLoading}>
+        {overallLoading?"⏳ 讀取全部歷史分析中（約30秒）...":"🩺 產生整體健康評估"}
+      </button>
+      {overallDate&&(
+        <div style={{fontSize:10,color:C.textMuted,marginBottom:16,textAlign:"center"}}>
+          上次評估 {overallDate} ·
+          <span style={{color:C.blue,cursor:"pointer",marginLeft:4}}
+            onClick={()=>{localStorage.removeItem("hj_overall_cache");setOverallReport(null);setOverallDate(null);showToast("已清除，可重新評估");}}>
+            重新產生
+          </span>
         </div>
       )}
       {/* 週報區塊 */}
