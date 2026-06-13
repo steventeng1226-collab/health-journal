@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.49";
+const VERSION = "v4.50";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1806,18 +1806,18 @@ ${textPart}
     if(!reminders||reminders.length===0)return;
     // 配對規則：記錄類型關鍵字 → 提醒關鍵字 + 間隔月數
     const RULES=[
-      {recKeys:["腹部超音波","腹部CT","腹部MRI","腹超"],reminderKeys:["腹","超音波","肝臟"],months:6},
-      {recKeys:["心臟超音波","心臟CT","心臟MRI","心電圖"],reminderKeys:["心臟","心血管","心電","LAD","冠狀"],months:6},
+      {recKeys:["腹部超音波","腹部CT","腹部MRI","腹超"],reminderKeys:["腹","超音波","肝臟"],months:12},
+      {recKeys:["心臟超音波","心臟CT","心臟MRI","心電圖"],reminderKeys:["心臟","心血管","心電","LAD","冠狀"],months:12},
       {recKeys:["頸動脈超音波"],reminderKeys:["頸動脈"],months:12},
-      {recKeys:["視野檢查","右眼視野"],reminderKeys:["視野"],months:4},
-      {recKeys:["眼底攝影","眼科綜合","眼底","OCT"],reminderKeys:["眼底","眼科","視網膜","OCT"],months:6},
+      {recKeys:["視野檢查","右眼視野"],reminderKeys:["視野"],months:12},
+      {recKeys:["眼底攝影","眼科綜合","眼底","OCT"],reminderKeys:["眼底","眼科","視網膜","OCT"],months:12},
       {recKeys:["大腸鏡"],reminderKeys:["大腸"],months:60},
       {recKeys:["胃鏡"],reminderKeys:["胃鏡"],months:24},
       {recKeys:["腦部MRI","頭部CT"],reminderKeys:["腦部","神經"],months:12},
       {recKeys:["骨密度"],reminderKeys:["骨密度"],months:24},
       // 抽血 → 對應多種血液相關提醒（3個月）
-      {recKeys:["lab","抽血","血液"],reminderKeys:["血液","抽血","血常規","血液常規"],months:3},
-      {recKeys:["lab","抽血","肝功能"],reminderKeys:["肝功能","肝","ALT","尿酸"],months:3},
+      {recKeys:["lab","抽血","血液"],reminderKeys:["血液","抽血","血常規","血液常規","CBC"],months:3},
+      {recKeys:["lab","抽血","肝功能"],reminderKeys:["肝功能","肝","ALT","AST","GGT","尿酸"],months:3},
       {recKeys:["lab","抽血","腎功能"],reminderKeys:["腎功能","腎","肌酸酐","eGFR"],months:6},
       {recKeys:["住院摘要"],reminderKeys:["心臟科","心血管"],months:6},
     ];
@@ -5209,9 +5209,9 @@ ${exSummary}
       {remKeys:["肝功能","ALT","尿酸"],src:"lab",months:3},
       {remKeys:["血液常規","血常規","WBC","血小板"],src:"lab",months:3},
       {remKeys:["腎功能","肌酸酐","eGFR"],src:"lab",months:6},
-      {remKeys:["眼底","視網膜","OCT"],src:"img",imgKey:"眼",months:6},
-      {remKeys:["視野"],src:"img",imgKey:"視野",months:4},
-      {remKeys:["心臟科","心電圖","心血管","LAD","冠狀"],src:"img",imgKey:"心",months:6},
+      {remKeys:["眼底","視網膜","OCT"],src:"img",imgKey:"眼",months:12},
+      {remKeys:["視野"],src:"img",imgKey:"視野",months:12},
+      {remKeys:["心臟科","心電圖","心血管","LAD","冠狀"],src:"img",imgKey:"心",months:12},
       {remKeys:["腹部","超音波","脂肪肝","肝囊","腎囊"],src:"img",imgKey:"腹",months:6},
       {remKeys:["頸動脈"],src:"img",imgKey:"頸",months:12},
     ];
@@ -6636,13 +6636,13 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
             showToast("⏳ 同步追蹤提醒中...");
             const todayStr=new Date().toISOString().split("T")[0];
             const SYNC=[
-              {remKeys:["肝功能","ALT","尿酸"],src:"lab",months:3},
-              {remKeys:["血液常規","血常規","WBC","血小板"],src:"lab",months:3},
-              {remKeys:["腎功能","肌酸酐","eGFR"],src:"lab",months:6},
-              {remKeys:["眼底","視網膜","OCT"],src:"img",imgKey:"眼",months:6},
-              {remKeys:["視野"],src:"img",imgKey:"視野",months:4},
-              {remKeys:["心臟科","心電圖","心血管","LAD","冠狀"],src:"img",imgKey:"心",months:6},
-              {remKeys:["腹部","超音波","脂肪肝","肝囊","腎囊"],src:"img",imgKey:"腹",months:6},
+              {remKeys:["肝功能","ALT","AST","GGT","尿酸"],src:"lab",months:3},
+              {remKeys:["血液常規","血常規","WBC","血小板","CBC"],src:"lab",months:3},
+              {remKeys:["腎功能","肌酸酐","eGFR","尿液"],src:"lab",months:6},
+              {remKeys:["眼底","視網膜","OCT"],src:"img",imgKey:"眼",months:12},
+              {remKeys:["視野"],src:"img",imgKey:"視野",months:12},
+              {remKeys:["心臟科","心電圖","心血管","LAD","冠狀"],src:"img",imgKey:"心",months:12},
+              {remKeys:["腹部","超音波","脂肪肝","肝囊","腎囊"],src:"img",imgKey:"腹",months:12},
               {remKeys:["頸動脈"],src:"img",imgKey:"頸",months:12},
             ];
             const latestLabDate=labHistory.length>0
