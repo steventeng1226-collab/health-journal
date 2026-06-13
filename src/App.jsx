@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.29";
+const VERSION = "v4.30";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1059,11 +1059,15 @@ const computeRadarScores=(lab,bpHistory)=>{
   const egfrV=f("egfr");
   const egfrScore=egfrV==null?null:clamp10(10-5*Math.max(0,90-egfrV)/30);
   const dimKidney=avg([egfrScore,linScore(f("upcr"),15,150)]);
-  // 心血管：近7筆血壓平均值
+  // 心血管：近7筆血壓平均值 + 結構性風險上限
+  // 2025/03確診：雙側髂總動脈瘤 + LAD1冠狀動脈35%狹窄 + 頸動脈輕度粥樣硬化
+  // 即使血壓控制完美，結構性問題存在 → 分數上限8.0，避免滿分誤導
+  const CV_STRUCTURAL_CAP=8.0;
   const recentBP=(Array.isArray(bpHistory)?[...bpHistory].slice(-7):[]);
   const avgSys=recentBP.length>0?avg(recentBP.map(r=>parseFloat(r.systolic)).filter(v=>!isNaN(v))):null;
   const avgDia=recentBP.length>0?avg(recentBP.map(r=>parseFloat(r.diastolic)).filter(v=>!isNaN(v))):null;
-  const dimCV=avg([linScore(avgSys,115,140),linScore(avgDia,75,90)]);
+  const dimCVraw=avg([linScore(avgSys,115,140),linScore(avgDia,75,90)]);
+  const dimCV=dimCVraw==null?null:Math.min(dimCVraw,CV_STRUCTURAL_CAP);
   const cvLabel=avgSys&&avgDia?`心血管\n${Math.round(avgSys)}/${Math.round(avgDia)}`:"心血管";
   // 血液：血小板(理想200/臨界100，越高越好至正常) + Hb(理想15/臨界11)
   const pltV=f("platelet");
@@ -1705,6 +1709,28 @@ ${textPart}
       return updated;
     });
     showToast("✅ 提醒已更新並同步到雲端");setEditReminder(null);
+  };
+
+  // 2025/03住院追蹤套組（一鍵建立）
+  const addHospitalFollowups=()=>{
+    const PACK=[
+      {id:"HF01",title:"心臟科追蹤（髂動脈瘤+LAD1狹窄）",icon:"🫀",intervalDays:180,lastDate:"2025-03-19",nextDate:"2025-09-19"},
+      {id:"HF02",title:"右眼視野複查",icon:"👁️",intervalDays:120,lastDate:"2025-03-19",nextDate:"2025-07-19"},
+      {id:"HF03",title:"眼底追蹤+OCT（視網膜退化）",icon:"👁️",intervalDays:180,lastDate:"2025-03-19",nextDate:"2025-09-19"},
+      {id:"HF04",title:"腹部超音波（脂肪肝G2+腎囊腫）",icon:"🔬",intervalDays:180,lastDate:"2025-03-19",nextDate:"2025-09-19"},
+      {id:"HF05",title:"血液常規（WBC+血小板追蹤）",icon:"🩸",intervalDays:90,lastDate:"2025-03-19",nextDate:"2025-06-19"},
+      {id:"HF06",title:"肝功能ALT+尿酸追蹤",icon:"🫁",intervalDays:90,lastDate:"2025-03-19",nextDate:"2025-06-19"},
+    ];
+    setReminders(prev=>{
+      const existIds=new Set(prev.map(r=>r.id));
+      const toAdd=PACK.filter(p=>!existIds.has(p.id));
+      if(toAdd.length===0){showToast("✅ 追蹤套組已存在，無需重複建立");return prev;}
+      const updated=[...prev,...toAdd];
+      localStorage.setItem("hj_reminders",JSON.stringify(updated));
+      api.saveSetting("reminders",updated);
+      showToast(`✅ 已建立 ${toAdd.length} 項住院追蹤提醒`);
+      return updated;
+    });
   };
 
   const latestGlucose=glucoseHistory.length>0?glucoseHistory[glucoseHistory.length-1]:null;
@@ -2604,7 +2630,22 @@ const analyzeTrend = (key, data) => {
       })()}
 
       <div className="card">
-        <div className="card-title">定期健康提醒</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div className="card-title" style={{marginBottom:0}}>定期健康提醒</div>
+          {!reminders.some(r=>r.id==="HF01")&&(
+            <button onClick={addHospitalFollowups}
+              style={{padding:"5px 10px",borderRadius:8,fontSize:11,cursor:"pointer",fontWeight:600,
+                background:"rgba(255,179,71,0.12)",border:`1px solid ${C.amber}66`,color:C.amber,
+                fontFamily:"'Noto Sans TC',sans-serif"}}>
+              📋 一鍵建立住院追蹤套組
+            </button>
+          )}
+        </div>
+        {!reminders.some(r=>r.id==="HF01")&&(
+          <div style={{fontSize:11,color:C.textMuted,marginBottom:10,lineHeight:1.6}}>
+            依2025/03/19住院確診建立6項追蹤：心臟科（動脈瘤+LAD1）、右眼視野、眼底OCT、腹超、血液常規、肝功能尿酸
+          </div>
+        )}
         {reminders.map(r=>{
           const isOverdue=new Date(r.nextDate)<=new Date();
           const diffDays=Math.floor((new Date(r.nextDate)-new Date())/86400000);
@@ -4327,6 +4368,47 @@ ${radarStr}
               onClick={()=>setKbSearch("")}>✕</button>
           )}
         </div>
+
+        {/* 我的診斷卡片（2025/03住院確診） */}
+        {!searchLower&&(()=>{
+          const [showDx,setShowDx]=React.useState(false);
+          const DX=[
+            {n:"①",name:"眼瞼肌束顫動（左側）",status:"✅已緩解",color:C.green,note:"與睡眠不足壓力相關，神經傳導左側R1延長"},
+            {n:"②",name:"高血壓",status:"💊用藥中",color:C.amber,note:"舒脈康5/40，目標<125/80"},
+            {n:"③",name:"雙側髂總動脈瘤",status:"⚠️追蹤",color:C.red,note:"CTA確診，每6個月心臟科追蹤大小"},
+            {n:"④",name:"LAD1冠狀動脈35%狹窄",status:"⚠️追蹤",color:C.red,note:"輕度<50%無需介入，保栓通+定期追蹤"},
+            {n:"⑤",name:"肝酶升高",status:"📈監測",color:C.amber,note:"ALT 63.54，與脂肪肝相關，3個月追蹤"},
+            {n:"⑥",name:"高尿酸血症",status:"📈監測",color:C.amber,note:"7.95 mg/dL，多喝水少紅肉"},
+            {n:"⑦",name:"脂肪肝 Grade II",status:"⚠️惡化",color:C.red,note:"從G1進展，飲食+運動+咖啡是核心對策"},
+          ];
+          return(
+            <div className="card" style={{marginBottom:12,cursor:"pointer"}} onClick={()=>setShowDx(v=>!v)}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>📋 我的診斷（7項）</div>
+                  <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>2025/03/19 海防國際醫院住院確診 · 點擊{showDx?"收合":"展開"}</div>
+                </div>
+                <span style={{color:C.textMuted}}>{showDx?"▲":"▼"}</span>
+              </div>
+              {showDx&&(
+                <div style={{marginTop:10}} onClick={e=>e.stopPropagation()}>
+                  {DX.map(d=>(
+                    <div key={d.n} style={{padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:2}}>
+                        <span style={{fontSize:12,fontWeight:600,color:C.text}}>{d.n} {d.name}</span>
+                        <span style={{fontSize:10,color:d.color,fontWeight:700}}>{d.status}</span>
+                      </div>
+                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.5}}>{d.note}</div>
+                    </div>
+                  ))}
+                  <div style={{fontSize:10,color:C.textMuted,marginTop:8,lineHeight:1.6}}>
+                    💡 看診時可直接展示此卡片給醫師。完整報告在記錄→影像。
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Tab 切換 */}
         {!searchLower&&(
