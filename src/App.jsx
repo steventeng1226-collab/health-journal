@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.41";
+const VERSION = "v4.42";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1789,40 +1789,52 @@ ${textPart}
     if(!reminders||reminders.length===0)return;
     // 配對規則：記錄類型關鍵字 → 提醒關鍵字 + 間隔月數
     const RULES=[
-      {recKeys:["腹部超音波","腹部CT","腹部MRI"],reminderKeys:["腹","超音波"],months:6},
-      {recKeys:["心臟超音波","心臟CT","心臟MRI"],reminderKeys:["心臟","心血管"],months:6},
+      {recKeys:["腹部超音波","腹部CT","腹部MRI","腹超"],reminderKeys:["腹","超音波","肝臟"],months:6},
+      {recKeys:["心臟超音波","心臟CT","心臟MRI","心電圖"],reminderKeys:["心臟","心血管","心電","LAD","冠狀"],months:6},
       {recKeys:["頸動脈超音波"],reminderKeys:["頸動脈"],months:12},
-      {recKeys:["視野檢查"],reminderKeys:["視野"],months:4},
-      {recKeys:["眼底攝影","眼科綜合"],reminderKeys:["眼底","眼科","視網膜"],months:6},
+      {recKeys:["視野檢查","右眼視野"],reminderKeys:["視野"],months:4},
+      {recKeys:["眼底攝影","眼科綜合","眼底","OCT"],reminderKeys:["眼底","眼科","視網膜","OCT"],months:6},
       {recKeys:["大腸鏡"],reminderKeys:["大腸"],months:60},
       {recKeys:["胃鏡"],reminderKeys:["胃鏡"],months:24},
       {recKeys:["腦部MRI","頭部CT"],reminderKeys:["腦部","神經"],months:12},
       {recKeys:["骨密度"],reminderKeys:["骨密度"],months:24},
-      {recKeys:["lab","抽血"],reminderKeys:["血液","抽血","肝功能","血常規"],months:3},
+      // 抽血 → 對應多種血液相關提醒（3個月）
+      {recKeys:["lab","抽血","血液"],reminderKeys:["血液","抽血","血常規","血液常規"],months:3},
+      {recKeys:["lab","抽血","肝功能"],reminderKeys:["肝功能","肝","ALT","尿酸"],months:3},
+      {recKeys:["lab","抽血","腎功能"],reminderKeys:["腎功能","腎","肌酸酐","eGFR"],months:6},
       {recKeys:["住院摘要"],reminderKeys:["心臟科","心血管"],months:6},
     ];
-    // 找符合的規則
-    const rule=RULES.find(r=>r.recKeys.some(k=>recordType.includes(k)||recordType===k));
-    if(!rule)return;
-    // 找符合的提醒
-    const matched=reminders.filter(rem=>rule.reminderKeys.some(k=>(rem.title||"").includes(k)));
-    if(matched.length===0)return;
-    // 計算新的下次日期
-    const base=new Date(recordDate);
-    if(isNaN(base.getTime()))return;
-    base.setMonth(base.getMonth()+rule.months);
-    const newNextDate=`${base.getFullYear()}-${String(base.getMonth()+1).padStart(2,"0")}-${String(base.getDate()).padStart(2,"0")}`;
-    // 更新每個符合的提醒
+    // 找所有符合的規則（一筆抽血可能對應多項提醒）
+    const matchedRules=RULES.filter(r=>r.recKeys.some(k=>recordType.includes(k)||recordType===k));
+    if(matchedRules.length===0)return;
+    // 收集所有符合的提醒（去重）
+    const base0=new Date(recordDate);
+    if(isNaN(base0.getTime()))return;
     let updated=0;
-    for(const rem of matched){
-      const r=await api.post("updateReminder","reminders",
-        {id:rem.id,lastDate:recordDate,nextDate:newNextDate});
-      if(r?.success)updated++;
+    const updatedIds=new Set();
+    const localUpdates=[];
+    for(const rule of matchedRules){
+      const matched=reminders.filter(rem=>rule.reminderKeys.some(k=>(rem.title||"").includes(k)));
+      for(const rem of matched){
+        if(updatedIds.has(rem.id))continue;
+        updatedIds.add(rem.id);
+        const base=new Date(recordDate);
+        base.setMonth(base.getMonth()+rule.months);
+        const newNextDate=`${base.getFullYear()}-${String(base.getMonth()+1).padStart(2,"0")}-${String(base.getDate()).padStart(2,"0")}`;
+        const r=await api.post("updateReminder","reminders",
+          {id:rem.id,lastDate:recordDate,nextDate:newNextDate});
+        if(r?.success){updated++;localUpdates.push({id:rem.id,lastDate:recordDate,nextDate:newNextDate});}
+      }
     }
     if(updated>0){
-      showToast(`✅ 已自動更新 ${updated} 項追蹤提醒 → 下次 ${newNextDate}`);
-      loadData();
+      // 立即更新本地state（不必等loadData）
+      setReminders(prev=>prev.map(rem=>{
+        const u=localUpdates.find(x=>x.id===rem.id);
+        return u?{...rem,lastDate:u.lastDate,nextDate:u.nextDate}:rem;
+      }));
+      showToast(`✅ 已自動更新 ${updated} 項追蹤提醒`);
     }
+    return;
   };
 
   const saveImaging = async () => {
