@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.50";
+const VERSION = "v4.51";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1919,10 +1919,10 @@ ${textPart}
   // 2025/03住院追蹤套組（一鍵建立）
   const addHospitalFollowups=()=>{
     const PACK=[
-      {id:"HF01",title:"心臟科追蹤（髂動脈瘤+LAD1狹窄）",icon:"🫀",intervalDays:180,lastDate:"2025-03-19",nextDate:"2025-09-19"},
-      {id:"HF02",title:"右眼視野複查",icon:"👁️",intervalDays:120,lastDate:"2025-03-19",nextDate:"2025-07-19"},
-      {id:"HF03",title:"眼底追蹤+OCT（視網膜退化）",icon:"👁️",intervalDays:180,lastDate:"2025-03-19",nextDate:"2025-09-19"},
-      {id:"HF04",title:"腹部超音波（脂肪肝G2+腎囊腫）",icon:"🔬",intervalDays:180,lastDate:"2025-03-19",nextDate:"2025-09-19"},
+      {id:"HF01",title:"心臟科追蹤（髂動脈瘤+LAD1狹窄）",icon:"🫀",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-09-19"},
+      {id:"HF02",title:"右眼視野複查",icon:"👁️",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-07-19"},
+      {id:"HF03",title:"眼底追蹤+OCT（視網膜退化）",icon:"👁️",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-09-19"},
+      {id:"HF04",title:"腹部超音波（脂肪肝G2+腎囊腫）",icon:"🔬",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-09-19"},
       {id:"HF05",title:"血液常規（WBC+血小板追蹤）",icon:"🩸",intervalDays:90,lastDate:"2025-03-19",nextDate:"2025-06-19"},
       {id:"HF06",title:"肝功能ALT+尿酸追蹤",icon:"🫁",intervalDays:90,lastDate:"2025-03-19",nextDate:"2025-06-19"},
     ];
@@ -3167,7 +3167,7 @@ const analyzeTrend = (key, data) => {
           <div className="overlay">
             <div className="overlay-sheet">
               <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>{editReminder.icon} {editReminder.title}</div>
-              <div style={{fontSize:12,color:C.textMuted,marginBottom:12}}>輸入最近一次檢查日期（{editReminder.intervalDays}天後自動計算下次）</div>
+              <div style={{fontSize:12,color:C.textMuted,marginBottom:12}}>輸入最近一次檢查日期（每{editReminder.intervalDays>=365?`${Math.round(editReminder.intervalDays/365)}年`:editReminder.intervalDays>=30?`${Math.round(editReminder.intervalDays/30)}個月`:`${editReminder.intervalDays}天`}追蹤一次）</div>
               {autoDate&&autoDate!==editReminder.lastDate&&(
                 <div style={{background:C.green+"22",border:"1px solid "+C.green,borderRadius:8,
                   padding:"8px 12px",marginBottom:12,fontSize:11,color:C.green,lineHeight:1.6}}>
