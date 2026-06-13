@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.24";
+const VERSION = "v4.27";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -816,6 +816,59 @@ T2D患者失智症風險是一般人的2倍。
 ✅ 確保睡眠7–8小時`,
   },
   {
+    id:"a10",icon:"😴",tag:"睡眠",
+    title:"睡眠不足的影響與改善",
+    content:`你的Samsung Watch 7數據顯示近31天平均睡眠5小時58分，明顯不足。
+
+**你的睡眠數據分析**
+
+近期數據：平均入睡00:17，起床06:08，實際睡眠約5.5-6.5小時。深層睡眠多數在10-15%，低於理想的20%。
+
+**睡眠不足對你的直接影響**
+
+🩸 血糖控制變差
+睡眠不足會直接降低胰島素敏感性。研究顯示每少睡1小時，隔天血糖峰值上升15-20%。你的HbA1c 5.8%正在臨界點，睡眠品質是能不能從5.8%降回正常的關鍵因素之一。
+
+❤️ 血壓難以達標
+深層睡眠期間血壓自然下降（夜間降壓），睡眠不足讓舒脈康的效果打折。你的血壓130/90，目標要降到125/80，充足睡眠是藥物以外最重要的輔助。
+
+💪 肌肉流失加速
+55歲本來就是肌肉流失高峰期，生長激素在深層睡眠分泌，深層只有36-54分鐘遠遠不夠。你吃這麼好的蛋白質，卻在睡眠中流失修復機會。
+
+🧬 睾固酮下降
+睾固酮70%在深層睡眠合成。深層睡眠不足直接影響荷爾蒙水平，這與你關心的性功能、精力、情緒都相關。
+
+🧠 大腦清除廢物
+睡眠時腦部淋巴系統清除β-澱粉樣蛋白（阿茲海默症相關），睡眠不足讓廢物累積，長期增加失智風險。
+
+**悠樂丁（Eurodin 2mg）的問題**
+苯二氮平類雖然讓你睡著，但實際上抑制深層睡眠。吃藥那晚看起來睡著了，但深層睡眠可能更少。每週1-3次偶爾使用影響不大，但不應增加頻率。
+
+**不吃藥的改善方法**
+
+🥝 奇異果含皮（你已在做✅）
+睡前1-2小時吃，血清素前驅物改善入睡品質，研究顯示入睡時間縮短35%。
+
+🌬️ 478呼吸法（「想太多睡不著」最有效）
+吸氣4秒→憋氣7秒→吐氣8秒，重複4次。激活副交感神經，5分鐘內降低焦慮，是替代安眠藥最快的方法。
+
+📱 睡前30分鐘不看手機
+藍光抑制褪黑激素分泌，這是你能做最簡單但效果最顯著的改變。
+
+⏰ 固定23:00前上床
+你目前00:17才睡，深層睡眠集中在入睡後1-3小時，晚睡錯過最佳深層睡眠窗口。目標23:00上床，06:00起床=7小時。
+
+🌡️ 睡前降溫
+洗溫水澡（不是熱水）→出浴後體溫下降觸發睡意。越南天氣熱，冷氣設定26-27°C輔助入睡。
+
+**你的目標**
+深層睡眠從目前10-15%提升到18-22%，每晚多30-40分鐘深層睡眠，對血糖、血壓、荷爾蒙的改善效果等同於增加一種藥物。
+
+✅ 今晚開始：23:00前上床+478呼吸法
+✅ 睡前：放下手機，吃奇異果
+✅ 目標：每晚7小時，深層>18%`,
+  },
+  {
     id:"a9",icon:"❤️",tag:"循環",
     title:"性功能健康與血管循環",
     content:`性功能健康和心血管健康是同一個系統的不同表現。
@@ -972,6 +1025,12 @@ const MEDICINE_ITEMS = [
    dosage:"通常100–300mg/日，隨餐服用，大量喝水",
    caution:"開始服用可能誘發痛風急性發作；需追蹤腎功能；亞洲人服用前建議基因檢測(HLA-B*5801)",
    personal:"你的尿酸7.52偏高，若無法透過飲食控制至7.0以下可考慮"},
+  {id:"m18",type:"medicine",icon:"💊",name:"悠樂丁 Eurodin 2mg",taking:false,
+   desc:"Estazolam，苯二氮平類（BZD）安眠藥，處方藥。作用於GABA受體，降低神經興奮性，縮短入睡時間。",
+   benefits:["快速入睡效果明確","對「想太多睡不著」有效","2mg屬低劑量，作用時間適中（半衰期10-24小時）"],
+   dosage:"睡前30分鐘服用1錠（2mg），偶爾使用，每週不超過1-3次",
+   caution:"⚠️ 苯二氮平類會抑制深層睡眠（Deep Sleep），服藥後雖然睡著但睡眠品質實際下降。長期使用有依賴性和耐受性風險。不可與酒精併用。與Plavix/降壓藥合用需告知醫師。隔天可能有殘餘嗜睡感",
+   personal:"偶爾使用（每週1-3次·睡前）：⚠️ 你的深層睡眠已偏低（近期約10-21%），悠樂丁會進一步抑制深層睡眠，影響血糖調節、睾固酮分泌和肌肉修復。建議優先嘗試非藥物方法：睡前奇異果+478呼吸法+固定23:00前上床"},
 ];
 
 // ── 健康雷達計分 ─────────────────────────────────────
@@ -1116,7 +1175,20 @@ export default function HealthJournal(){
   const [labForm,setLabForm]=useState({date:"",hospital:"",country:"台灣",fasting:"空腹"});
   const [showPhotoWarning,setShowPhotoWarning]=useState(false);
   const [pendingPhotos,setPendingPhotos]=useState(null);
-  const [aiReport,setAiReport]=useState(null);
+  const [aiReport,setAiReport]=useState(()=>{
+    try{
+      const cache=JSON.parse(localStorage.getItem("hj_weekly_cache")||"null");
+      if(cache&&cache.date===new Date().toISOString().split("T")[0])return cache.report;
+    }catch(e){}
+    return null;
+  });
+  const [aiReportDate,setAiReportDate]=useState(()=>{
+    try{
+      const cache=JSON.parse(localStorage.getItem("hj_weekly_cache")||"null");
+      if(cache&&cache.date===new Date().toISOString().split("T")[0])return cache.date;
+    }catch(e){}
+    return null;
+  });
   const [aiLoading,setAiLoading]=useState(false);
   const [showApiInput,setShowApiInput]=useState(false);
   const photoInputRef=useRef();
@@ -2200,135 +2272,141 @@ const analyzeTrend = (key, data) => {
           <div style={{fontSize:11,color:C.textMuted}}>HbA1c {latestLab?.hba1c||"5.8"}% · 需積極管理</div>
         </div>
       </div>
-      {/* 綜合健康分數 */}
+      {/* 今日狀態整合卡片 */}
       {(()=>{
+        // 健康分數
         const scores=computeRadarScores(latestLab,bpHistory);
-        if(!scores)return null;
-        const valid=scores.filter(d=>d.score!=null);
-        if(valid.length===0)return null;
-        const total=Math.round(valid.reduce((s,d)=>s+d.score,0)/valid.length*10);
+        const valid=scores?scores.filter(d=>d.score!=null):[];
+        const total=valid.length>0?Math.round(valid.reduce((s,d)=>s+d.score,0)/valid.length*10):null;
         const prev2=labHistory.length>1?computeRadarScores(labHistory[labHistory.length-2],bpHistory):null;
         const prevValid=prev2?prev2.filter(d=>d.score!=null):[];
         const prevTotal=prevValid.length>0?Math.round(prevValid.reduce((s,d)=>s+d.score,0)/prevValid.length*10):null;
-        const diff=prevTotal!=null?total-prevTotal:null;
-        const color=total>=75?C.green:total>=60?C.amber:C.red;
-        return(
-          <div className="card" style={{padding:"12px",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,cursor:"pointer"}}
-            onClick={()=>{setTab("trend");setTrendItem("radar");}}>
-            <div>
-              <div style={{fontSize:11,color:C.textMuted,marginBottom:2}}>綜合健康分數</div>
-              <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-                <span style={{fontFamily:"'DM Serif Display',serif",fontSize:36,color,lineHeight:1}}>{total}</span>
-                <span style={{fontSize:13,color:C.textMuted}}>/100</span>
-                {diff!=null&&<span style={{fontSize:12,color:diff>0?C.green:diff<0?C.red:C.textMuted,fontWeight:700}}>{diff>0?`▲+${diff}`:diff<0?`▼${diff}`:"→"}</span>}
-              </div>
-            </div>
-            <div style={{textAlign:"right"}}>
-              {scores.filter(d=>d.score!=null&&d.score<6.5).slice(0,2).map(d=>(
-                <div key={d.label} style={{fontSize:10,color:C.amber,marginBottom:2}}>⚠️ {d.label.split("\n")[0]}</div>
-              ))}
-              <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>點擊看雷達圖 →</div>
-            </div>
-          </div>
-        );
-      })()}
-      {/* 早餐打卡 */}
-      {(()=>{
-        const dates=new Set(breakfastLog.map(r=>normalizeDate(r.date)));
+        const diff=prevTotal!=null&&total!=null?total-prevTotal:null;
+        const scoreColor=total==null?C.textMuted:total>=75?C.green:total>=60?C.amber:C.red;
+        // 早餐打卡
+        const bkfDates=new Set(breakfastLog.map(r=>normalizeDate(r.date)));
         const todayStr=today();
-        const checkedToday=dates.has(todayStr);
-        // 連續天數
-        let streak=0;
-        const d=new Date();
-        if(!checkedToday)d.setDate(d.getDate()-1);
-        while(true){
-          const ds=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-          if(dates.has(ds)){streak++;d.setDate(d.getDate()-1);}else break;
-        }
-        // 近30天達成率
-        let hit=0;
-        for(let i=0;i<30;i++){
-          const dd=new Date();dd.setDate(dd.getDate()-i);
-          const ds=`${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,"0")}-${String(dd.getDate()).padStart(2,"0")}`;
-          if(dates.has(ds))hit++;
-        }
-        return(
-          <div className="card" style={{padding:"12px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-            <div>
-              <div style={{fontSize:13,fontWeight:700,color:C.text}}>🍳 我的早餐</div>
-              <div style={{fontSize:11,color:C.textMuted,marginTop:3}}>
-                🔥 連續 {streak} 天{breakfastLog.length>0?` · 近30天 ${Math.round(hit/30*100)}%`:""}
-              </div>
-            </div>
-            <button disabled={checkedToday}
-              onClick={async()=>{
-                const r=await api.post("append","breakfast_log",{id:Date.now(),date:todayStr,checked:1});
-                if(r&&!r.error){
-                  setBreakfastLog(prev=>[...prev,{date:todayStr,checked:1}]);
-                  showToast("✅ 早餐打卡成功！");
-                }else showToast("❌ 打卡失敗，請確認Sheets有breakfast_log分頁");
-              }}
-              style={{padding:"10px 18px",borderRadius:12,fontSize:13,fontWeight:700,cursor:checkedToday?"default":"pointer",
-                background:checkedToday?"rgba(46,204,138,0.12)":C.green,
-                border:"none",color:checkedToday?C.green:"#0a0a0a",
-                fontFamily:"'Noto Sans TC',sans-serif"}}>
-              {checkedToday?"✅ 已打卡":"打卡"}
-            </button>
-          </div>
-        );
-      })()}
-      {/* 運動打卡 */}
-      {(()=>{
+        const bkfToday=bkfDates.has(todayStr);
+        let bkfStreak=0;
+        const bd=new Date();
+        if(!bkfToday)bd.setDate(bd.getDate()-1);
+        while(true){const ds=`${bd.getFullYear()}-${String(bd.getMonth()+1).padStart(2,"0")}-${String(bd.getDate()).padStart(2,"0")}`;if(bkfDates.has(ds)){bkfStreak++;bd.setDate(bd.getDate()-1);}else break;}
+        // 運動打卡
         const exDates=new Set(exerciseLog.map(r=>normalizeDate(r.date)));
-        const todayStr=today();
         const todayEx=exerciseLog.find(r=>normalizeDate(r.date)===todayStr);
         const exToday=!!todayEx;
         let exStreak=0;
-        const d=new Date();
-        if(!exToday)d.setDate(d.getDate()-1);
-        while(true){
-          const ds=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-          if(exDates.has(ds)){exStreak++;d.setDate(d.getDate()-1);}else break;
-        }
-        let exHit=0;
-        for(let i=0;i<7;i++){
-          const dd=new Date();dd.setDate(dd.getDate()-i);
-          const ds=`${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,"0")}-${String(dd.getDate()).padStart(2,"0")}`;
-          if(exDates.has(ds))exHit++;
-        }
+        const ed=new Date();
+        if(!exToday)ed.setDate(ed.getDate()-1);
+        while(true){const ds=`${ed.getFullYear()}-${String(ed.getMonth()+1).padStart(2,"0")}-${String(ed.getDate()).padStart(2,"0")}`;if(exDates.has(ds)){exStreak++;ed.setDate(ed.getDate()-1);}else break;}
+        let exHit7=0;for(let i=0;i<7;i++){const dd=new Date();dd.setDate(dd.getDate()-i);const ds=`${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,"0")}-${String(dd.getDate()).padStart(2,"0")}`;if(exDates.has(ds))exHit7++;}
         const EX_TYPES=[{k:"快走",e:"🚶"},{k:"游泳",e:"🏊"},{k:"重訓",e:"💪"},{k:"騎車",e:"🚴"},{k:"其他",e:"🏃"}];
         return(
           <div className="card" style={{padding:"12px",marginBottom:8}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:exToday?0:8}}>
-              <div>
-                <div style={{fontSize:13,fontWeight:700,color:C.text}}>🏃 運動打卡</div>
-                <div style={{fontSize:11,color:C.textMuted,marginTop:3}}>
-                  🔥 連續 {exStreak} 天 · 本週 {exHit}/7 天
-                  {exToday&&todayEx.type&&<span style={{color:C.blue,marginLeft:6}}>{EX_TYPES.find(t=>t.k===todayEx.type)?.e} {todayEx.type}</span>}
+            {/* 頂部：健康分數 */}
+            {total!=null&&(
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${C.border}`,cursor:"pointer"}}
+                onClick={()=>{setTab("trend");setTrendItem("radar");}}>
+                <div>
+                  <div style={{fontSize:10,color:C.textMuted,marginBottom:2}}>綜合健康分數</div>
+                  <div style={{display:"flex",alignItems:"baseline",gap:4}}>
+                    <span style={{fontFamily:"'DM Serif Display',serif",fontSize:32,color:scoreColor,lineHeight:1}}>{total}</span>
+                    <span style={{fontSize:11,color:C.textMuted}}>/100</span>
+                    {diff!=null&&<span style={{fontSize:11,color:diff>0?C.green:diff<0?C.red:C.textMuted,fontWeight:700}}>{diff>0?`▲+${diff}`:diff<0?`▼${diff}`:"→"}</span>}
+                  </div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  {scores.filter(d=>d.score!=null&&d.score<6.5).slice(0,2).map(d=>(
+                    <div key={d.label} style={{fontSize:10,color:C.amber,marginBottom:2}}>⚠️ {d.label.split("\n")[0]}</div>
+                  ))}
+                  <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>看雷達圖 →</div>
                 </div>
               </div>
-              {exToday&&<div style={{fontSize:20}}>✅</div>}
-            </div>
-            {!exToday&&(
-              <>
-                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
-                  {EX_TYPES.map(t=>(
-                    <button key={t.k} onClick={async()=>{
-                      const r=await api.post("append","exercise_log",{id:Date.now(),date:todayStr,checked:1,type:t.k});
-                      if(r&&!r.error){
-                        setExerciseLog(prev=>[...prev,{date:todayStr,checked:1,type:t.k}]);
-                        showToast(`✅ ${t.e} ${t.k} 打卡成功！`);
-                      }else showToast("❌ 打卡失敗，請確認Sheets有exercise_log分頁");
-                    }}
-                      style={{padding:"7px 12px",borderRadius:10,fontSize:12,cursor:"pointer",
-                        background:"rgba(90,180,255,0.1)",border:`1px solid rgba(90,180,255,0.3)`,
-                        color:C.blue,fontFamily:"'Noto Sans TC',sans-serif"}}>
-                      {t.e} {t.k}
-                    </button>
-                  ))}
-                </div>
-              </>
             )}
+            {/* 中部：打卡狀態橫排 */}
+            <div style={{display:"flex",gap:8,marginBottom:exToday?0:10}}>
+              {/* 早餐 */}
+              <div style={{flex:1,textAlign:"center"}}>
+                <div style={{fontSize:18,marginBottom:2}}>{bkfToday?"✅":"🍳"}</div>
+                <div style={{fontSize:11,fontWeight:600,color:bkfToday?C.green:C.text}}>早餐</div>
+                <div style={{fontSize:10,color:C.textMuted}}>🔥{bkfStreak}天</div>
+                {!bkfToday&&(
+                  <button onClick={async()=>{
+                    const r=await api.post("append","breakfast_log",{id:Date.now(),date:todayStr,checked:1});
+                    if(r&&!r.error){setBreakfastLog(prev=>[...prev,{date:todayStr,checked:1}]);showToast("✅ 早餐打卡！");}
+                    else showToast("❌ 打卡失敗");
+                  }}
+                    style={{marginTop:4,padding:"4px 8px",borderRadius:8,fontSize:11,cursor:"pointer",
+                      background:C.green,border:"none",color:"#0a0a0a",fontFamily:"'Noto Sans TC',sans-serif",fontWeight:700}}>
+                    打卡
+                  </button>
+                )}
+              </div>
+              {/* 分隔線 */}
+              <div style={{width:1,background:C.border}}/>
+              {/* 運動 */}
+              <div style={{flex:1,textAlign:"center"}}>
+                <div style={{fontSize:18,marginBottom:2}}>{exToday?"✅":"🏃"}</div>
+                <div style={{fontSize:11,fontWeight:600,color:exToday?C.blue:C.text}}>
+                  運動{exToday&&todayEx?.type?` ${EX_TYPES.find(t=>t.k===todayEx.type)?.e||""}`:""}</div>
+                <div style={{fontSize:10,color:C.textMuted}}>本週{exHit7}/7天</div>
+              </div>
+              {/* 分隔線 */}
+              <div style={{width:1,background:C.border}}/>
+              {/* 血壓 */}
+              <div style={{flex:1,textAlign:"center"}}>
+                {(()=>{
+                  const todayBP=bpHistory.find(r=>normalizeDate(r.date)===todayStr);
+                  return(<>
+                    <div style={{fontSize:18,marginBottom:2}}>{todayBP?"✅":"💓"}</div>
+                    <div style={{fontSize:11,fontWeight:600,color:todayBP?C.green:C.text}}>血壓</div>
+                    <div style={{fontSize:10,color:C.textMuted}}>{todayBP?`${todayBP.systolic}/${todayBP.diastolic}`:"今日未記錄"}</div>
+                  </>);
+                })()}
+              </div>
+            </div>
+            {/* 運動類型選擇（未打卡時顯示） */}
+            {!exToday&&(
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",paddingTop:8,borderTop:`1px solid ${C.border}`}}>
+                {EX_TYPES.map(t=>(
+                  <button key={t.k} onClick={async()=>{
+                    const r=await api.post("append","exercise_log",{id:Date.now(),date:todayStr,checked:1,type:t.k});
+                    if(r&&!r.error){setExerciseLog(prev=>[...prev,{date:todayStr,checked:1,type:t.k}]);showToast(`✅ ${t.e} ${t.k} 打卡！`);}
+                    else showToast("❌ 打卡失敗");
+                  }}
+                    style={{padding:"5px 10px",borderRadius:10,fontSize:11,cursor:"pointer",
+                      background:"rgba(90,180,255,0.1)",border:`1px solid rgba(90,180,255,0.3)`,
+                      color:C.blue,fontFamily:"'Noto Sans TC',sans-serif"}}>
+                    {t.e} {t.k}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+      {/* 睡眠不足提醒 */}
+      {(()=>{
+        const now=new Date();
+        const hour=now.getHours();
+        // 早上6-9點顯示（剛起床時最相關）
+        const SLEEP_TIPS=[
+          {icon:"🩸",text:"昨晚睡不足7小時？今天血糖控制效果會下降15-20%，注意午餐選擇"},
+          {icon:"❤️",text:"深層睡眠不足讓舒脈康效果打折，目標23:00前上床讓血壓自然下降"},
+          {icon:"💪",text:"睡眠是蛋白質轉換為肌肉的關鍵，你吃了這麼好的早餐，別在睡眠中浪費"},
+          {icon:"🧬",text:"深層睡眠合成70%睾固酮，充足睡眠對你的整體健康比任何保健品都重要"},
+        ];
+        const tip=SLEEP_TIPS[now.getDate()%SLEEP_TIPS.length];
+        return(
+          <div style={{background:"rgba(90,180,255,0.06)",border:`1px solid rgba(90,180,255,0.2)`,borderRadius:12,padding:"10px 12px",marginBottom:8,
+            display:"flex",alignItems:"flex-start",gap:8,cursor:"pointer"}}
+            onClick={()=>{setTab("knowledge");setKbTab("articles");}}>
+            <div style={{fontSize:18,flexShrink:0}}>{tip.icon}</div>
+            <div style={{flex:1}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.blue,marginBottom:2}}>😴 睡眠提醒</div>
+              <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{tip.text}</div>
+            </div>
+            <div style={{fontSize:10,color:C.blue,flexShrink:0}}>了解 →</div>
           </div>
         );
       })()}
@@ -2381,12 +2459,21 @@ const analyzeTrend = (key, data) => {
       <div className="card">
         <div className="card-title">快速記錄</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          {[{label:"血糖",icon:"🩸",sub:"glucose"},{label:"血壓",icon:"💓",sub:"bp"},{label:"體重",icon:"⚖️",sub:"weight"},{label:"抽血報告",icon:"📋",sub:"lab"},{label:"飲食",icon:"🍱",sub:"meal"},{label:"運動",icon:"🏃",sub:"exercise"}].map(item=>(
-            <div key={item.label} onClick={()=>{setTab("record");setRecordTab(item.sub)}}
-              style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 12px",fontSize:12,color:C.textMuted,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
-              {item.icon} {item.label}
-            </div>
-          ))}
+          {(()=>{
+            const todayStr=today();
+            const bkfDone=breakfastLog.some(r=>normalizeDate(r.date)===todayStr);
+            const exDone=exerciseLog.some(r=>normalizeDate(r.date)===todayStr);
+            const bpDone=bpHistory.some(r=>normalizeDate(r.date)===todayStr);
+            const gluDone=glucoseHistory.some(r=>normalizeDate(r.date)===todayStr);
+            const dotMap={glucose:!gluDone,bp:!bpDone,weight:false,lab:false,meal:false,exercise:!exDone};
+            return [{label:"血糖",icon:"🩸",sub:"glucose"},{label:"血壓",icon:"💓",sub:"bp"},{label:"體重",icon:"⚖️",sub:"weight"},{label:"抽血報告",icon:"📋",sub:"lab"},{label:"飲食",icon:"🍱",sub:"meal"},{label:"運動",icon:"🏃",sub:"exercise"}].map(item=>(
+              <div key={item.label} onClick={()=>{setTab("record");setRecordTab(item.sub)}}
+                style={{background:C.bg,border:`1px solid ${dotMap[item.sub]?C.amber:C.border}`,borderRadius:10,padding:"8px 12px",fontSize:12,color:dotMap[item.sub]?C.amber:C.textMuted,cursor:"pointer",display:"flex",alignItems:"center",gap:6,position:"relative"}}>
+                {item.icon} {item.label}
+                {dotMap[item.sub]&&<div style={{position:"absolute",top:4,right:4,width:6,height:6,borderRadius:"50%",background:C.amber}}/>}
+              </div>
+            ));
+          })()}
         </div>
       </div>
       {/* 最新抽血報告數值 */}
@@ -3337,7 +3424,7 @@ const analyzeTrend = (key, data) => {
   },
   "personal_tip": "針對你的脂肪肝+HDL偏低+糖尿病前期的個人化建議（30字內）"
 }`});
-        const result = await callClaude(content, 800);
+        const result = await callClaude([{role:"user", content}], 800);
         const clean = result.replace(/```json|```/g,"").trim();
         const parsed = JSON.parse(clean.slice(clean.indexOf("{"), clean.lastIndexOf("}")+1));
         setMealAnalysis(parsed);
@@ -3749,6 +3836,9 @@ ${radarStr}
 不要用markdown符號或*號`;
       const result=await callClaude([{role:"user",content:prompt}]);
       setAiReport(result||"分析失敗");
+      const todayStr=new Date().toISOString().split("T")[0];
+      setAiReportDate(todayStr);
+      localStorage.setItem("hj_weekly_cache",JSON.stringify({date:todayStr,report:result}));
     }catch(e){
       if(e.message==="NO_API_KEY"){
         showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");
@@ -3821,9 +3911,18 @@ ${radarStr}
             總評 · 數據重點 · 雷達分數 · 打卡達成率 · 行動建議 · 鼓勵
           </div>}
       </div>
-      <button className="btn-primary" style={{marginBottom:16}} onClick={generateAIReport} disabled={aiLoading}>
+      <button className="btn-primary" style={{marginBottom:4}} onClick={generateAIReport} disabled={aiLoading}>
         {aiLoading?"⏳ AI 分析中（約20秒）...":"📊 產生本週健康週報"}
       </button>
+      {aiReportDate&&(
+        <div style={{fontSize:10,color:C.textMuted,marginBottom:12,textAlign:"center"}}>
+          今日快取 {aiReportDate} ·
+          <span style={{color:C.blue,cursor:"pointer",marginLeft:4}}
+            onClick={()=>{localStorage.removeItem("hj_weekly_cache");setAiReport(null);setAiReportDate(null);showToast("快取清除，可重新產生");}}>
+            重新產生
+          </span>
+        </div>
+      )}
       {/* 快速問AI */}
       <div className="card">
         <div className="card-title">💬 快速問 AI</div>
@@ -4553,9 +4652,65 @@ ${radarStr}
                   {meal.items.map(item=><ItemCard key={item.name} item={item}/>)}
                 </div>
               ))}
-              {/* 晚餐後 */}
+              {/* 午後習慣 */}
               <div style={{height:1,background:C.border,margin:"16px 0"}}/>
-              <div style={{fontSize:12,fontWeight:700,color:C.blue,letterSpacing:1,marginBottom:8}}>🌙 晚餐後（20:00–22:00）</div>
+              <div style={{fontSize:12,fontWeight:700,color:C.amber,letterSpacing:1,marginBottom:8}}>☀️ 午後（13:00–14:00）</div>
+              {[
+                {
+                  name:"黑咖啡",qty:"300cc+（不加糖/奶精）",organs:["肝臟","血糖","大腦"],
+                  pros:[
+                    "護肝最強飲料：每天2杯以上可降低ALT/GGT、減少脂肪肝纖維化風險，有大量實證",
+                    "改善胰島素敏感性：綠原酸降低T2D風險約25-30%，對糖尿病前期直接有效",
+                    "輕微升HDL：對你的HDL 30.94有加成",
+                    "護大腦：長期降低阿茲海默症和帕金森風險",
+                  ],
+                  cons:[
+                    "2杯以上會心悸（你的親身經驗）→ 每天限1杯",
+                    "血壓敏感：咖啡因短暫升高血壓，1杯300cc在用藥控制下OK",
+                    "空腹喝傷胃：午餐後喝最佳（你13-14點的習慣✅）",
+                  ],
+                  note:"✅ 每天1杯300cc，13-14點喝，不影響睡眠，是你健康習慣的重要一環",
+                },
+                {
+                  name:"黑巧克力 85%以上",qty:"一小片10-15g",organs:["心血管","大腦","發炎/其他"],
+                  pros:[
+                    "可可黃烷醇擴張血管降血壓，與早餐無糖可可3g形成加成",
+                    "改善大腦認知功能和記憶，護神經",
+                    "多酚類強效抗氧化抗發炎",
+                    "鎂改善情緒，對越南工作壓力有幫助",
+                    "85%含糖量極低，血糖影響小（選擇正確✅）",
+                  ],
+                  cons:[
+                    "超過30g可能影響血糖，控制在10-15g即可",
+                    "含少量咖啡因（約5-10mg/片），與咖啡同時吃累積量仍在安全範圍",
+                    "熱量密度高（約80-90kcal/15g），每天一小片不超量",
+                  ],
+                  note:"建議與咖啡一起在午後享用，形成固定的愉悅健康習慣",
+                },
+              ].map(item=>(
+                <div key={item.name} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      <span style={{fontSize:13,fontWeight:700,color:C.text}}>{item.name}</span>
+                      <span style={{fontSize:11,color:C.textMuted}}>{item.qty}</span>
+                    </div>
+                    <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                      {item.organs.map(o=>(
+                        <span key={o} style={{fontSize:9,padding:"2px 6px",borderRadius:6,background:"rgba(46,204,138,0.12)",color:C.green,fontWeight:600}}>{o}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{marginBottom:6}}>
+                    <div style={{fontSize:10,fontWeight:700,color:C.green,marginBottom:3}}>✅ 優點</div>
+                    {item.pros.map((p,i)=><div key={i} style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>• {p}</div>)}
+                  </div>
+                  <div style={{marginBottom:6}}>
+                    <div style={{fontSize:10,fontWeight:700,color:C.amber,marginBottom:3}}>⚠️ 注意</div>
+                    {item.cons.map((c,i)=><div key={i} style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>• {c}</div>)}
+                  </div>
+                  <div style={{fontSize:11,color:C.blue,lineHeight:1.6,marginTop:4}}>💡 {item.note}</div>
+                </div>
+              ))}
               {DINNER.map(item=><ItemCard key={item.name} item={item}/>)}
               <div style={{fontSize:11,color:C.textMuted,textAlign:"center",marginTop:8,lineHeight:1.7}}>
                 針對弱項：HDL 30.94 · 脂肪肝G1 · 血糖前期 · 血壓130/90<br/>
@@ -4901,6 +5056,66 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
           </button>
         </div>
 
+        {/* Sheets 連線狀態 */}
+        {(()=>{
+          const [connStatus,setConnStatus]=React.useState("idle");
+          const [connInfo,setConnInfo]=React.useState(null);
+          const checkConn=async()=>{
+            setConnStatus("checking");
+            try{
+              const r=await api.get("ping");
+              if(r&&!r.error){
+                setConnStatus("ok");
+                setConnInfo({
+                  lab:labHistory.length,
+                  bp:bpHistory.length,
+                  glucose:glucoseHistory.length,
+                  weight:weightHistory.length,
+                  breakfast:breakfastLog.length,
+                  exercise:exerciseLog.length,
+                  lastSync:lastSync?lastSync.toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit"}):"—",
+                });
+              }else{setConnStatus("error");setConnInfo(null);}
+            }catch(e){setConnStatus("error");setConnInfo(null);}
+          };
+          return(
+            <div className="card">
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <div className="card-title" style={{marginBottom:0}}>🔌 Sheets 連線狀態</div>
+                <button onClick={checkConn} disabled={connStatus==="checking"}
+                  style={{padding:"5px 12px",borderRadius:8,fontSize:11,cursor:"pointer",
+                    background:"transparent",border:`1px solid ${C.border}`,color:C.textMuted,
+                    fontFamily:"'Noto Sans TC',sans-serif"}}>
+                  {connStatus==="checking"?"檢查中...":"檢查連線"}
+                </button>
+              </div>
+              {connStatus==="idle"&&<div style={{fontSize:12,color:C.textMuted}}>點擊「檢查連線」確認 GAS 和 Sheets 狀態</div>}
+              {connStatus==="ok"&&connInfo&&(
+                <div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                    <div style={{width:8,height:8,borderRadius:"50%",background:C.green}}/>
+                    <span style={{fontSize:12,color:C.green,fontWeight:700}}>連線正常</span>
+                    <span style={{fontSize:11,color:C.textMuted}}>上次同步 {connInfo.lastSync}</span>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+                    {[{label:"抽血",n:connInfo.lab},{label:"血壓",n:connInfo.bp},{label:"血糖",n:connInfo.glucose},{label:"體重",n:connInfo.weight},{label:"早餐",n:connInfo.breakfast},{label:"運動",n:connInfo.exercise}].map(s=>(
+                      <div key={s.label} style={{background:C.bg,borderRadius:8,padding:"6px 8px",textAlign:"center"}}>
+                        <div style={{fontSize:14,fontWeight:700,color:s.n>0?C.green:C.amber}}>{s.n}</div>
+                        <div style={{fontSize:10,color:C.textMuted}}>{s.label}筆</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {connStatus==="error"&&(
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <div style={{width:8,height:8,borderRadius:"50%",background:C.red}}/>
+                  <span style={{fontSize:12,color:C.red}}>連線失敗，請確認 GAS 已部署且網路正常</span>
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {/* 維護工具 */}
         <div className="card">
           <div className="card-title">維護工具</div>
