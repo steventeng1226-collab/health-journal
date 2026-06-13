@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.27";
+const VERSION = "v4.29";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -474,9 +474,11 @@ const ALL_TRACK_ITEMS = [
 
 // 影像檢查類型
 const IMAGING_TYPES = [
-  "腹部超音波","心臟超音波","頸動脈超音波",
-  "頭部CT","腹部CT","心臟CT","肺部CT",
-  "大腸鏡","胃鏡","X光","其他"
+  "腹部超音波","心臟超音波","頸動脈超音波","甲狀腺超音波",
+  "腦部MRI","心臟MRI","腹部MRI","脊椎MRI",
+  "頭部CT","腹部CT","腹部CTA血管造影","心臟CT","肺部CT",
+  "腦電圖EEG","神經傳導檢查","眼科綜合","眼底攝影","視野檢查",
+  "大腸鏡","胃鏡","X光","骨密度","住院摘要","其他"
 ];
 const KNOWLEDGE_ITEMS=[
   // 🩸 血糖
@@ -1152,6 +1154,7 @@ export default function HealthJournal(){
   const [trendAiResult,setTrendAiResult]=useState({});
   const [trendAiLoading,setTrendAiLoading]=useState(false);
   const [imagingForm,setImagingForm]=useState({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
+  const [editImaging,setEditImaging]=useState(null);
   const [breakfastLog,setBreakfastLog]=useState([]);
   const [exerciseLog,setExerciseLog]=useState([]);
   const [imagingPhotos,setImagingPhotos]=useState([]);
@@ -1662,7 +1665,31 @@ ${textPart}
       saveHospital(imagingForm.hospital);
       setImagingForm({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
       setImagingPhotos([]);
+      loadData();
     } else showToast("❌ 儲存失敗");
+  };
+
+  const updateImaging = async () => {
+    if (!editImaging) return;
+    if (!editImaging.hospital) { showToast("⚠️ 請輸入醫院名稱"); return; }
+    if (!editImaging.finding) { showToast("⚠️ 請輸入報告結論"); return; }
+    const r = await api.post("update", "imaging", {
+      id: editImaging.id,
+      date: editImaging.date,
+      type: editImaging.type,
+      hospital: editImaging.hospital,
+      country: editImaging.country,
+      finding: editImaging.finding,
+      recommendation: editImaging.recommendation,
+      nextDate: editImaging.nextDate,
+      driveUrl: editImaging.driveUrl||"",
+      note: editImaging.note||"",
+    });
+    if (r?.success) {
+      showToast("✅ 記錄已更新");
+      setEditImaging(null);
+      loadData();
+    } else showToast("❌ 更新失敗，請確認GAS有update功能");
   };
 
   const updateReminderDate=(id,lastDate)=>{
@@ -3333,6 +3360,16 @@ const analyzeTrend = (key, data) => {
                         )}
                       </>
                     )}
+                    {/* 編輯按鈕（影像記錄專用） */}
+                    {record._type==="imaging"&&(
+                      <button onClick={()=>setEditImaging({...record})}
+                        style={{width:"100%",padding:"10px",marginBottom:8,borderRadius:10,
+                          background:"rgba(90,180,255,0.1)",border:`1px solid rgba(90,180,255,0.3)`,
+                          color:C.blue,fontSize:13,cursor:"pointer",fontWeight:600,
+                          fontFamily:"'Noto Sans TC',sans-serif"}}>
+                        ✏️ 編輯此記錄（補充內容或照片）
+                      </button>
+                    )}
                     {/* 刪除按鈕 inline */}
                     {delConfirm?.id===record.id?(
                       <div style={{marginTop:12,display:"flex",gap:8}}>
@@ -3399,11 +3436,16 @@ const analyzeTrend = (key, data) => {
 食物：${mealText||"（請從圖片辨識食物）"}
 
 使用者背景（請針對此背景給出個人化分析）：
-- 糖尿病前期（HbA1c 5.97%，空腹血糖偏高）
-- 脂肪肝 Grade 1（ALT 偏高）
-- HDL 30.94 mg/dL（偏低）
-- 尿酸偏高（7.52 mg/dL）
-- 55歲男性，體重66kg，目標減重
+- 55歲台灣男性，越南工作，體重66kg
+- 糖尿病前期（HbA1c 5.7%，空腹血糖偏高）
+- 脂肪肝 Grade II（ALT 63偏高）
+- HDL 35 mg/dL偏低（目標>40）
+- 尿酸7.95偏高（高尿酸血症）
+- 高血壓130/90用藥中（舒脈康5/40）
+- 雙側髂總動脈瘤+左前降支LAD1冠狀動脈35%狹窄
+- 服用保栓通Plavix（抗血小板，出血風險高）
+- 平日午晚餐：公司自助餐，只吃菜+魚雞牛豬，不吃白飯
+- 週末：麵食為主（高碳水風險）
 
 回傳JSON格式（所有欄位必填）：
 {
@@ -3829,10 +3871,22 @@ ${radarStr}
 
 六、一句鼓勵（有溫度，結合55歲在越南工作的背景）
 
-病患背景：55歲台灣男性、父親T2D家族史、越南工作、
-已知問題：糖尿病前期HbA1c ${latestLab?.hba1c||5.8}%、脂肪肝G1、HDL偏低${latestLab?.hdl||31}、血壓130/90用藥中、血小板126偏低+服用Plavix
-目前用藥：舒脈康5/40（2天1次）、平脂4mg（每天）、保栓通75mg（每天）、DHA+EPA 6粒
-保健品：橄欖油5ml、堅果奶昔（核桃/杏仁/奇亞籽/亞麻籽/燕麥/薑黃/甜菜根粉）、EX NEO維他命、強力若元、希臘酸奶200g+奇異果
+病患背景：55歲台灣男性，越南工作，父親T2D家族史
+已確診問題（2025/03/19海防國際醫院住院確診）：
+- 糖尿病前期：HbA1c ${latestLab?.hba1c||5.7}%
+- 脂肪肝 Grade II：ALT ${latestLab?.alt||63}偏高
+- HDL偏低：${latestLab?.hdl||35} mg/dL
+- 高尿酸血症：尿酸 ${latestLab?.uric_acid||7.95} mg/dL
+- 高血壓：血壓130/90，服用舒脈康5/40
+- 雙側髂總動脈瘤（Bilateral common iliac artery aneurysm）
+- 左前降支LAD1冠狀動脈35%狹窄（輕度）
+- 頸動脈輕度動脈粥樣硬化
+- 右眼視野輕度異常（需追蹤）
+- 視網膜退行性變化+黃斑部亮度差（需補充葉黃素）
+- 左側眼瞼反射R1傳導異常（眼皮已不跳）
+- WBC 3.9/PLT 145偏低
+目前用藥：舒脈康5/40（2天1次晚上）、平脂4mg（每天晚上）、保栓通75mg（每天晚上）、DHA+EPA 6粒（晚餐後）、EX NEO維他命2錠（早餐後）、強力若元9粒（早上）
+保健品：橄欖油5ml+堅果奶昔（含核桃/杏仁/南瓜子/奇亞籽/亞麻籽/燕麥/薑黃+胡椒/甜菜根粉/無糖可可）、午後黑咖啡300cc+黑巧克力85%、晚上希臘酸奶200g+奇異果（含皮）
 不要用markdown符號或*號`;
       const result=await callClaude([{role:"user",content:prompt}]);
       setAiReport(result||"分析失敗");
@@ -5185,6 +5239,71 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
             <div style={{display:"flex",gap:10}}>
               <button className="btn-secondary" style={{flex:1}} onClick={()=>{setShowPhotoWarning(false);setPendingPhotos(null);}}>取消</button>
               <button className="btn-primary" style={{flex:2}} onClick={()=>{confirmPhotos();photoInputRef.current?.click();}}>確定上傳照片</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 影像記錄編輯Modal */}
+      {editImaging&&(
+        <div className="overlay" onClick={()=>setEditImaging(null)}>
+          <div className="overlay-sheet" onClick={e=>e.stopPropagation()}
+            style={{maxHeight:"90vh",overflowY:"auto"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div style={{fontSize:15,fontWeight:700,color:C.text}}>✏️ 編輯影像記錄</div>
+              <button onClick={()=>setEditImaging(null)}
+                style={{background:"transparent",border:"none",fontSize:20,color:C.textMuted,cursor:"pointer"}}>×</button>
+            </div>
+            {/* 類型+日期 */}
+            <div style={{display:"flex",gap:8,marginBottom:8}}>
+              <select className="input-field" style={{flex:1}} value={editImaging.type}
+                onChange={e=>setEditImaging(v=>({...v,type:e.target.value}))}>
+                {IMAGING_TYPES.map(t=><option key={t}>{t}</option>)}
+              </select>
+              <input className="input-field" type="date" style={{flex:1}} value={editImaging.date}
+                onChange={e=>setEditImaging(v=>({...v,date:e.target.value}))}/>
+            </div>
+            {/* 醫院+國家 */}
+            <div style={{display:"flex",gap:8,marginBottom:8}}>
+              <input className="input-field" placeholder="醫院名稱" style={{flex:2}} value={editImaging.hospital||""}
+                onChange={e=>setEditImaging(v=>({...v,hospital:e.target.value}))}/>
+              <input className="input-field" placeholder="國家" style={{flex:1}} value={editImaging.country||""}
+                onChange={e=>setEditImaging(v=>({...v,country:e.target.value}))}/>
+            </div>
+            {/* 報告結論 */}
+            <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>報告結論（詳細）</div>
+            <textarea className="input-field" rows={8} style={{resize:"vertical",marginBottom:8,fontSize:12,lineHeight:1.7}}
+              value={editImaging.finding||""}
+              onChange={e=>setEditImaging(v=>({...v,finding:e.target.value}))}
+              placeholder="貼上完整報告內容..."/>
+            {/* 醫師建議 */}
+            <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>醫師建議</div>
+            <textarea className="input-field" rows={3} style={{resize:"vertical",marginBottom:8,fontSize:12}}
+              value={editImaging.recommendation||""}
+              onChange={e=>setEditImaging(v=>({...v,recommendation:e.target.value}))}
+              placeholder="醫師建議、追蹤事項..."/>
+            {/* 下次追蹤+備註 */}
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>下次追蹤日期</div>
+                <input className="input-field" type="date" value={editImaging.nextDate||""}
+                  onChange={e=>setEditImaging(v=>({...v,nextDate:e.target.value}))}/>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>備註</div>
+                <input className="input-field" value={editImaging.note||""}
+                  onChange={e=>setEditImaging(v=>({...v,note:e.target.value}))}
+                  placeholder="其他備註..."/>
+              </div>
+            </div>
+            {/* 照片URL */}
+            <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>照片網址（Cloudinary上傳後填入，多張用逗號分隔）</div>
+            <textarea className="input-field" rows={2} style={{marginBottom:12,fontSize:11}}
+              value={editImaging.driveUrl||""}
+              onChange={e=>setEditImaging(v=>({...v,driveUrl:e.target.value}))}
+              placeholder="https://res.cloudinary.com/..."/>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn-secondary" style={{flex:1}} onClick={()=>setEditImaging(null)}>取消</button>
+              <button className="btn-primary" style={{flex:2}} onClick={updateImaging}>💾 儲存更新</button>
             </div>
           </div>
         </div>
