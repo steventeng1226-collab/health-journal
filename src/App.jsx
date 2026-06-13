@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.36";
+const VERSION = "v4.41";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1236,6 +1236,69 @@ export default function HealthJournal(){
   const [labForm,setLabForm]=useState({date:"",hospital:"",country:"台灣",fasting:"空腹"});
   const [showPhotoWarning,setShowPhotoWarning]=useState(false);
   const [pendingPhotos,setPendingPhotos]=useState(null);
+  // ── 每日AI顧問問候 ──────────────────────────────────
+  const [dailyGreeting,setDailyGreeting]=useState(()=>{
+    try{
+      const cache=JSON.parse(localStorage.getItem("hj_daily_greeting")||"null");
+      if(cache&&cache.date===new Date().toISOString().split("T")[0])return cache.greeting;
+    }catch(e){}
+    return null;
+  });
+  const [greetingLoading,setGreetingLoading]=useState(false);
+
+  const generateDailyGreeting=async()=>{
+    const key=localStorage.getItem("hj_apikey")||"";
+    if(!key||greetingLoading)return;
+    const todayStr=new Date().toISOString().split("T")[0];
+    const cache=JSON.parse(localStorage.getItem("hj_daily_greeting")||"null");
+    if(cache&&cache.date===todayStr)return; // 今天已產生
+    setGreetingLoading(true);
+    try{
+      const hour=new Date().getHours();
+      const timeGreet=hour<12?"早安":hour<18?"午安":"晚安";
+      const weekday=["日","一","二","三","四","五","六"][new Date().getDay()];
+      const isWeekend=new Date().getDay()===0||new Date().getDay()===6;
+      // 昨晚睡眠
+      const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
+      const yStr=yesterday.toISOString().split("T")[0];
+      const lastSleep=[...sleepLog].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+      const sleepNote=lastSleep
+        ?`昨晚睡眠：${Math.floor((lastSleep.total_min||0)/60)}小時${(lastSleep.total_min||0)%60}分，深層${Math.round((lastSleep.deep_min||0)/(lastSleep.total_min||1)*100)}%，評分${lastSleep.score||"—"}，血氧${lastSleep.spo2_avg||"—"}%`
+        :"無昨晚睡眠記錄";
+      // 最近血壓
+      const lastBP=[...bpHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+      const bpNote=lastBP?`最近血壓 ${lastBP.systolic}/${lastBP.diastolic}`:"無血壓記錄";
+      // 最近血糖
+      const lastGluc=[...glucoseHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+      const glucNote=lastGluc?`最近血糖 ${lastGluc.value_mgdl} mg/dL`:"無血糖記錄";
+      // 到期追蹤
+      const overdues=reminders.filter(r=>new Date(r.nextDate)<=new Date()).map(r=>r.title).slice(0,2);
+      const prompt=`你是Steven的私人健康顧問，每天早上用溫暖、簡短的方式跟他打招呼並提醒最重要的健康狀況。
+
+Steven基本資料：55歲台灣男性，越南海防工作，與家人分隔兩地。
+七項並發診斷：高血壓、雙側髂總動脈瘤、LAD1冠狀動脈35%狹窄、脂肪肝Grade II、高尿酸、肝酶偏高、糖尿病前期HbA1c。
+今天：週${weekday}${isWeekend?"（週末，麵食血糖風險高）":""}，現在${hour}點。
+
+今日狀況：
+・${sleepNote}
+・${bpNote}
+・${glucNote}
+${overdues.length>0?`・追蹤提醒已過期：${overdues.join("、")}`:""}
+
+請用2-3句話跟Steven說話，像朋友兼顧問：
+1. 根據昨晚睡眠給一句具體評語
+2. 今天最需要注意的一件事（結合他的複合診斷，不要只說單點）
+3. 一句鼓勵或提醒
+語氣溫暖自然，不要像報告，不要用標題或條列，直接說話。繁體中文。`;
+      const result=await callClaude([{role:"user",content:prompt}],300);
+      if(result&&!result.startsWith("❌")){
+        setDailyGreeting(result);
+        localStorage.setItem("hj_daily_greeting",JSON.stringify({date:todayStr,greeting:result}));
+      }
+    }catch(e){console.log("greeting error",e);}
+    setGreetingLoading(false);
+  };
+
   const [aiReport,setAiReport]=useState(()=>{
     try{
       const cache=JSON.parse(localStorage.getItem("hj_weekly_cache")||"null");
@@ -2433,6 +2496,27 @@ const analyzeTrend = (key, data) => {
       </div>
       {loading&&<div style={{textAlign:"center",color:C.textMuted,fontSize:12,marginBottom:12}}><span className="spin">⟳</span> 載入中...</div>}
       {!isOnline&&<div style={{background:"rgba(255,179,71,0.1)",border:"1px solid rgba(255,179,71,0.3)",borderRadius:10,padding:"8px 12px",marginBottom:10,fontSize:12,color:C.amber,textAlign:"center"}}>📴 離線模式 · 顯示本地快取資料</div>}
+      {/* 每日AI顧問問候 */}
+      <div style={{background:"linear-gradient(135deg,rgba(46,204,138,0.12),rgba(52,152,219,0.12))",
+        border:`1px solid ${C.green}44`,borderRadius:12,padding:"12px 14px",marginBottom:12}}>
+        <div style={{fontSize:10,color:C.green,fontWeight:700,letterSpacing:1,marginBottom:6,
+          display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <span>🤖 健康顧問</span>
+          <button onClick={()=>{localStorage.removeItem("hj_daily_greeting");setDailyGreeting(null);generateDailyGreeting();}}
+            style={{fontSize:9,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
+            重新產生
+          </button>
+        </div>
+        {greetingLoading
+          ?<div style={{fontSize:12,color:C.textMuted}}>⏳ 顧問正在思考中...</div>
+          :dailyGreeting
+            ?<div style={{fontSize:13,color:C.text,lineHeight:1.8}}>{dailyGreeting}</div>
+            :<div style={{fontSize:12,color:C.textMuted}}>
+                今日問候尚未產生
+                {!localStorage.getItem("hj_apikey")&&<span>（請先設定API金鑰）</span>}
+              </div>
+        }
+      </div>
       <div style={{background:"rgba(255,179,71,0.1)",border:"1px solid rgba(255,179,71,0.3)",borderRadius:12,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
         <span style={{fontSize:20}}>⚠️</span>
         <div>
@@ -2582,6 +2666,110 @@ const analyzeTrend = (key, data) => {
                 color:C.blue,fontFamily:"'Noto Sans TC',sans-serif",fontWeight:600}}>
               📊 記錄本週睡眠數據（Watch 7）→ 每週分析
             </button>
+          </div>
+        );
+      })()}
+      {/* 整體健康評估摘要（每週自動，首頁顯眼位置）*/}
+      {(()=>{
+        const report=overallReport||"";
+        const reportDate=overallDate||"";
+        const daysSinceReport=reportDate?Math.floor((new Date()-new Date(reportDate))/(1000*60*60*24)):999;
+        if(overallLoading)return(
+          <div style={{background:C.blue+"15",border:`1px solid ${C.blue}44`,borderRadius:10,
+            padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:20}}>⏳</span>
+            <div style={{fontSize:12,color:C.blue}}>正在產生本週整體健康評估...</div>
+          </div>
+        );
+        if(!report||report.startsWith("❌"))return(
+          <div style={{background:C.blue+"15",border:`1px solid ${C.blue}44`,borderRadius:10,
+            padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:20}}>🏥</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.blue,marginBottom:2}}>整體健康評估</div>
+              <div style={{fontSize:11,color:C.textMuted}}>尚未產生評估報告</div>
+            </div>
+            <button onClick={()=>generateOverallReport(false)}
+              style={{fontSize:11,padding:"5px 10px",background:C.blue,border:"none",
+                borderRadius:6,color:"#fff",fontWeight:700,cursor:"pointer",flexShrink:0}}>
+              立即產生
+            </button>
+          </div>
+        );
+        // 萃取「五、紅旗」和「三、複合因果」段落
+        const lines=report.split("\n").map(l=>l.trim()).filter(Boolean);
+        const extractSection=(startPat,endPat)=>{
+          let capturing=false;
+          const result=[];
+          for(const line of lines){
+            if(startPat.test(line)){capturing=true;continue;}
+            if(capturing&&endPat.test(line))break;
+            if(capturing&&line.length>8)result.push(line);
+          }
+          return result;
+        };
+        const redFlags=extractSection(/五、|紅旗|立即注意/,/六、|七、|下次看診/).slice(0,3);
+        const causal=extractSection(/三、|複合因果|互相加重/,/四、|五、|結構性/).slice(0,2);
+        const summary=lines.find(l=>/七、|一句話/.test(l))||"";
+        const [expanded,setExpanded]=React.useState(false);
+        return(
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.blue,letterSpacing:1,marginBottom:6,
+              display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span>🏥 整體健康評估
+                <span style={{fontSize:9,color:C.textMuted,fontWeight:400,marginLeft:6}}>
+                  {reportDate} {daysSinceReport<=1?"（今日）":daysSinceReport<=7?`（${daysSinceReport}天前）`:"（本週更新）"}
+                </span>
+              </span>
+              <button onClick={()=>generateOverallReport(false)}
+                style={{fontSize:9,color:C.textMuted,background:"none",border:`1px solid ${C.border}`,
+                  borderRadius:4,padding:"2px 6px",cursor:"pointer"}}>
+                重新產生
+              </button>
+            </div>
+            <div style={{background:C.blue+"12",border:`1px solid ${C.blue}44`,borderRadius:10,padding:"10px 12px"}}>
+              {/* 紅旗 */}
+              {redFlags.length>0&&(
+                <div style={{marginBottom:causal.length>0?8:0}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.red,marginBottom:5,letterSpacing:0.5}}>🚩 需要注意</div>
+                  {redFlags.slice(0,expanded?redFlags.length:2).map((line,i)=>(
+                    <div key={i} style={{display:"flex",gap:6,marginBottom:4}}>
+                      <span style={{color:C.red,flexShrink:0,fontSize:11}}>▸</span>
+                      <div style={{fontSize:11,color:C.text,lineHeight:1.6}}>{line}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* 複合因果（展開後顯示）*/}
+              {expanded&&causal.length>0&&(
+                <div style={{marginBottom:8,paddingTop:8,borderTop:`1px solid ${C.blue}22`}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.amber,marginBottom:5}}>🔗 複合關聯</div>
+                  {causal.map((line,i)=>(
+                    <div key={i} style={{display:"flex",gap:6,marginBottom:4}}>
+                      <span style={{color:C.amber,flexShrink:0,fontSize:11}}>▸</span>
+                      <div style={{fontSize:11,color:C.text,lineHeight:1.6}}>{line}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* 總結句 */}
+              {expanded&&summary&&(
+                <div style={{paddingTop:8,borderTop:`1px solid ${C.blue}22`,
+                  fontSize:11,color:C.green,lineHeight:1.6,fontStyle:"italic"}}>
+                  💬 {summary.replace(/七、一句話總結[：:]/,"").trim()}
+                </div>
+              )}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+                <button onClick={()=>setExpanded(v=>!v)}
+                  style={{fontSize:10,color:C.blue,background:"none",border:"none",cursor:"pointer",padding:0}}>
+                  {expanded?"▲ 收起":"▼ 展開複合關聯"}
+                </button>
+                <button onClick={()=>setTab("ai")}
+                  style={{fontSize:10,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
+                  查看完整報告 →
+                </button>
+              </div>
+            </div>
           </div>
         );
       })()}
@@ -4466,6 +4654,47 @@ ${weekData||"尚無記錄"}
               <div className="card" style={{marginBottom:12}}>
                 <div className="card-title">😴 輸入 Watch 7 睡眠數據</div>
 
+                {/* ChatGPT指令複製區 */}
+                {(()=>{
+                  const [copied,setCopied]=React.useState(false);
+                  const GPT_CMD=`請從這些 Samsung Health 睡眠截圖中擷取數據，輸出以下固定格式（純文字，不要多餘說明）：
+
+日期：
+上床時間：
+起床時間：
+總時間（分鐘）：
+實際睡眠（分鐘）：
+睡眠評分：
+深層睡眠（分鐘）：
+淺層睡眠（分鐘）：
+REM（分鐘）：
+清醒（分鐘）：
+血氧平均（%）：
+血氧低於90%（分鐘）：
+平均心跳（次/分）：
+呼吸速率（次/分）：
+備註：`;
+                  return(
+                    <div style={{marginBottom:10}}>
+                      <div style={{fontSize:11,color:C.textMuted,marginBottom:6,lineHeight:1.6}}>
+                        步驟①：複製指令 → 開ChatGPT → 上傳截圖 + 貼上指令<br/>
+                        步驟②：複製ChatGPT輸出 → 貼到下方「自動填入」
+                      </div>
+                      <button onClick={()=>{
+                        navigator.clipboard?.writeText(GPT_CMD).then(()=>{
+                          setCopied(true);setTimeout(()=>setCopied(false),3000);
+                          showToast("✅ 已複製！去ChatGPT貼上");
+                        });
+                      }} style={{width:"100%",padding:"10px",marginBottom:6,
+                        background:copied?C.green+"33":C.amber+"22",
+                        border:`1px solid ${copied?C.green:C.amber}`,
+                        borderRadius:8,color:copied?C.green:C.amber,
+                        fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                        {copied?"✅ 已複製！去 ChatGPT 貼上":"📤 複製 ChatGPT 擷取指令"}
+                      </button>
+                    </div>
+                  );
+                })()}
                 {/* 貼上解析區 */}
                 <button onClick={()=>setShowPaste(v=>!v)}
                   style={{width:"100%",padding:"10px",marginBottom:10,background:C.green+"22",
@@ -4794,15 +5023,15 @@ ${radarStr}
     return alerts;
   };
 
-  // ── 整體健康評估（讀取全部歷史做縱向+橫向分析）──────
-  const generateOverallReport=async()=>{
+  // ── 整體健康評估（複合視角，含睡眠/行為/結構性問題）──
+  const generateOverallReport=async(silent=false)=>{
     const key=localStorage.getItem("hj_apikey")||apiKey||"";
-    if(!key){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");return;}
-    if(labHistory.length===0){showToast("⚠️ 尚無抽血資料可分析");return;}
+    if(!key){if(!silent){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");}return;}
+    if(labHistory.length===0){if(!silent)showToast("⚠️ 尚無抽血資料可分析");return;}
     setOverallLoading(true);
     try{
-      showToast("⏳ 讀取全部歷史分析中，約30秒...");
-      // 核心指標的歷次序列（依日期排序）
+      if(!silent)showToast("⏳ 讀取全部歷史分析中，約30秒...");
+      // 抽血趨勢
       const sorted=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
       const trackKeys=[
         {k:"hba1c",label:"HbA1c(%)"},{k:"glucose_ac",label:"空腹血糖"},
@@ -4823,56 +5052,112 @@ ${radarStr}
         :"血壓: 尚無記錄";
       // 影像診斷摘要
       const imgSummary=imagingHistory.length>0
-        ?imagingHistory.map(r=>`・${r.date} ${r.type}: ${(r.finding||"").slice(0,60)}`).join("\n")
+        ?imagingHistory.map(r=>`・${r.date} ${r.type}: ${(r.finding||"").slice(0,80)}`).join("\n")
         :"無影像記錄";
-      const prompt=`你是一位資深內科主治醫師，正在為一位長期追蹤的病患做完整健康評估。請綜觀所有歷史數據，用繁體中文產生整體健康評估報告。
+      // 睡眠近4週摘要
+      const sleepSorted=[...sleepLog].filter(r=>r.date).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+      const sleepRecent=sleepSorted.slice(0,28);
+      const avgTotalMin=sleepRecent.length>0?Math.round(sleepRecent.reduce((s,r)=>s+(parseInt(r.total_min)||0),0)/sleepRecent.length):null;
+      const avgDeepPct=sleepRecent.length>0?Math.round(sleepRecent.reduce((s,r)=>s+(parseInt(r.deep_min)||0),0)/sleepRecent.reduce((s,r)=>s+(parseInt(r.total_min)||1),0)*100):null;
+      const avgScore=sleepRecent.length>0?Math.round(sleepRecent.reduce((s,r)=>s+(parseInt(r.score)||0),0)/sleepRecent.length):null;
+      const avgSpo2=sleepRecent.filter(r=>r.spo2_avg>0).length>0
+        ?Math.round(sleepRecent.filter(r=>r.spo2_avg>0).reduce((s,r)=>s+(parseInt(r.spo2_avg)||0),0)/sleepRecent.filter(r=>r.spo2_avg>0).length):null;
+      const spo2Below90Days=sleepRecent.filter(r=>parseFloat(r.spo2_below90_min)>10).length;
+      const sleepSummary=sleepRecent.length>0
+        ?`近${sleepRecent.length}天睡眠：平均${avgTotalMin}分鐘/晚，深層${avgDeepPct}%，評分${avgScore||"—"}，血氧平均${avgSpo2||"—"}%，血氧低於90%超過10分鐘共${spo2Below90Days}天`
+        :"無睡眠記錄";
+      // 運動近4週
+      const exSorted=[...exerciseLog].filter(r=>r.date).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+      const exDays28=exSorted.filter(r=>{const d=new Date(r.date);return(new Date()-d)/(1000*60*60*24)<=28;}).length;
+      const exSummary=exerciseLog.length>0?`近28天運動${exDays28}天`:"無運動記錄";
+      const prompt=`你是一位資深內科主治醫師兼複合健康顧問，正在為長期追蹤的病患做整體健康評估。請從複合視角分析，不要單點看待個別指標，要找出各維度之間的因果關聯。用繁體中文，不要用markdown符號或*號。
 
 【病患基本資料】
-55歲台灣男性，越南工作，父親T2D家族史。
+55歲台灣男性，越南海防工作，與家人分隔兩地，父親T2D家族史。
 
-【2025/03/19海防國際醫院住院確診（7項）】
-①眼瞼肌束顫動（左側，已緩解）②高血壓③雙側髂總動脈瘤④左前降支LAD1冠狀動脈35%狹窄⑤肝酶升高⑥高尿酸血症⑦脂肪肝GradeII
+【2025/03/19住院確診七項並發診斷】
+①高血壓（血壓130/90）
+②雙側髂總動脈瘤（結構性，需定期追蹤）
+③左前降支LAD1冠狀動脈35%狹窄（輕度）
+④肝酶升高（ALT 63.54）
+⑤高尿酸血症（7.95 mg/dL）
+⑥脂肪肝 Grade II（從G1惡化）
+⑦眼瞼肌束顫動左側（已緩解）
+附加：右眼視野輕度異常、視網膜退化+黃斑部亮度差、頸動脈輕度粥樣硬化、LVPWd 18.3mm待複評、WBC/PLT偏低
 
-【核心指標歷次趨勢（時間序列）】
+【目前用藥】
+舒脈康5/40（2天1次晚）、平脂4mg（每天晚）、保栓通Plavix 75mg（每天晚）、悠樂丁2mg（偶爾睡前）
+
+【保健品與飲食習慣】
+早餐：堅果奶昔（核桃/杏仁/南瓜子/奇亞籽/亞麻籽/燕麥/薑黃/甜菜根粉/無糖可可）+雞蛋2-3顆+酪梨+橄欖油5ml
+午晚：公司自助餐只吃菜+蛋白質，不吃白飯；週末麵食為主（最大血糖風險）
+DHA+EPA 6粒晚餐後、EX NEO 2錠早、強力若元9粒早
+
+【抽血核心指標歷次趨勢】
 ${trendLines}
 ${bpLine}
 
-【影像/結構診斷】
+【影像與結構診斷記錄】
 ${imgSummary}
 
-【目前用藥】舒脈康5/40（2天1次）、平脂4mg、保栓通Plavix75mg、悠樂丁2mg（偶爾）
-【保健品】橄欖油、堅果奶昔、DHA+EPA、希臘酸奶+奇異果
+【睡眠數據（Samsung Watch 7）】
+${sleepSummary}
+注意：悠樂丁（BZD）會抑制深層睡眠，睡眠不足直接影響血糖、血壓、HDL、荷爾蒙。
 
-請依以下結構分析，不要用markdown符號或*號：
+【行為數據】
+${exSummary}
+
+請依以下結構分析：
 
 【整體健康評估報告】
 
-一、健康全貌（2-3句總結這個人的核心健康主軸）
+一、健康全貌
+（從複合視角總結：這7項診斷之間的核心連結是什麼？最根本的健康主軸是什麼？2-3句）
 
-二、核心指標趨勢解讀（針對上面的時間序列，指出每個重要指標是改善、惡化還是持平，用箭頭表示方向）
+二、各維度趨勢（改善↑/持平→/惡化↓）
+（抽血指標、血壓、睡眠、體重各自方向，用箭頭標示）
 
-三、指標間的關聯（找出指標之間互相影響的關係，例如血糖改善但肝酶惡化的可能原因）
+三、複合因果關聯
+（重點找出：哪些問題互相加重？例如睡眠差→血糖控制差→脂肪肝惡化→尿酸升高的連鎖；血壓未達標→動脈瘤風險加大的關係）
 
-四、結構性問題追蹤重點（動脈瘤、冠狀動脈狹窄、視網膜退化等不會出現在抽血但需長期監控的問題）
+四、結構性問題追蹤
+（動脈瘤、LAD1狹窄、視網膜退化等不出現在抽血的問題，目前狀態與追蹤重點）
 
-五、需要立即注意的紅旗（列出2-4項最需要關注或矛盾的發現）
+五、本週需要注意的紅旗
+（2-4項最需要立即關注的複合發現，每項標明涉及哪些維度）
 
-六、下次抽血/看診的重點建議（具體該追蹤什麼）
+六、下次看診/抽血重點
+（具體建議追蹤哪些指標，與哪個科別）
 
-七、一句總結與鼓勵`;
-      const result=await callClaude([{role:"user",content:prompt}],2000);
+七、一句話總結`;
+      const result=await callClaude([{role:"user",content:prompt}],2500);
       setOverallReport(result||"分析失敗");
       const stamp=new Date().toISOString().split("T")[0];
       setOverallDate(stamp);
       localStorage.setItem("hj_overall_cache",JSON.stringify({date:stamp,report:result}));
     }catch(e){
-      if(e.message==="NO_API_KEY"){showToast("⚠️ 請先設定API金鑰");setTab("setting");}
-      else if(e.message.includes("401")){showToast("❌ API金鑰無效");setTab("setting");}
-      else if(e.message.includes("429")){showToast("❌ API使用量超限");}
-      else{setOverallReport("❌ 分析失敗："+e.message);showToast("❌ "+e.message);}
+      if(e.message==="NO_API_KEY"){if(!silent){showToast("⚠️ 請先設定API金鑰");setTab("setting");}}
+      else if(e.message.includes("401")){if(!silent){showToast("❌ API金鑰無效");setTab("setting");}}
+      else if(e.message.includes("429")){if(!silent)showToast("❌ API使用量超限");}
+      else{setOverallReport("❌ 分析失敗："+e.message);if(!silent)showToast("❌ "+e.message);}
     }
     setOverallLoading(false);
   };
+
+  // ── 每週自動觸發整體評估 ─────────────────────────────
+  React.useEffect(()=>{
+    const key=localStorage.getItem("hj_apikey")||"";
+    if(!key)return;
+    const cache=JSON.parse(localStorage.getItem("hj_overall_cache")||"null");
+    if(!cache||!cache.date)return generateOverallReport(true);
+    const daysSince=Math.floor((new Date()-new Date(cache.date))/(1000*60*60*24));
+    if(daysSince>=7)generateOverallReport(true);
+  },[labHistory.length,sleepLog.length]);
+
+  // ── 每日問候自動觸發（資料載入後執行）────────────────
+  React.useEffect(()=>{
+    if(!loading)generateDailyGreeting();
+  },[loading,sleepLog.length]);
 
   const AITab=()=>{
     const [aiQuestion,setAiQuestion]=useState("");
