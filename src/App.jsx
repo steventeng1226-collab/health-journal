@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.35";
+const VERSION = "v4.36";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1695,11 +1695,13 @@ ${textPart}
     if(r?.success){
       saveHospital(labForm.hospital);
       const SKIP_COUNT_KEYS = new Set(['id','date','hospital','country','doctor','fasting','note','extra_data','source_country','createdAt','_extraData','_type','_icon','_label','_summary']);
-    const dataCount = Object.keys(data).filter(k=>
-      !SKIP_COUNT_KEYS.has(k) &&
-      data[k]!==null && data[k]!==undefined && data[k]!==""
-    ).length;
-    showToast(`✅ 抽血報告已儲存（${dataCount}筆數據）`);
+      const dataCount = Object.keys(data).filter(k=>
+        !SKIP_COUNT_KEYS.has(k) &&
+        data[k]!==null && data[k]!==undefined && data[k]!==""
+      ).length;
+      showToast(`✅ 抽血報告已儲存（${dataCount}筆數據）`);
+      // 自動更新抽血相關追蹤提醒
+      await autoUpdateReminder("lab", labForm.date||data.date||today());
       setLabStep("input");
       setLabInputText("");setLabPhotos([]);
       setLabParsed({});setLabForm({date:"",hospital:"",country:"台灣",fasting:"空腹"});
@@ -1719,6 +1721,47 @@ ${textPart}
     });
   };
 
+  // ── 自動更新追蹤提醒（存入記錄時觸發）────────────────
+  const autoUpdateReminder=async(recordType,recordDate)=>{
+    if(!reminders||reminders.length===0)return;
+    // 配對規則：記錄類型關鍵字 → 提醒關鍵字 + 間隔月數
+    const RULES=[
+      {recKeys:["腹部超音波","腹部CT","腹部MRI"],reminderKeys:["腹","超音波"],months:6},
+      {recKeys:["心臟超音波","心臟CT","心臟MRI"],reminderKeys:["心臟","心血管"],months:6},
+      {recKeys:["頸動脈超音波"],reminderKeys:["頸動脈"],months:12},
+      {recKeys:["視野檢查"],reminderKeys:["視野"],months:4},
+      {recKeys:["眼底攝影","眼科綜合"],reminderKeys:["眼底","眼科","視網膜"],months:6},
+      {recKeys:["大腸鏡"],reminderKeys:["大腸"],months:60},
+      {recKeys:["胃鏡"],reminderKeys:["胃鏡"],months:24},
+      {recKeys:["腦部MRI","頭部CT"],reminderKeys:["腦部","神經"],months:12},
+      {recKeys:["骨密度"],reminderKeys:["骨密度"],months:24},
+      {recKeys:["lab","抽血"],reminderKeys:["血液","抽血","肝功能","血常規"],months:3},
+      {recKeys:["住院摘要"],reminderKeys:["心臟科","心血管"],months:6},
+    ];
+    // 找符合的規則
+    const rule=RULES.find(r=>r.recKeys.some(k=>recordType.includes(k)||recordType===k));
+    if(!rule)return;
+    // 找符合的提醒
+    const matched=reminders.filter(rem=>rule.reminderKeys.some(k=>(rem.title||"").includes(k)));
+    if(matched.length===0)return;
+    // 計算新的下次日期
+    const base=new Date(recordDate);
+    if(isNaN(base.getTime()))return;
+    base.setMonth(base.getMonth()+rule.months);
+    const newNextDate=`${base.getFullYear()}-${String(base.getMonth()+1).padStart(2,"0")}-${String(base.getDate()).padStart(2,"0")}`;
+    // 更新每個符合的提醒
+    let updated=0;
+    for(const rem of matched){
+      const r=await api.post("updateReminder","reminders",
+        {id:rem.id,lastDate:recordDate,nextDate:newNextDate});
+      if(r?.success)updated++;
+    }
+    if(updated>0){
+      showToast(`✅ 已自動更新 ${updated} 項追蹤提醒 → 下次 ${newNextDate}`);
+      loadData();
+    }
+  };
+
   const saveImaging = async () => {
     if (!imagingForm.hospital) { showToast("⚠️ 請輸入醫院名稱"); return; }
     if (!imagingForm.finding) { showToast("⚠️ 請輸入報告結論"); return; }
@@ -1736,6 +1779,8 @@ ${textPart}
     if (r?.success) {
       showToast("✅ 影像檢查記錄已儲存");
       saveHospital(imagingForm.hospital);
+      // 自動更新追蹤提醒
+      await autoUpdateReminder(imagingForm.type, imagingForm.date);
       setImagingForm({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
       setImagingPhotos([]);
       loadData();
