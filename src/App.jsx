@@ -2585,6 +2585,81 @@ const analyzeTrend = (key, data) => {
           </div>
         );
       })()}
+      {/* 複合健康提醒（從週報萃取跨維度警示）*/}
+      {(()=>{
+        const report=aiReport||"";
+        if(!report||report.startsWith("❌"))return(
+          <div style={{background:C.amber+"18",border:`1px solid ${C.amber}44`,borderRadius:10,
+            padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:20}}>🔗</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.amber,marginBottom:2}}>複合健康提醒</div>
+              <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>尚未產生本週分析，無法顯示跨維度警示</div>
+            </div>
+            <button onClick={()=>{setTab("ai");}}
+              style={{fontSize:11,padding:"5px 10px",background:C.amber,border:"none",
+                borderRadius:6,color:"#000",fontWeight:700,cursor:"pointer",flexShrink:0}}>
+              產生週報
+            </button>
+          </div>
+        );
+        // 從週報文字萃取複合警示關鍵句
+        const lines=report.split("\n").map(l=>l.trim()).filter(l=>l.length>10);
+        // 找含複合關鍵字的句子（同時提到兩個以上維度）
+        const DIMS=[
+          {key:"睡眠",pat:/睡眠|深層|入睡|失眠/},
+          {key:"血糖",pat:/血糖|HbA1c|胰島素|糖化/},
+          {key:"血壓",pat:/血壓|收縮壓|舒張壓|高血壓/},
+          {key:"肝",pat:/肝|ALT|脂肪肝|肝酶/},
+          {key:"尿酸",pat:/尿酸|痛風/},
+          {key:"心血管",pat:/動脈|冠狀|心臟|血脂|HDL|LDL/},
+          {key:"飲食",pat:/飲食|碳水|澱粉|麵食|熱量/},
+          {key:"運動",pat:/運動|步行|活動量/},
+        ];
+        const composite=lines.filter(line=>{
+          const matchedDims=DIMS.filter(d=>d.pat.test(line));
+          return matchedDims.length>=2;
+        }).slice(0,3);
+        // 找「需要注意」「建議」「風險」等行動句
+        const actionLines=lines.filter(l=>
+          /需要|建議|注意|警示|風險|影響|關聯|互相|加重|惡化|因此|所以/.test(l)&&
+          DIMS.filter(d=>d.pat.test(l)).length>=1
+        ).slice(0,2);
+        const toShow=[...new Set([...composite,...actionLines])].slice(0,3);
+        if(toShow.length===0)return null;
+        const [expanded,setExpanded]=React.useState(false);
+        return(
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.amber,letterSpacing:1,marginBottom:6,
+              display:"flex",alignItems:"center",gap:6}}>
+              🔗 複合健康提醒
+              <span style={{fontSize:9,color:C.textMuted,fontWeight:400}}>來自本週AI分析 · {aiReportDate||""}</span>
+            </div>
+            <div style={{background:C.amber+"15",border:`1px solid ${C.amber}55`,borderRadius:10,padding:"10px 12px"}}>
+              {toShow.slice(0,expanded?toShow.length:1).map((line,i)=>(
+                <div key={i} style={{display:"flex",gap:8,marginBottom:i<toShow.length-1?8:0,
+                  paddingBottom:i<toShow.length-1?8:0,
+                  borderBottom:i<toShow.length-1?`1px solid ${C.amber}22`:"none"}}>
+                  <span style={{fontSize:14,flexShrink:0}}>{"⚠️🔗💡".split("")[i]||"💡"}</span>
+                  <div style={{fontSize:11,color:C.text,lineHeight:1.7}}>{line}</div>
+                </div>
+              ))}
+              {toShow.length>1&&(
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+                  <button onClick={()=>setExpanded(v=>!v)}
+                    style={{fontSize:10,color:C.amber,background:"none",border:"none",cursor:"pointer",padding:0}}>
+                    {expanded?"▲ 收起":"▼ 還有"+(toShow.length-1)+"項"}
+                  </button>
+                  <button onClick={()=>setTab("ai")}
+                    style={{fontSize:10,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
+                    查看完整週報 →
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
       {/* 健康警報（階段四自動標記）*/}
       {(()=>{
         const alerts=detectHealthAlerts();
@@ -2848,20 +2923,54 @@ const analyzeTrend = (key, data) => {
           );
         })}
       </div>
-      {editReminder&&(
-        <div className="overlay">
-          <div className="overlay-sheet">
-            <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>{editReminder.icon} {editReminder.title}</div>
-            <div style={{fontSize:12,color:C.textMuted,marginBottom:16}}>輸入最近一次檢查日期（{editReminder.intervalDays}天後自動計算下次）</div>
-            <div className="field-label">最近一次檢查日期</div>
-            <input className="input-field" type="date" id="reminderDateInput" defaultValue={editReminder.lastDate} style={{marginBottom:16}}/>
-            <div style={{display:"flex",gap:10}}>
-              <button className="btn-secondary" style={{flex:1}} onClick={()=>setEditReminder(null)}>取消</button>
-              <button className="btn-primary" style={{flex:2}} onClick={()=>{const v=document.getElementById("reminderDateInput").value;if(v)updateReminderDate(editReminder.id,v);}}>確認更新</button>
+      {editReminder&&(()=>{
+        const title=editReminder.title||"";
+        const isLab=/血液常規|HbA1c|肝功能|腎功能|尿酸|ALT|抽血/.test(title);
+        const isEye=/眼底|視野|OCT|視網膜/.test(title);
+        const isHeart=/心臟科|心電圖/.test(title);
+        const isAbdomen=/腹部超音波|腹超/.test(title);
+        let autoDate=null,autoSource=null;
+        if(isLab&&labHistory.length>0){
+          const sorted=[...labHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+          autoDate=sorted[0].date;
+          autoSource="抽血記錄（"+(sorted[0].hospital||"")+"）";
+        }else if((isEye||isHeart||isAbdomen)&&imagingHistory.length>0){
+          const keyword=isEye?"眼":isHeart?"心":"腹";
+          const matched=[...imagingHistory]
+            .filter(r=>(r.type||"").includes(keyword)||(r.finding||"").includes(keyword))
+            .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+          if(matched.length>0){autoDate=matched[0].date;autoSource="影像記錄（"+(matched[0].type||"")+"）";}
+        }
+        const [reminderDate,setReminderDate]=React.useState(autoDate||editReminder.lastDate);
+        return(
+          <div className="overlay">
+            <div className="overlay-sheet">
+              <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>{editReminder.icon} {editReminder.title}</div>
+              <div style={{fontSize:12,color:C.textMuted,marginBottom:12}}>輸入最近一次檢查日期（{editReminder.intervalDays}天後自動計算下次）</div>
+              {autoDate&&autoDate!==editReminder.lastDate&&(
+                <div style={{background:C.green+"22",border:"1px solid "+C.green,borderRadius:8,
+                  padding:"8px 12px",marginBottom:12,fontSize:11,color:C.green,lineHeight:1.6}}>
+                  ✅ 自動抓取：{autoSource}<br/>
+                  <span style={{fontWeight:700}}>{autoDate}</span>
+                  <span style={{color:C.textMuted}}> （已自動填入）</span>
+                </div>
+              )}
+              {autoDate&&autoDate===editReminder.lastDate&&(
+                <div style={{background:C.bg,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:11,color:C.textMuted}}>
+                  📋 {autoSource} 與現有日期相同：{autoDate}
+                </div>
+              )}
+              <div className="field-label">最近一次檢查日期</div>
+              <input className="input-field" type="date" value={reminderDate}
+                onChange={e=>setReminderDate(e.target.value)} style={{marginBottom:16}}/>
+              <div style={{display:"flex",gap:10}}>
+                <button className="btn-secondary" style={{flex:1}} onClick={()=>setEditReminder(null)}>取消</button>
+                <button className="btn-primary" style={{flex:2}} onClick={()=>{if(reminderDate)updateReminderDate(editReminder.id,reminderDate);}}>確認更新</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 
