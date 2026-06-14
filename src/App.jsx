@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.53";
+const VERSION = "v4.54";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -4640,7 +4640,7 @@ const analyzeTrend = (key, data) => {
             const toInt=(s)=>parseInt(s)||0;
             const toFloat=(s)=>parseFloat(s)||0;
             const parsed={
-              date:get("日期")||today(),
+              date:(get("日期")||today()).replace(/\//g,"-"),
               bedtime:get("上床時間")||"23:30",
               waketime:get("起床時間")||"06:00",
               total_min:toInt(get("總時間（分鐘）")),
@@ -4780,9 +4780,9 @@ REM（分鐘）：
                       用 ChatGPT 分析截圖後，複製輸出文字貼到下方，點「解析並填入」自動填好所有欄位。
                     </div>
                     <textarea
-                      style={{width:"100%",minHeight:160,background:C.card,border:`1px solid ${C.border}`,
-                        borderRadius:8,color:C.text,fontSize:11,padding:10,lineHeight:1.6,
-                        boxSizing:"border-box",resize:"vertical"}}
+                      style={{width:"100%",minHeight:160,background:"#1a1a1a",border:`1px solid ${C.green}`,
+                        borderRadius:8,color:"#e0e0e0",fontSize:11,padding:10,lineHeight:1.6,
+                        boxSizing:"border-box",resize:"vertical",WebkitTextFillColor:"#e0e0e0"}}
                       placeholder={`日期：2025/06/12\n上床時間：00:15\n起床時間：06:33\n總時間（分鐘）：378\n實際睡眠（分鐘）：354\n睡眠評分：78\n深層睡眠（分鐘）：68\n淺層睡眠（分鐘）：188\nREM（分鐘）：98\n清醒（分鐘）：24\n血氧平均（%）：92\n血氧低於90%（分鐘）：19.8\n平均心跳（次/分）：59\n呼吸速率（次/分）：15.2\n備註：`}
                       value={pasteText}
                       onChange={e=>setPasteText(e.target.value)}
