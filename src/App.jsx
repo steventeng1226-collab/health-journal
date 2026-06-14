@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.58";
+const VERSION = "v4.59";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -207,7 +207,7 @@ const styles=`
   .status-warn{background:rgba(255,179,71,0.15);color:${C.amber};}
   .status-alert{background:rgba(255,90,126,0.15);color:${C.red};}
   .input-field{width:100%;background:${C.bg};border:1px solid ${C.border};border-radius:10px;padding:12px 14px;color:${C.text};font-family:'Noto Sans TC',sans-serif;font-size:15px;outline:none;transition:border-color 0.2s;}
-  .input-field:focus{border-color:${C.green};} .input-field::placeholder{color:${C.textMuted};}
+  .input-field:focus{border-color:${C.green};} .input-field::placeholder{color:${C.textMuted}55;}
   .btn-primary{width:100%;padding:14px;background:linear-gradient(135deg,${C.green},${C.greenDark});border:none;border-radius:12px;color:#000000;font-weight:700;font-size:15px;cursor:pointer;font-family:'Noto Sans TC',sans-serif;transition:opacity 0.2s;}
   .btn-primary:active{opacity:0.85;} .btn-primary:disabled{opacity:0.5;}
   .btn-secondary{padding:10px 20px;background:${C.bgCard2};border:1px solid ${C.borderBright};border-radius:10px;color:${C.green};font-size:13px;cursor:pointer;font-family:'Noto Sans TC',sans-serif;}
@@ -4678,8 +4678,10 @@ const analyzeTrend = (key, data) => {
               rem_min:toInt(get("REM（分鐘）")),
               awake_min:toInt(get("清醒（分鐘）")),
               spo2_avg:toInt(get("血氧平均（%）")),
+              spo2_min:toInt(get("血氧最低值（%）")),
               spo2_below90_min:toFloat(get("血氧低於90%（分鐘）")),
               hr_avg:toInt(get("平均心跳（次/分）")),
+              hr_min:toInt(get("心率最低值（次/分）")),
               breath_rate:toFloat(get("呼吸速率（次/分）")),
               note:get("備註")||"",
             };
@@ -4784,7 +4786,7 @@ ${weekData||"尚無記錄"}
                 {/* ChatGPT指令複製區 */}
                 {(()=>{
                   const [copied,setCopied]=React.useState(false);
-                  const GPT_CMD=`請從這些 Samsung Health 睡眠截圖中擷取數據，輸出以下固定格式（純文字，不要多餘說明）：
+                  const GPT_CMD=`請從這些 Samsung Health 睡眠截圖中擷取數據，輸出以下固定格式（純文字，不要多餘說明，時間一律用24小時制）：
 
 日期：
 上床時間：
@@ -4797,8 +4799,10 @@ ${weekData||"尚無記錄"}
 REM（分鐘）：
 清醒（分鐘）：
 血氧平均（%）：
+血氧最低值（%）：
 血氧低於90%（分鐘）：
 平均心跳（次/分）：
+心率最低值（次/分）：
 呼吸速率（次/分）：
 備註：`;
                   return(
@@ -4839,7 +4843,7 @@ REM（分鐘）：
                     style={{width:"100%",minHeight:160,background:"#1a1a1a",border:`1px solid ${C.border}`,
                         borderRadius:8,color:"#e0e0e0",fontSize:11,padding:10,lineHeight:1.6,
                         boxSizing:"border-box",resize:"vertical",WebkitTextFillColor:"#e0e0e0"}}
-                      placeholder={`日期：2025/06/12\n上床時間：00:15\n起床時間：06:33\n總時間（分鐘）：378\n實際睡眠（分鐘）：354\n睡眠評分：78\n深層睡眠（分鐘）：68\n淺層睡眠（分鐘）：188\nREM（分鐘）：98\n清醒（分鐘）：24\n血氧平均（%）：92\n血氧低於90%（分鐘）：19.8\n平均心跳（次/分）：59\n呼吸速率（次/分）：15.2\n備註：`}
+                      placeholder={`日期：2025/06/12\n上床時間：00:15\n起床時間：06:33\n總時間（分鐘）：378\n實際睡眠（分鐘）：354\n睡眠評分：78\n深層睡眠（分鐘）：68\n淺層睡眠（分鐘）：188\nREM（分鐘）：98\n清醒（分鐘）：24\n血氧平均（%）：92\n血氧最低值（%）：85\n血氧低於90%（分鐘）：19.8\n平均心跳（次/分）：59\n心率最低值（次/分）：48\n呼吸速率（次/分）：15.2\n備註：`}
                       value={sleepPasteText}
                       onChange={e=>setSleepPasteText(e.target.value)}
                     />
