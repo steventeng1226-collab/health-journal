@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.59";
+const VERSION = "v4.60";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1206,10 +1206,10 @@ export default function HealthJournal(){
   });
   const [editReminder,setEditReminder]=useState(null);
   const [sleepLog,setSleepLog]=useState([]);
-  const emptySleepForm={date:today(),bedtime:"23:30",waketime:"06:00",
-    total_min:0,actual_min:0,score:0,deep_min:0,light_min:0,rem_min:0,
-    awake_min:0,spo2_avg:0,spo2_below90_min:0,spo2_min:0,
-    hr_avg:0,hr_min:0,breath_rate:0,sleep_efficiency:0,
+  const emptySleepForm={date:today(),bedtime:"",waketime:"",
+    total_min:"",actual_min:"",score:"",deep_min:"",light_min:"",rem_min:"",
+    awake_min:"",spo2_avg:"",spo2_below90_min:"",spo2_min:"",
+    hr_avg:"",hr_min:"",breath_rate:"",sleep_efficiency:0,
     pre_sleep_eurodin:false,pre_sleep_alcohol:false,
     pre_sleep_coffee:"",pre_sleep_dinner:"",pre_sleep_yogurt:"",
     pre_sleep_exercise:"",pre_sleep_stress:"無",note:""};
