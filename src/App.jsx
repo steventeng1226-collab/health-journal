@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.54";
+const VERSION = "v4.57";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -231,6 +231,7 @@ const styles=`
   .paste-area{width:100%;min-height:120px;background:${C.bg};border:2px dashed ${C.borderBright};border-radius:12px;padding:14px;color:${C.text};font-family:'Noto Sans TC',sans-serif;font-size:14px;outline:none;resize:vertical;line-height:1.7;}
   .paste-area:focus{border-color:${C.green};}
   .paste-area::placeholder{color:${C.textMuted};}
+  .sleep-paste-area::placeholder{color:#2a2a2a !important;}
   .field-row{margin-bottom:12px;}
   .field-label{font-size:12px;color:${C.textMuted};margin-bottom:6px;display:flex;align-items:center;gap:4px;}
   .field-required{color:${C.red};font-size:10px;}
@@ -1205,6 +1206,14 @@ export default function HealthJournal(){
   });
   const [editReminder,setEditReminder]=useState(null);
   const [sleepLog,setSleepLog]=useState([]);
+  const emptySleepForm={date:today(),bedtime:"23:30",waketime:"06:00",
+    total_min:0,actual_min:0,score:0,deep_min:0,light_min:0,rem_min:0,
+    awake_min:0,spo2_avg:0,spo2_below90_min:0,hr_avg:0,breath_rate:0,note:""};
+  const [sleepForm,setSleepForm]=useState(emptySleepForm);
+  const [sleepPasteText,setSleepPasteText]=useState("");
+  const [showSleepPaste,setShowSleepPaste]=useState(false);
+  const [sleepAnalysis,setSleepAnalysis]=useState(null);
+  const [sleepAnalyzing,setSleepAnalyzing]=useState(false);
   const [showOverdue,setShowOverdue]=useState(false);
   const [trackItems,setTrackItems]=useState(()=>{
     try{ const s=localStorage.getItem("hj_track"); return s?JSON.parse(s):DEFAULT_TRACK; }
@@ -1258,54 +1267,78 @@ export default function HealthJournal(){
   });
   const [greetingLoading,setGreetingLoading]=useState(false);
 
-  const generateDailyGreeting=async()=>{
+  const generateDailyGreeting=async(force=false)=>{
     const key=localStorage.getItem("hj_apikey")||"";
     if(!key||greetingLoading)return;
     const todayStr=new Date().toISOString().split("T")[0];
+    // 建立「資料摘要key」— 有新記錄就重新產生
+    const lastSleep=[...sleepLog].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+    const lastBP=[...bpHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+    const lastGluc=[...glucoseHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+    const dataKey=`${todayStr}|${lastSleep?.date||""}|${lastSleep?.score||""}|${lastBP?.date||""}|${lastGluc?.date||""}`;
     const cache=JSON.parse(localStorage.getItem("hj_daily_greeting")||"null");
-    if(cache&&cache.date===todayStr)return; // 今天已產生
+    // 條件：同dataKey且未超過3天 → 直接用快取
+    const cacheAge=cache?.date?Math.floor((new Date()-new Date(cache.date))/(1000*60*60*24)):999;
+    if(!force&&cache&&cache.dataKey===dataKey&&cacheAge<3)return;
     setGreetingLoading(true);
     try{
       const hour=new Date().getHours();
-      const timeGreet=hour<12?"早安":hour<18?"午安":"晚安";
       const weekday=["日","一","二","三","四","五","六"][new Date().getDay()];
       const isWeekend=new Date().getDay()===0||new Date().getDay()===6;
-      // 昨晚睡眠
-      const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
-      const yStr=yesterday.toISOString().split("T")[0];
-      const lastSleep=[...sleepLog].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
-      const sleepNote=lastSleep
-        ?`昨晚睡眠：${Math.floor((lastSleep.total_min||0)/60)}小時${(lastSleep.total_min||0)%60}分，深層${Math.round((lastSleep.deep_min||0)/(lastSleep.total_min||1)*100)}%，評分${lastSleep.score||"—"}，血氧${lastSleep.spo2_avg||"—"}%`
-        :"無昨晚睡眠記錄";
-      // 最近血壓
-      const lastBP=[...bpHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
-      const bpNote=lastBP?`最近血壓 ${lastBP.systolic}/${lastBP.diastolic}`:"無血壓記錄";
-      // 最近血糖
-      const lastGluc=[...glucoseHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
-      const glucNote=lastGluc?`最近血糖 ${lastGluc.value_mgdl} mg/dL`:"無血糖記錄";
-      // 到期追蹤
-      const overdues=reminders.filter(r=>new Date(r.nextDate)<=new Date()).map(r=>r.title).slice(0,2);
-      const prompt=`你是Steven的私人健康顧問，每天早上用溫暖、簡短的方式跟他打招呼並提醒最重要的健康狀況。
+      const timeStr=hour<6?"凌晨":hour<12?"早上":hour<14?"中午":hour<18?"下午":hour<22?"晚上":"深夜";
+      // 睡眠詳情
+      const sleepNote=lastSleep?(()=>{
+        const h=Math.floor((lastSleep.total_min||0)/60);
+        const m=(lastSleep.total_min||0)%60;
+        const deepPct=Math.round((lastSleep.deep_min||0)/(lastSleep.total_min||1)*100);
+        const spo2=lastSleep.spo2_avg||0;
+        const score=lastSleep.score||0;
+        const daysDiff=Math.floor((new Date()-new Date(lastSleep.date))/(1000*60*60*24));
+        return `${daysDiff===0?"昨晚":daysDiff===1?"前晚":`${daysDiff}天前`}睡眠：${h}小時${m}分，深層${deepPct}%${deepPct>=18?"✓":"（偏低）"}，評分${score||"—"}${spo2>0?`，血氧${spo2}%${spo2<90?"⚠️低氧":""}`:""}`+
+          (lastSleep.spo2_below90_min>10?`，低於90%達${lastSleep.spo2_below90_min}分鐘`:"");
+      })():"無近期睡眠記錄";
+      // 血壓詳情
+      const bpNote=lastBP?(()=>{
+        const daysDiff=Math.floor((new Date()-new Date(lastBP.date))/(1000*60*60*24));
+        const status=lastBP.systolic>=140?"偏高":lastBP.systolic>=130?"需注意":"正常";
+        return `血壓${lastBP.systolic}/${lastBP.diastolic}（${daysDiff===0?"今天":daysDiff+"天前"}，${status}）`;
+      })():"無血壓記錄";
+      // 血糖詳情
+      const glucNote=lastGluc?(()=>{
+        const daysDiff=Math.floor((new Date()-new Date(lastGluc.date))/(1000*60*60*24));
+        const status=lastGluc.value_mgdl>=126?"偏高":lastGluc.value_mgdl>=100?"需注意":"正常";
+        return `血糖${lastGluc.value_mgdl}mg/dL（${daysDiff===0?"今天":daysDiff+"天前"}，${status}）`;
+      })():"無血糖記錄";
+      // 到期追蹤（依嚴重度排序）
+      const overdues=reminders.filter(r=>new Date(r.nextDate)<=new Date())
+        .sort((a,b)=>new Date(a.nextDate)-new Date(b.nextDate))
+        .slice(0,3).map(r=>`${r.title}（已逾期${Math.floor((new Date()-new Date(r.nextDate))/(1000*60*60*24))}天）`);
+      // 近3天運動
+      const recentEx=[...exerciseLog].filter(r=>{
+        const d=new Date(r.date);return(new Date()-d)/(1000*60*60*24)<=3;
+      });
+      const prompt=`你是Steven的私人健康顧問。根據今天的實際數據，用自然、有溫度的方式說話，不要重複昨天說過的話。
 
-Steven基本資料：55歲台灣男性，越南海防工作，與家人分隔兩地。
-七項並發診斷：高血壓、雙側髂總動脈瘤、LAD1冠狀動脈35%狹窄、脂肪肝Grade II、高尿酸、肝酶偏高、糖尿病前期HbA1c。
-今天：週${weekday}${isWeekend?"（週末，麵食血糖風險高）":""}，現在${hour}點。
+【今天】${todayStr} 週${weekday} ${timeStr}${hour}點${isWeekend?" 週末":""}
 
-今日狀況：
+【最新健康數據】
 ・${sleepNote}
 ・${bpNote}
 ・${glucNote}
-${overdues.length>0?`・追蹤提醒已過期：${overdues.join("、")}`:""}
+・近3天運動：${recentEx.length>0?recentEx.length+"次":"無記錄"}
+${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
 
-請用2-3句話跟Steven說話，像朋友兼顧問：
-1. 根據昨晚睡眠給一句具體評語
-2. 今天最需要注意的一件事（結合他的複合診斷，不要只說單點）
-3. 一句鼓勵或提醒
-語氣溫暖自然，不要像報告，不要用標題或條列，直接說話。繁體中文。`;
-      const result=await callClaude([{role:"user",content:prompt}],300);
+【Steven背景】55歲台灣男性，越南海防獨自工作，七項並發診斷（高血壓、動脈瘤、冠狀動脈狹窄、脂肪肝G2、高尿酸、肝酶偏高、糖尿病前期）。
+
+請根據上面的「今天實際數據」，用2-3句話直接跟Steven說話：
+・第一句：針對最新睡眠或數據給具體評語（數字要說出來，例如「深層21%達標」或「血氧低於90%達33分要注意」）
+・第二句：今天一個最重要的複合提醒（至少連結兩個健康面向）
+・第三句：簡短鼓勵或今日具體行動建議
+注意：語氣像關心的朋友，不像醫療報告，繁體中文，不用標題和條列。`;
+      const result=await callClaude([{role:"user",content:prompt}],350);
       if(result&&!result.startsWith("❌")){
         setDailyGreeting(result);
-        localStorage.setItem("hj_daily_greeting",JSON.stringify({date:todayStr,greeting:result}));
+        localStorage.setItem("hj_daily_greeting",JSON.stringify({date:todayStr,dataKey,greeting:result}));
       }
     }catch(e){console.log("greeting error",e);}
     setGreetingLoading(false);
@@ -2564,7 +2597,7 @@ const analyzeTrend = (key, data) => {
         <div style={{fontSize:10,color:C.green,fontWeight:700,letterSpacing:1,marginBottom:6,
           display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <span>🤖 健康顧問</span>
-          <button onClick={()=>{localStorage.removeItem("hj_daily_greeting");setDailyGreeting(null);generateDailyGreeting();}}
+          <button onClick={()=>{localStorage.removeItem("hj_daily_greeting");setDailyGreeting(null);generateDailyGreeting(true);}}
             style={{fontSize:9,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
             重新產生
           </button>
@@ -4616,22 +4649,11 @@ const analyzeTrend = (key, data) => {
           </div>
         )}
         {recordTab==="sleep"&&(()=>{
-          const emptyForm={
-            date:today(),bedtime:"23:30",waketime:"06:00",
-            total_min:360,actual_min:354,score:0,
-            deep_min:0,light_min:0,rem_min:0,awake_min:0,
-            spo2_avg:0,spo2_below90_min:0,hr_avg:0,breath_rate:0,note:""
-          };
-          const [sleepForm,setSleepForm]=React.useState(emptyForm);
-          const [pasteText,setPasteText]=React.useState("");
-          const [showPaste,setShowPaste]=React.useState(false);
-          const [sleepAnalysis,setSleepAnalysis]=React.useState(null);
-          const [analyzing,setAnalyzing]=React.useState(false);
           const savedSleep=sleepLog.filter(r=>r.date).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
 
           // ── 解析 ChatGPT 輸出的固定格式文字 ──
           const parsePasteText=()=>{
-            const lines=pasteText.split("\n").map(l=>l.trim()).filter(Boolean);
+            const lines=sleepPasteText.split("\n").map(l=>l.trim()).filter(Boolean);
             const get=(key)=>{
               const line=lines.find(l=>l.startsWith(key));
               if(!line)return "";
@@ -4661,15 +4683,15 @@ const analyzeTrend = (key, data) => {
               return;
             }
             setSleepForm(parsed);
-            setShowPaste(false);
-            setPasteText("");
+            setShowSleepPaste(false);
+            setSleepPasteText("");
             showToast("✅ 解析完成，請確認後儲存");
           };
 
           const analyzeSleep=async()=>{
             const key=localStorage.getItem("hj_apikey")||apiKey||"";
             if(!key){showToast("⚠️ 請先設定API金鑰");return;}
-            setAnalyzing(true);
+            setSleepAnalyzing(true);
             try{
               const weekData=savedSleep.slice(0,7).map(r=>
                 `${r.date}: 總${r.total_min}分/實際${r.actual_min}分/評分${r.score}/深層${r.deep_min}分(${Math.round(r.deep_min/(r.total_min||1)*100)}%)/REM ${r.rem_min}分/清醒${r.awake_min}分/血氧${r.spo2_avg}%`
@@ -4692,7 +4714,7 @@ ${weekData||"尚無記錄"}
               const result=await callClaude([{role:"user",content:prompt}],1200);
               setSleepAnalysis(result);
             }catch(e){showToast("❌ "+e.message);}
-            setAnalyzing(false);
+            setSleepAnalyzing(false);
           };
 
           const saveSleepRecord=async()=>{
@@ -4716,7 +4738,7 @@ ${weekData||"尚無記錄"}
             });
             if(r?.success){
               setSleepLog(prev=>[...prev,{...sleepForm}]);
-              setSleepForm(emptyForm);
+              setSleepForm(emptySleepForm);
               showToast("✅ 睡眠記錄已儲存");
             }else showToast("❌ 儲存失敗，請確認Sheets有sleep_log分頁");
           };
@@ -4768,24 +4790,25 @@ REM（分鐘）：
                   );
                 })()}
                 {/* 貼上解析區 */}
-                <button onClick={()=>setShowPaste(v=>!v)}
+                <button onClick={()=>setShowSleepPaste(v=>!v)}
                   style={{width:"100%",padding:"10px",marginBottom:10,background:C.green+"22",
                     border:`1px solid ${C.green}`,borderRadius:8,color:C.green,fontSize:13,fontWeight:700,cursor:"pointer"}}>
-                  📋 {showPaste?"▲ 收起":"▼ 貼上 ChatGPT 解析文字 → 自動填入"}
+                  📋 {showSleepPaste?"▲ 收起":"▼ 貼上 ChatGPT 解析文字 → 自動填入"}
                 </button>
 
-                {showPaste&&(
+                {showSleepPaste&&(
                   <div style={{marginBottom:12}}>
                     <div style={{fontSize:11,color:C.textMuted,marginBottom:6,lineHeight:1.7}}>
                       用 ChatGPT 分析截圖後，複製輸出文字貼到下方，點「解析並填入」自動填好所有欄位。
                     </div>
                     <textarea
-                      style={{width:"100%",minHeight:160,background:"#1a1a1a",border:`1px solid ${C.green}`,
+                      className="sleep-paste-area"
+                    style={{width:"100%",minHeight:160,background:"#1a1a1a",border:`1px solid ${C.border}`,
                         borderRadius:8,color:"#e0e0e0",fontSize:11,padding:10,lineHeight:1.6,
                         boxSizing:"border-box",resize:"vertical",WebkitTextFillColor:"#e0e0e0"}}
                       placeholder={`日期：2025/06/12\n上床時間：00:15\n起床時間：06:33\n總時間（分鐘）：378\n實際睡眠（分鐘）：354\n睡眠評分：78\n深層睡眠（分鐘）：68\n淺層睡眠（分鐘）：188\nREM（分鐘）：98\n清醒（分鐘）：24\n血氧平均（%）：92\n血氧低於90%（分鐘）：19.8\n平均心跳（次/分）：59\n呼吸速率（次/分）：15.2\n備註：`}
-                      value={pasteText}
-                      onChange={e=>setPasteText(e.target.value)}
+                      value={sleepPasteText}
+                      onChange={e=>setSleepPasteText(e.target.value)}
                     />
                     <button onClick={parsePasteText}
                       style={{width:"100%",marginTop:8,padding:"10px",background:C.green,
@@ -4934,8 +4957,8 @@ REM（分鐘）：
                   :<div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>
                     輸入至少1筆睡眠記錄後，讓AI分析本週睡眠品質、對身體的影響，並給出具體改善建議。
                   </div>}
-                <button className="btn-primary" style={{marginTop:10}} onClick={analyzeSleep} disabled={analyzing||savedSleep.length===0}>
-                  {analyzing?"⏳ 分析中...":"📊 產生本週睡眠分析"}
+                <button className="btn-primary" style={{marginTop:10}} onClick={analyzeSleep} disabled={sleepAnalyzing||savedSleep.length===0}>
+                  {sleepAnalyzing?"⏳ 分析中...":"📊 產生本週睡眠分析"}
                 </button>
               </div>
             </div>
