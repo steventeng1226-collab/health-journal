@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.60";
+const VERSION = "v4.62";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1252,6 +1252,7 @@ export default function HealthJournal(){
   // 表單
   const [glucoseForm,setGlucoseForm]=useState({value:"",unit:"mmol/L",timePoint:"空腹",source:"日常",note:""});
   const [bpForm,setBpForm]=useState({sys:"",dia:"",pulse:"",source:"日常"});
+  const [editBPRecord,setEditBPRecord]=useState(null);
   const [weightForm,setWeightForm]=useState({value:""});
 
   // 抽血報告解析
@@ -1467,6 +1468,22 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
     setSubmitting(false);
   };
 
+  const updateBP=async(record)=>{
+    const r=await api.post("update","daily_bp",record);
+    if(r?.success){
+      setBpHistory(prev=>prev.map(b=>b.id===record.id?record:b));
+      setEditBPRecord(null);
+      showToast("✅ 血壓記錄已更新");
+    }else showToast("❌ 更新失敗");
+  };
+  const deleteBP=async(id)=>{
+    if(!window.confirm("確定刪除這筆血壓記錄？"))return;
+    const r=await api.deleteRow("daily_bp",id);
+    if(r?.success){
+      setBpHistory(prev=>prev.filter(b=>b.id!==id));
+      showToast("✅ 已刪除");
+    }else showToast("❌ 刪除失敗");
+  };
   const saveBP=async()=>{
     if(submitting){return;}
     if(!bpForm.sys||!bpForm.dia){showToast("⚠️ 請輸入血壓值");return;}
@@ -4471,28 +4488,122 @@ const analyzeTrend = (key, data) => {
           </div>
         )}
 
-        {recordTab==="bp"&&(
-          <div className="card">
-            <div className="card-title">記錄血壓</div>
-            <div style={{marginBottom:12}}>
-              <div className="field-label">來源</div>
-              <div className="grid-2">
-                {["日常","醫院"].map(s=>(
-                  <div key={s} className={`time-btn ${bpForm.source===s?"selected":""}`} onClick={()=>setBpForm(f=>({...f,source:s}))}>
-                    {s==="日常"?"🏠 OMRON（在家）":"🏥 醫院量測"}
+        {recordTab==="bp"&&(()=>{
+          // refs避免輸入焦點跳離
+          const sysRef=React.useRef(null);
+          const diaRef=React.useRef(null);
+          const pulseRef=React.useRef(null);
+          const recentBPList=[...bpHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,10);
+          return(
+            <div>
+              <div className="card" style={{marginBottom:12}}>
+                <div className="card-title">記錄血壓</div>
+                <div style={{marginBottom:12}}>
+                  <div className="field-label">來源</div>
+                  <div className="grid-2">
+                    {["日常","醫院"].map(s=>(
+                      <div key={s} className={`time-btn ${bpForm.source===s?"selected":""}`} onClick={()=>setBpForm(f=>({...f,source:s}))}>
+                        {s==="日常"?"🏠 OMRON（在家）":"🏥 醫院量測"}
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </div>
+                <div className="grid-3" style={{marginBottom:12}}>
+                  {[
+                    {label:"收縮壓",ph:"SYS",ref:sysRef,key:"sys"},
+                    {label:"舒張壓",ph:"DIA",ref:diaRef,key:"dia"},
+                    {label:"心率",ph:"PR",ref:pulseRef,key:"pulse"},
+                  ].map(f=>(
+                    <div key={f.key}>
+                      <div className="field-label">{f.label}</div>
+                      <input className="input-field" type="number" placeholder={f.ph}
+                        ref={f.ref}
+                        defaultValue={bpForm[f.key]}
+                        onBlur={e=>setBpForm(v=>({...v,[f.key]:e.target.value}))}/>
+                    </div>
+                  ))}
+                </div>
+                <div style={{background:C.bg,borderRadius:10,padding:10,marginBottom:14,fontSize:12,color:C.textMuted}}>💡 OMRON顯示HIGH表示舒張壓≥90</div>
+                <button className="btn-primary" onClick={()=>{
+                  // 儲存前先從ref取最新值
+                  setBpForm(f=>({...f,
+                    sys:sysRef.current?.value||f.sys,
+                    dia:diaRef.current?.value||f.dia,
+                    pulse:pulseRef.current?.value||f.pulse,
+                  }));
+                  setTimeout(saveBP,50);
+                }}>儲存</button>
               </div>
+
+              {/* 近期血壓記錄 */}
+              {recentBPList.length>0&&(
+                <div className="card">
+                  <div className="card-title">近期血壓記錄 <span style={{fontSize:10,color:C.textMuted,fontWeight:400}}>點擊編輯</span></div>
+                  {recentBPList.map((r,i)=>{
+                    const sys=parseInt(r.systolic);
+                    const statusColor=sys>=140?C.red:sys>=130?C.amber:C.green;
+                    return(
+                      <div key={r.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                        padding:"8px 0",borderBottom:i<recentBPList.length-1?`1px solid ${C.border}`:"none"}}>
+                        <div onClick={()=>setEditBPRecord({...r})} style={{flex:1,cursor:"pointer"}}>
+                          <div style={{fontSize:12,fontWeight:600,color:C.text}}>{fmtDateFull(r.date)}</div>
+                          <div style={{fontSize:10,color:C.textMuted}}>{r.source==="醫院"?"🏥":"🏠"} {r.source}</div>
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          <div style={{textAlign:"right"}} onClick={()=>setEditBPRecord({...r})} >
+                            <div style={{fontSize:16,fontWeight:700,color:statusColor}}>{r.systolic}/{r.diastolic}</div>
+                            {r.pulse&&<div style={{fontSize:10,color:C.textMuted}}>心率 {r.pulse}</div>}
+                          </div>
+                          <button onClick={()=>deleteBP(r.id)}
+                            style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:6,
+                              color:C.red,fontSize:11,padding:"4px 8px",cursor:"pointer"}}>
+                            刪除
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* 編輯Modal */}
+              {editBPRecord&&(
+                <div className="overlay">
+                  <div className="overlay-sheet">
+                    <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>✏️ 編輯血壓記錄</div>
+                    <div style={{fontSize:12,color:C.textMuted,marginBottom:12}}>{fmtDateFull(editBPRecord.date)}</div>
+                    <div className="grid-3" style={{marginBottom:12}}>
+                      {[
+                        {label:"收縮壓",key:"systolic"},
+                        {label:"舒張壓",key:"diastolic"},
+                        {label:"心率",key:"pulse"},
+                      ].map(f=>(
+                        <div key={f.key}>
+                          <div className="field-label">{f.label}</div>
+                          <input className="input-field" type="number"
+                            defaultValue={editBPRecord[f.key]}
+                            onBlur={e=>setEditBPRecord(v=>({...v,[f.key]:e.target.value}))}/>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="grid-2" style={{marginBottom:12}}>
+                      {["日常","醫院"].map(s=>(
+                        <div key={s} className={`time-btn ${editBPRecord.source===s?"selected":""}`}
+                          onClick={()=>setEditBPRecord(v=>({...v,source:s}))}>
+                          {s==="日常"?"🏠 日常":"🏥 醫院"}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{display:"flex",gap:10}}>
+                      <button className="btn-secondary" style={{flex:1}} onClick={()=>setEditBPRecord(null)}>取消</button>
+                      <button className="btn-primary" style={{flex:2}} onClick={()=>updateBP(editBPRecord)}>💾 儲存更新</button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="grid-3" style={{marginBottom:12}}>
-              {[["收縮壓","SYS",bpForm.sys,v=>setBpForm(f=>({...f,sys:v}))],["舒張壓","DIA",bpForm.dia,v=>setBpForm(f=>({...f,dia:v}))],["心率","PR",bpForm.pulse,v=>setBpForm(f=>({...f,pulse:v}))]].map(([l,p,v,set])=>(
-                <div key={l}><div className="field-label">{l}</div><input className="input-field" type="number" placeholder={p} value={v} onChange={e=>set(e.target.value)}/></div>
-              ))}
-            </div>
-            <div style={{background:C.bg,borderRadius:10,padding:10,marginBottom:14,fontSize:12,color:C.textMuted}}>💡 OMRON顯示HIGH表示舒張壓≥90</div>
-            <button className="btn-primary" onClick={saveBP}>儲存</button>
-          </div>
-        )}
+          );
+        })()}
 
         {recordTab==="weight"&&(
           <div className="card">
@@ -4860,7 +4971,7 @@ REM（分鐘）：
                 </div>
 
                 <div className="grid-2" style={{marginBottom:8}}>
-                  <div><div className="field-label">日期</div>
+                  <div><div className="field-label">日期 <span style={{fontSize:9,color:C.textMuted,fontWeight:400}}>以起床當天為準</span></div>
                     <input className="input-field" type="date" value={sleepForm.date}
                       onChange={e=>setSleepForm(v=>({...v,date:e.target.value}))}/></div>
                   <div><div className="field-label">睡眠評分</div>
