@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.62";
+const VERSION = "v4.64";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -2613,24 +2613,44 @@ const analyzeTrend = (key, data) => {
       </div>
       {loading&&<div style={{textAlign:"center",color:C.textMuted,fontSize:12,marginBottom:12}}><span className="spin">⟳</span> 載入中...</div>}
       {!isOnline&&<div style={{background:"rgba(255,179,71,0.1)",border:"1px solid rgba(255,179,71,0.3)",borderRadius:10,padding:"8px 12px",marginBottom:10,fontSize:12,color:C.amber,textAlign:"center"}}>📴 離線模式 · 顯示本地快取資料</div>}
-      {/* 每日AI顧問問候 */}
+      {/* 每日AI顧問問候 - v4.64 改為手動觸發 */}
       <div style={{background:"linear-gradient(135deg,rgba(46,204,138,0.12),rgba(52,152,219,0.12))",
         border:`1px solid ${C.green}44`,borderRadius:12,padding:"12px 14px",marginBottom:12}}>
         <div style={{fontSize:10,color:C.green,fontWeight:700,letterSpacing:1,marginBottom:6,
           display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <span>🤖 健康顧問</span>
-          <button onClick={()=>{localStorage.removeItem("hj_daily_greeting");setDailyGreeting(null);generateDailyGreeting(true);}}
-            style={{fontSize:9,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
-            重新產生
-          </button>
+          {dailyGreeting&&!greetingLoading&&(
+            <button onClick={()=>{localStorage.removeItem("hj_daily_greeting");setDailyGreeting(null);}}
+              style={{fontSize:9,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
+              清除
+            </button>
+          )}
         </div>
         {greetingLoading
           ?<div style={{fontSize:12,color:C.textMuted}}>⏳ 顧問正在思考中...</div>
           :dailyGreeting
-            ?<div style={{fontSize:13,color:C.text,lineHeight:1.8}}>{dailyGreeting}</div>
-            :<div style={{fontSize:12,color:C.textMuted}}>
-                今日問候尚未產生
-                {!localStorage.getItem("hj_apikey")&&<span>（請先設定API金鑰）</span>}
+            ?<>
+                <div style={{fontSize:13,color:C.text,lineHeight:1.8}}>{dailyGreeting}</div>
+                <button onClick={()=>generateDailyGreeting(true)}
+                  style={{marginTop:8,fontSize:11,color:C.textMuted,background:"none",
+                    border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 10px",cursor:"pointer",
+                    fontFamily:"'Noto Sans TC',sans-serif"}}>
+                  🔄 重新產生
+                </button>
+              </>
+            :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{fontSize:12,color:C.textMuted,lineHeight:1.6}}>
+                  根據你的最新睡眠、血壓、血糖數據，產生今日個人化建議。
+                </div>
+                <button onClick={()=>generateDailyGreeting(true)}
+                  disabled={greetingLoading||!localStorage.getItem("hj_apikey")}
+                  style={{padding:"10px 0",background:localStorage.getItem("hj_apikey")
+                    ?`linear-gradient(135deg,${C.green},${C.greenDark})`:"rgba(100,100,100,0.3)",
+                    border:"none",borderRadius:10,color:localStorage.getItem("hj_apikey")?"#000":"#666",
+                    fontSize:13,fontWeight:700,cursor:localStorage.getItem("hj_apikey")?"pointer":"not-allowed",
+                    fontFamily:"'Noto Sans TC',sans-serif"}}>
+                  {localStorage.getItem("hj_apikey")?"🤖 產生今日健康建議":"⚙️ 請先設定 API 金鑰"}
+                </button>
               </div>
         }
       </div>
@@ -5565,10 +5585,7 @@ ${exSummary}
     if(daysSince>=7)generateOverallReport(true);
   },[labHistory.length,sleepLog.length]);
 
-  // ── 每日問候自動觸發（資料載入後執行）────────────────
-  React.useEffect(()=>{
-    if(!loading)generateDailyGreeting();
-  },[loading,sleepLog.length]);
+  // ── v4.64：每日問候改為手動點擊觸發，不再自動產生 ──
 
   // ── 載入後自動同步所有追蹤提醒日期（session只跑一次）──
   const reminderSyncDone=React.useRef(false);
