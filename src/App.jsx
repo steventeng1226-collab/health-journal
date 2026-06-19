@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.64";
+const VERSION = "v4.65";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -2613,44 +2613,24 @@ const analyzeTrend = (key, data) => {
       </div>
       {loading&&<div style={{textAlign:"center",color:C.textMuted,fontSize:12,marginBottom:12}}><span className="spin">⟳</span> 載入中...</div>}
       {!isOnline&&<div style={{background:"rgba(255,179,71,0.1)",border:"1px solid rgba(255,179,71,0.3)",borderRadius:10,padding:"8px 12px",marginBottom:10,fontSize:12,color:C.amber,textAlign:"center"}}>📴 離線模式 · 顯示本地快取資料</div>}
-      {/* 每日AI顧問問候 - v4.64 改為手動觸發 */}
+      {/* 每日AI顧問問候 */}
       <div style={{background:"linear-gradient(135deg,rgba(46,204,138,0.12),rgba(52,152,219,0.12))",
         border:`1px solid ${C.green}44`,borderRadius:12,padding:"12px 14px",marginBottom:12}}>
         <div style={{fontSize:10,color:C.green,fontWeight:700,letterSpacing:1,marginBottom:6,
           display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <span>🤖 健康顧問</span>
-          {dailyGreeting&&!greetingLoading&&(
-            <button onClick={()=>{localStorage.removeItem("hj_daily_greeting");setDailyGreeting(null);}}
-              style={{fontSize:9,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
-              清除
-            </button>
-          )}
+          <button onClick={()=>{localStorage.removeItem("hj_daily_greeting");setDailyGreeting(null);generateDailyGreeting(true);}}
+            style={{fontSize:9,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
+            重新產生
+          </button>
         </div>
         {greetingLoading
           ?<div style={{fontSize:12,color:C.textMuted}}>⏳ 顧問正在思考中...</div>
           :dailyGreeting
-            ?<>
-                <div style={{fontSize:13,color:C.text,lineHeight:1.8}}>{dailyGreeting}</div>
-                <button onClick={()=>generateDailyGreeting(true)}
-                  style={{marginTop:8,fontSize:11,color:C.textMuted,background:"none",
-                    border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 10px",cursor:"pointer",
-                    fontFamily:"'Noto Sans TC',sans-serif"}}>
-                  🔄 重新產生
-                </button>
-              </>
-            :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-                <div style={{fontSize:12,color:C.textMuted,lineHeight:1.6}}>
-                  根據你的最新睡眠、血壓、血糖數據，產生今日個人化建議。
-                </div>
-                <button onClick={()=>generateDailyGreeting(true)}
-                  disabled={greetingLoading||!localStorage.getItem("hj_apikey")}
-                  style={{padding:"10px 0",background:localStorage.getItem("hj_apikey")
-                    ?`linear-gradient(135deg,${C.green},${C.greenDark})`:"rgba(100,100,100,0.3)",
-                    border:"none",borderRadius:10,color:localStorage.getItem("hj_apikey")?"#000":"#666",
-                    fontSize:13,fontWeight:700,cursor:localStorage.getItem("hj_apikey")?"pointer":"not-allowed",
-                    fontFamily:"'Noto Sans TC',sans-serif"}}>
-                  {localStorage.getItem("hj_apikey")?"🤖 產生今日健康建議":"⚙️ 請先設定 API 金鑰"}
-                </button>
+            ?<div style={{fontSize:13,color:C.text,lineHeight:1.8}}>{dailyGreeting}</div>
+            :<div style={{fontSize:12,color:C.textMuted}}>
+                今日問候尚未產生
+                {!localStorage.getItem("hj_apikey")&&<span>（請先設定API金鑰）</span>}
               </div>
         }
       </div>
@@ -5327,11 +5307,21 @@ REM（分鐘）：
       const prevLab=labHistory.length>1?labHistory[labHistory.length-2]:null;
       const hba1cTrend=prevLab&&latestLab?`${prevLab.hba1c}%→${latestLab.hba1c}%`:`${latestLab?.hba1c||"—"}%`;
       const hdlTrend=prevLab&&latestLab?`${prevLab.hdl}→${latestLab.hdl}`:`${latestLab?.hdl||"—"}`;
+      // ★ v4.65 睡眠數據動態加入週報
+      const recentSleep7=[...sleepLog].filter(r=>r.date).sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,7);
+      const avgDeep7=recentSleep7.length>0?Math.round(recentSleep7.reduce((s,r)=>s+(parseInt(r.deep_min)||0),0)/recentSleep7.reduce((s,r)=>s+(parseInt(r.total_min)||1),0)*100):null;
+      const avgTotal7=recentSleep7.length>0?Math.round(recentSleep7.reduce((s,r)=>s+(parseInt(r.total_min)||0),0)/recentSleep7.length):null;
+      const avgSpo2_7=recentSleep7.filter(r=>r.spo2_avg>0).length>0?Math.round(recentSleep7.filter(r=>r.spo2_avg>0).reduce((s,r)=>s+(parseInt(r.spo2_avg)||0),0)/recentSleep7.filter(r=>r.spo2_avg>0).length):null;
+      const sleepWeekStr=recentSleep7.length>0
+        ?`平均${Math.floor((avgTotal7||0)/60)}h${(avgTotal7||0)%60}m，深層${avgDeep7||"—"}%，血氧avg${avgSpo2_7||"—"}%`
+        :"無記錄";
+      // 本週最弱雷達面向
+      const weakDims=computeRadarScores(latestLab,bpHistory)?.filter(d=>d.score!=null).sort((a,b)=>a.score-b.score).slice(0,2).map(d=>`${d.label.split("\n")[0]}(${d.score}分)`).join("、")||"";
       const prompt=`你是私人健康顧問，請用繁體中文產生本週健康週報，格式如下：
 
 【本週健康週報】
 
-一、本週總評（2-3句，依數據給出整體評價）
+一、本週總評（2-3句，依數據給出整體評價，提到最明顯的改善或惡化）
 
 二、數據重點
 ・血糖控制：HbA1c ${hba1cTrend}，空腹血糖 ${latestGlucose?.value_mgdl||"—"} mg/dL
@@ -5339,19 +5329,21 @@ REM（分鐘）：
 ・血脂 HDL：${hdlTrend} mg/dL（目標>40）
 ・肝功能：ALT ${latestLab?.alt||"—"} / GGT ${latestLab?.ggt||"—"}
 ・體重：${latestWt?latestWt.value_kg+" kg":"尚無記錄"}
+・睡眠（近7天）：${sleepWeekStr}
 
 三、健康雷達本週分數
 ${radarStr}
-（指出最弱面向並給1句改善建議）
+最弱面向：${weakDims||"請參考雷達分數"}
+（針對最弱面向給出1句具體改善行動，附帶數字目標）
 
 四、本週行為達成
 ・早餐打卡：${bkfHit7}/7天
 ・運動打卡：${exHit7}/7天
-（依達成率給予鼓勵或提醒）
+（依達成率給予鼓勵或提醒，未達標請點名具體原因）
 
-五、本週三大行動建議（具體可執行，針對你的弱項）
+五、本週三大行動建議（具體可執行，每項必須提到具體數字或時間，針對本週最差的指標）
 
-六、一句鼓勵（有溫度，結合55歲在越南工作的背景）
+六、一句鼓勵（有溫度，結合55歲在越南工作的背景，不要重複上週說過的）
 
 病患背景：55歲台灣男性，越南工作，父親T2D家族史
 已確診問題（2025/03/19海防國際醫院住院確診）：
@@ -5585,7 +5577,10 @@ ${exSummary}
     if(daysSince>=7)generateOverallReport(true);
   },[labHistory.length,sleepLog.length]);
 
-  // ── v4.64：每日問候改為手動點擊觸發，不再自動產生 ──
+  // ── 每日問候自動觸發（資料載入後執行）────────────────
+  React.useEffect(()=>{
+    if(!loading)generateDailyGreeting();
+  },[loading,sleepLog.length]);
 
   // ── 載入後自動同步所有追蹤提醒日期（session只跑一次）──
   const reminderSyncDone=React.useRef(false);
@@ -5793,6 +5788,27 @@ ${exSummary}
     const [myMeds, setMyMeds] = useState(()=>{
       try{return JSON.parse(localStorage.getItem("hj_mymeds")||"[]");}catch(e){return[];}
     });
+    // ★ v4.65 服藥記錄歷史 state
+    const [medLog, setMedLog] = useState([]);
+    const [medLogLoaded, setMedLogLoaded] = useState(false);
+    const loadMedLog = async () => {
+      const r = await api.get("getAll", {sheet:"med_log"});
+      if(r?.data){ setMedLog(r.data); setMedLogLoaded(true); }
+    };
+    const takeMed = async (medId, medName) => {
+      const dateStr = today();
+      const timeStr = new Date().toTimeString().slice(0,5);
+      const r = await api.post("append","med_log",{
+        id:"ML"+Date.now(), date:dateStr, time:timeStr, medId, medName
+      });
+      if(r?.success){
+        setMedLog(prev=>[...prev,{date:dateStr,time:timeStr,medId,medName}]);
+        showToast(`✅ ${medName} 打卡成功`);
+      } else showToast("❌ 打卡失敗");
+    };
+    // ★ v4.65 舊抽血記錄重新解析 state
+    const [reparseLoading, setReparseLoading] = useState(false);
+    const [reparseProgress, setReparseProgress] = useState("");
     const [showMedForm, setShowMedForm] = useState(false);
     const [medForm, setMedForm] = useState({name:"",dose:"",freq:"每天",timing:"早餐後",note:""});
     const saveMyMeds = (list)=>{
@@ -6317,24 +6333,74 @@ ${exSummary}
               {myMeds.length===0&&!showMedForm&&(
                 <div style={{fontSize:11,color:C.textMuted,marginTop:6}}>記錄你實際服用的藥物與保健品（存於手機本地）</div>
               )}
-              {myMeds.map(med=>(
-                <div key={med.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-                  padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:13,fontWeight:600,color:C.text}}>{med.name}</div>
-                    <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>
-                      {[med.dose,med.freq,med.timing,med.note].filter(Boolean).join(" · ")}
+              {/* ★ v4.65 載入服藥記錄按鈕 */}
+              {myMeds.length>0&&!medLogLoaded&&(
+                <button onClick={loadMedLog}
+                  style={{width:"100%",padding:"7px",marginBottom:8,borderRadius:8,fontSize:12,
+                    background:"rgba(46,204,138,0.08)",border:`1px solid ${C.border}`,
+                    color:C.green,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}>
+                  📋 載入服藥歷史記錄
+                </button>
+              )}
+              {myMeds.map(med=>{
+                const todayStr = today();
+                // 今天有沒有打卡
+                const todayLogs = medLog.filter(l=>l.medId===med.id&&normalizeDate(l.date)===todayStr);
+                const takenToday = todayLogs.length > 0;
+                // 最近7天打卡日
+                const last7 = Array.from({length:7},(_,i)=>{
+                  const d=new Date(); d.setDate(d.getDate()-i);
+                  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+                });
+                const hit7 = last7.filter(ds=>medLog.some(l=>l.medId===med.id&&normalizeDate(l.date)===ds)).length;
+                return(
+                  <div key={med.id} style={{padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:13,fontWeight:600,color:C.text}}>{med.name}</div>
+                        <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>
+                          {[med.dose,med.freq,med.timing,med.note].filter(Boolean).join(" · ")}
+                        </div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        {/* 今日打卡按鈕 */}
+                        <button onClick={()=>!takenToday&&takeMed(med.id,med.name)}
+                          style={{padding:"5px 12px",borderRadius:8,fontSize:12,fontWeight:700,cursor:takenToday?"default":"pointer",
+                            background:takenToday?"rgba(46,204,138,0.15)":"rgba(46,204,138,0.9)",
+                            border:`1px solid ${takenToday?C.green:C.greenDark}`,
+                            color:takenToday?C.green:"#000",fontFamily:"'Noto Sans TC',sans-serif"}}>
+                          {takenToday?"✅ 已服":"打卡"}
+                        </button>
+                        <button onClick={()=>{
+                          if(window.confirm(`刪除「${med.name}」？`)){
+                            saveMyMeds(myMeds.filter(m=>m.id!==med.id));
+                            showToast("🗑️ 已刪除");
+                          }
+                        }} style={{background:"transparent",border:"none",color:C.textMuted,fontSize:16,cursor:"pointer",padding:"4px 8px"}}>×</button>
+                      </div>
                     </div>
+                    {/* 近7天打卡點 */}
+                    {medLogLoaded&&(
+                      <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                        {last7.reverse().map((ds,i)=>{
+                          const hit=medLog.some(l=>l.medId===med.id&&normalizeDate(l.date)===ds);
+                          const isToday=ds===todayStr;
+                          return(
+                            <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                              <div style={{width:18,height:18,borderRadius:"50%",
+                                background:hit?"rgba(46,204,138,0.85)":"rgba(100,100,100,0.2)",
+                                border:isToday?`2px solid ${C.green}`:"2px solid transparent"}}>
+                              </div>
+                              <div style={{fontSize:8,color:C.textMuted}}>{ds.slice(8)}</div>
+                            </div>
+                          );
+                        })}
+                        <div style={{fontSize:10,color:C.textMuted,marginLeft:4}}>近7天 {hit7}/7</div>
+                      </div>
+                    )}
                   </div>
-                  <button onClick={()=>{
-                    if(window.confirm(`刪除「${med.name}」？`)){
-                      saveMyMeds(myMeds.filter(m=>m.id!==med.id));
-                      showToast("🗑️ 已刪除");
-                    }
-                  }}
-                    style={{background:"transparent",border:"none",color:C.textMuted,fontSize:16,cursor:"pointer",padding:"4px 8px"}}>×</button>
-                </div>
-              ))}
+                );
+              })}
             </div>
             {/* 保健品/藥物 子Tab切換 */}
             <div style={{display:"flex",gap:8,marginBottom:12}}>
@@ -6910,16 +6976,50 @@ ${exSummary}
                 return`<tr style="background:${bg}"><td style="padding:6px 12px;border-bottom:1px solid #eee">${f.label}</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:bold">${fmtLabVal(f.key,latest[f.key])} ${f.unit}</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:center">${mark}</td></tr>`;
               }).join("");
             // 動態追蹤事項（依實際異常自動生成）
+            // ★ v4.65 動態追蹤事項（完全根據實際數據生成，不再 hardcoded）
             const alerts=[];
             const v=k=>parseFloat(latest[k]);
-            if(v("hba1c")>=5.7)alerts.push(`HbA1c ${latest.hba1c}%（目標&lt;5.7%）→ 每3個月追蹤，飲食控制+運動`);
-            if(v("alt")>40||v("ggt")>60)alerts.push(`肝功能偏高 ALT ${latest.alt} / GGT ${latest.ggt} → 每6個月追蹤，超音波確認脂肪肝`);
-            if(v("hdl")<40)alerts.push(`HDL ${latest.hdl} mg/dL 偏低（目標&gt;40）→ 規律有氧運動、橄欖油、Omega-3`);
-            if(v("uric_acid")>7)alerts.push(`尿酸 ${latest.uric_acid} mg/dL 偏高 → 每日飲水2000mL+、限高普林食物`);
-            if(v("platelet")<150)alerts.push(`血小板 ${latest.platelet} K/uL 偏低 → 服用Plavix需注意出血風險，告知醫師`);
-            if(v("egfr")<75||v("egfr")>0&&v("egfr")<75)alerts.push(`eGFR ${latest.egfr}（G2期）→ 每6個月追蹤腎功能，避免腎毒性藥物`);
-            if(avgSys&&avgSys>130)alerts.push(`血壓近7筆均值 ${avgSys}/${avgDia} mmHg 仍偏高 → 確認用藥效果，目標&lt;130/80`);
-            alerts.push("右腎囊腫 10×12mm → 每年超音波追蹤");
+            // 血糖相關
+            if(!isNaN(v("hba1c"))){
+              if(v("hba1c")>=6.5) alerts.push(`⚠️ HbA1c ${latest.hba1c}% 已達糖尿病標準 → 立即就醫，評估用藥`);
+              else if(v("hba1c")>=5.7) alerts.push(`HbA1c ${latest.hba1c}%（糖尿病前期）→ 每3個月追蹤，飲食控制+運動`);
+              else alerts.push(`HbA1c ${latest.hba1c}%（正常）→ 維持目前飲食習慣`);
+            }
+            // 肝功能
+            if(!isNaN(v("alt"))&&(v("alt")>80||v("ggt")>100)) alerts.push(`❌ 肝功能顯著偏高 ALT ${latest.alt||"—"} / GGT ${latest.ggt||"—"} → 需就醫評估`);
+            else if(!isNaN(v("alt"))&&(v("alt")>40||v("ggt")>60)) alerts.push(`肝功能偏高 ALT ${latest.alt||"—"} / GGT ${latest.ggt||"—"} → 每6個月追蹤，超音波確認脂肪肝`);
+            // 血脂
+            if(!isNaN(v("hdl"))&&v("hdl")<35) alerts.push(`❌ HDL ${latest.hdl} mg/dL 偏低（目標&gt;40）→ 加強有氧運動，評估藥物輔助`);
+            else if(!isNaN(v("hdl"))&&v("hdl")<40) alerts.push(`HDL ${latest.hdl} mg/dL 偏低（目標&gt;40）→ 規律有氧運動、橄欖油、Omega-3`);
+            if(!isNaN(v("ldl"))&&v("ldl")>130) alerts.push(`LDL ${latest.ldl} mg/dL 偏高（目標&lt;100）→ 減少飽和脂肪、評估Statin用藥`);
+            if(!isNaN(v("tg"))&&v("tg")>200) alerts.push(`三酸甘油酯 ${latest.tg} mg/dL 偏高 → 減少精緻糖和酒精、補充Omega-3`);
+            // 尿酸
+            if(!isNaN(v("uric_acid"))&&v("uric_acid")>8.5) alerts.push(`❌ 尿酸 ${latest.uric_acid} mg/dL 高危 → 考慮藥物治療（Allopurinol）`);
+            else if(!isNaN(v("uric_acid"))&&v("uric_acid")>7) alerts.push(`尿酸 ${latest.uric_acid} mg/dL 偏高 → 每日飲水2000mL+、限高普林食物`);
+            // 腎功能
+            if(!isNaN(v("gfr"))&&v("gfr")<60) alerts.push(`❌ eGFR ${latest.gfr}（CKD G3）→ 腎臟科就診，嚴格控制血糖血壓`);
+            else if(!isNaN(v("gfr"))&&v("gfr")<75) alerts.push(`eGFR ${latest.gfr}（G2期）→ 每6個月追蹤腎功能，避免腎毒性藥物`);
+            if(!isNaN(v("upcr"))&&v("upcr")>300) alerts.push(`❌ UPCR ${latest.upcr} mg/g 蛋白尿顯著 → 腎臟科就診`);
+            else if(!isNaN(v("upcr"))&&v("upcr")>30) alerts.push(`UPCR ${latest.upcr} mg/g 微量蛋白尿 → 嚴格控制血糖血壓`);
+            // 血小板
+            if(!isNaN(v("platelet"))&&v("platelet")<100) alerts.push(`❌ 血小板 ${latest.platelet} K/uL 嚴重偏低 → 立即就醫`);
+            else if(!isNaN(v("platelet"))&&v("platelet")<150) alerts.push(`血小板 ${latest.platelet} K/uL 偏低 → 服用Plavix需注意出血風險，告知醫師`);
+            // 血壓（動態）
+            if(avgSys&&avgSys>=140) alerts.push(`❌ 血壓近7筆均值 ${avgSys}/${avgDia} mmHg → 藥物劑量需調整，立即回診`);
+            else if(avgSys&&avgSys>130) alerts.push(`血壓近7筆均值 ${avgSys}/${avgDia} mmHg 偏高 → 確認用藥效果，目標&lt;130/80`);
+            // 影像追蹤（動態從 imagingHistory 提取）
+            const imgFindings = imagingHistory.map(r=>r.finding||"").join(" ");
+            if(imgFindings.includes("囊腫")) {
+              const cyst = imagingHistory.find(r=>(r.finding||"").includes("囊腫"));
+              if(cyst) alerts.push(`${cyst.type||"影像"}發現囊腫 → 每年超音波追蹤（最近：${fmtDate(cyst.date)}）`);
+            }
+            if(imgFindings.includes("脂肪肝")) {
+              const fl = imagingHistory.find(r=>(r.finding||"").includes("脂肪肝"));
+              if(fl) alerts.push(`${fl.type||"超音波"}確認脂肪肝 → 每6個月追蹤ALT/GGT和腹超`);
+            }
+            if(imgFindings.includes("動脈瘤")||imgFindings.includes("狹窄")) {
+              alerts.push("心血管結構異常（動脈瘤/冠狀動脈狹窄）→ 每6個月心臟科追蹤");
+            }
             // 雷達分數
             const radarScores=computeRadarScores(latest,bpHistory);
             const radarRows=radarScores?radarScores.filter(d=>d.score!=null)
@@ -7096,8 +7196,85 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
           }}>
             🔧 更新 lab_reports 欄位
           </button>
-          <div style={{fontSize:11,color:C.textMuted}}>
+          <div style={{fontSize:11,color:C.textMuted,marginBottom:12}}>
             自動新增所有缺少的欄位，不影響現有資料
+          </div>
+
+          {/* ★ v4.65 一鍵重新解析舊抽血記錄 */}
+          <div style={{background:"rgba(90,180,255,0.06)",border:`1px solid rgba(90,180,255,0.3)`,borderRadius:10,padding:12,marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.blue,marginBottom:6}}>🔄 重新解析舊抽血記錄</div>
+            <div style={{fontSize:12,color:C.textMuted,marginBottom:8,lineHeight:1.7}}>
+              針對欄位不足（&lt;40項）的舊記錄，重新用AI解析並補齊數據。<br/>
+              <span style={{color:C.amber}}>⚠️ 需要API金鑰，每筆消耗約500 tokens</span>
+            </div>
+            {reparseProgress&&(
+              <div style={{fontSize:12,color:C.blue,marginBottom:8,padding:"6px 10px",
+                background:"rgba(90,180,255,0.1)",borderRadius:8}}>
+                {reparseProgress}
+              </div>
+            )}
+            <button onClick={async()=>{
+              const key=localStorage.getItem("hj_apikey")||"";
+              if(!key){showToast("⚠️ 請先設定API金鑰");return;}
+              if(labHistory.length===0){showToast("⚠️ 尚無抽血記錄");return;}
+              // 找出欄位數 < 40 的舊記錄
+              const SKIP=new Set(['id','date','hospital','country','doctor','fasting','note','extra_data','source_country','createdAt']);
+              const oldRecords=labHistory.filter(r=>{
+                const cnt=Object.keys(r).filter(k=>!SKIP.has(k)&&r[k]!==null&&r[k]!==undefined&&r[k]!=="").length;
+                return cnt<40;
+              });
+              if(oldRecords.length===0){showToast("✅ 所有記錄都已是完整版（≥40欄位），無需重新解析");return;}
+              if(!window.confirm(`找到 ${oldRecords.length} 筆舊記錄（欄位<40），確定重新解析？
+每筆約10-20秒，共需 ${oldRecords.length} 次API呼叫。`))return;
+              setReparseLoading(true);
+              let done=0,failed=0;
+              for(const rec of oldRecords){
+                setReparseProgress(`⏳ 解析中 ${done+1}/${oldRecords.length}：${fmtDate(rec.date)} ${rec.hospital||""}`);
+                try{
+                  // 把現有數值組成文字讓 AI 重新解析（補齊）
+                  const existingVals=Object.entries(rec)
+                    .filter(([k,v])=>!SKIP.has(k)&&v!==null&&v!==undefined&&v!=="")
+                    .map(([k,v])=>`${k}: ${v}`).join("\n");
+                  const prompt=`你是醫療報告解析助手。以下是一筆已知的抽血報告部分數值，請直接回傳完整的JSON格式，把已知欄位填入，其他未知欄位填null。只回傳JSON，不要說明文字。
+
+已知數值：
+${existingVals}
+抽血日期：${rec.date}
+醫院：${rec.hospital||""}
+
+回傳JSON（包含所有欄位）：{"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"gfr2":null,"bun":null,"upcr":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"ne_pct":null,"ly_pct":null,"mo_pct":null,"eo_pct":null,"ba_pct":null,"ne_abs":null,"ly_abs":null,"mo_abs":null,"eo_abs":null,"ba_abs":null,"hbsag":null,"anti_hcv":null,"anti_hbs":null,"cea":null,"afp":null,"psa":null,"asto":null,"rf":null,"urine_glucose":null,"urine_bilirubin":null,"urine_ketone":null,"urine_sg":null,"urine_ph":null,"urine_nitrite":null,"urine_urobilinogen":null,"urine_blood":null,"urine_leukocyte":null,"insulin":null,"vitamin_d3":null,"ferritin":null,"hs_crp":null,"insulin_resistance":null}`;
+                  const rawText=await callClaude([{role:"user",content:prompt}],800);
+                  let parsed={};
+                  try{
+                    const clean=rawText.replace(/\`\`\`json|\`\`\`|
+/g,"").trim();
+                    parsed=JSON.parse(clean);
+                  }catch(e){
+                    const start=rawText.indexOf("{");const end=rawText.lastIndexOf("}");
+                    if(start>=0&&end>start)parsed=JSON.parse(rawText.slice(start,end+1));
+                  }
+                  // 過濾 null，合併到現有記錄
+                  Object.keys(parsed).forEach(k=>{if(parsed[k]===null||parsed[k]==="null"||parsed[k]==="")delete parsed[k];});
+                  const updated={...rec,...parsed,id:rec.id,date:rec.date,hospital:rec.hospital,country:rec.country};
+                  const r=await api.post("update","lab_reports",updated);
+                  if(r?.success){done++;}else{failed++;}
+                }catch(e){
+                  failed++;
+                  console.log("reparse error:",e.message);
+                }
+                // 小延遲避免 rate limit
+                await new Promise(res=>setTimeout(res,500));
+              }
+              setReparseLoading(false);
+              setReparseProgress(`✅ 完成！成功 ${done} 筆，失敗 ${failed} 筆`);
+              if(done>0)loadData();
+            }} disabled={reparseLoading}
+              style={{width:"100%",padding:"10px",borderRadius:10,fontSize:13,fontWeight:700,
+                background:reparseLoading?"rgba(90,180,255,0.2)":"rgba(90,180,255,0.9)",
+                border:"none",color:reparseLoading?"#999":"#000",cursor:reparseLoading?"not-allowed":"pointer",
+                fontFamily:"'Noto Sans TC',sans-serif"}}>
+              {reparseLoading?"⏳ 解析中，請稍候...":"🔄 一鍵重新解析舊記錄"}
+            </button>
           </div>
         </div>
 
