@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.66";
+const VERSION = "v4.68";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -3220,18 +3220,7 @@ const analyzeTrend = (key, data) => {
                 <span className={`status-chip ${isOverdue?"status-alert":diffDays<=30?"status-warn":"status-ok"}`}>
                   {isOverdue?"到期！":diffDays<=30?`${diffDays}天後`:"待追蹤"}
                 </span>
-                <div style={{display:"flex",gap:4}}>
-                  <button className="btn-sm" onClick={()=>setEditReminder(r)} style={{fontSize:10,padding:"3px 8px"}}>更新日期</button>
-                  <button className="btn-sm" onClick={()=>{
-                    if(window.confirm(`刪除「${r.title}」提醒？`)){
-                      const updated=reminders.filter(x=>x.id!==r.id);
-                      setReminders(updated);
-                      localStorage.setItem("hj_reminders",JSON.stringify(updated));
-                      api.saveSetting("reminders",updated);
-                      showToast("🗑️ 已刪除提醒");
-                    }
-                  }} style={{fontSize:10,padding:"3px 8px",color:C.red,borderColor:`${C.red}44`}}>刪除</button>
-                </div>
+                <button className="btn-sm" onClick={()=>setEditReminder(r)} style={{fontSize:10,padding:"3px 8px"}}>更新日期</button>
               </div>
             </div>
           );
@@ -5318,17 +5307,11 @@ REM（分鐘）：
       const prevLab=labHistory.length>1?labHistory[labHistory.length-2]:null;
       const hba1cTrend=prevLab&&latestLab?`${prevLab.hba1c}%→${latestLab.hba1c}%`:`${latestLab?.hba1c||"—"}%`;
       const hdlTrend=prevLab&&latestLab?`${prevLab.hdl}→${latestLab.hdl}`:`${latestLab?.hdl||"—"}`;
-      const recentSleep7=[...sleepLog].filter(r=>r.date).sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,7);
-      const avgTotal7=recentSleep7.length>0?Math.round(recentSleep7.reduce((s,r)=>s+(parseInt(r.total_min)||0),0)/recentSleep7.length):null;
-      const avgDeep7=recentSleep7.length>0?Math.round(recentSleep7.reduce((s,r)=>s+(parseInt(r.deep_min)||0),0)/recentSleep7.reduce((s,r)=>s+(parseInt(r.total_min)||1),0)*100):null;
-      const avgSpo2_7=recentSleep7.filter(r=>r.spo2_avg>0).length>0?Math.round(recentSleep7.filter(r=>r.spo2_avg>0).reduce((s,r)=>s+(parseInt(r.spo2_avg)||0),0)/recentSleep7.filter(r=>r.spo2_avg>0).length):null;
-      const sleepWeekStr=recentSleep7.length>0?`平均${Math.floor((avgTotal7||0)/60)}h${(avgTotal7||0)%60}m，深層${avgDeep7||"—"}%，血氧avg${avgSpo2_7||"—"}%`:"無記錄";
-      const weakDims=computeRadarScores(latestLab,bpHistory)?.filter(d=>d.score!=null).sort((a,b)=>a.score-b.score).slice(0,2).map(d=>`${d.label.split("\n")[0]}(${d.score}分)`).join("、")||"";
       const prompt=`你是私人健康顧問，請用繁體中文產生本週健康週報，格式如下：
 
 【本週健康週報】
 
-一、本週總評（2-3句，依數據給出整體評價，提到最明顯的改善或惡化）
+一、本週總評（2-3句，依數據給出整體評價）
 
 二、數據重點
 ・血糖控制：HbA1c ${hba1cTrend}，空腹血糖 ${latestGlucose?.value_mgdl||"—"} mg/dL
@@ -5336,21 +5319,19 @@ REM（分鐘）：
 ・血脂 HDL：${hdlTrend} mg/dL（目標>40）
 ・肝功能：ALT ${latestLab?.alt||"—"} / GGT ${latestLab?.ggt||"—"}
 ・體重：${latestWt?latestWt.value_kg+" kg":"尚無記錄"}
-・睡眠（近7天）：${sleepWeekStr}
 
 三、健康雷達本週分數
 ${radarStr}
-最弱面向：${weakDims||"請參考雷達分數"}
-（針對最弱面向給1句具體改善行動，附帶數字目標）
+（指出最弱面向並給1句改善建議）
 
 四、本週行為達成
 ・早餐打卡：${bkfHit7}/7天
 ・運動打卡：${exHit7}/7天
 （依達成率給予鼓勵或提醒）
 
-五、本週三大行動建議（具體可執行，每項必須提到具體數字或時間，針對本週最差的指標）
+五、本週三大行動建議（具體可執行，針對你的弱項）
 
-六、一句鼓勵（有溫度，結合55歲在越南工作的背景，不要重複上週）
+六、一句鼓勵（有溫度，結合55歲在越南工作的背景）
 
 病患背景：55歲台灣男性，越南工作，父親T2D家族史
 已確診問題（2025/03/19海防國際醫院住院確診）：
@@ -5795,23 +5776,31 @@ ${exSummary}
     const [myMeds, setMyMeds] = useState(()=>{
       try{return JSON.parse(localStorage.getItem("hj_mymeds")||"[]");}catch(e){return[];}
     });
-    const [medLog, setMedLog] = useState([]);
-    const [medLogLoaded, setMedLogLoaded] = useState(false);
-    const loadMedLog = async () => {
-      const r = await api.get("getAll", {sheet:"med_log"});
-      if(r?.data){ setMedLog(r.data); setMedLogLoaded(true); }
-    };
-    const takeMed = async (medId, medName) => {
-      const dateStr = today();
-      const timeStr = new Date().toTimeString().slice(0,5);
-      const r = await api.post("append","med_log",{id:"ML"+Date.now(),date:dateStr,time:timeStr,medId,medName});
-      if(r?.success){ setMedLog(prev=>[...prev,{date:dateStr,time:timeStr,medId,medName}]); showToast(`✅ ${medName} 打卡成功`); }
-      else showToast("❌ 打卡失敗");
-    };
-    const [reparseLoading, setReparseLoading] = useState(false);
-    const [reparseProgress, setReparseProgress] = useState("");
     const [showMedForm, setShowMedForm] = useState(false);
     const [medForm, setMedForm] = useState({name:"",dose:"",freq:"每天",timing:"早餐後",note:""});
+    // ★ v4.68 藥物交互作用提醒
+    const [interactionWarning, setInteractionWarning] = useState("");
+    const [interactionLoading, setInteractionLoading] = useState(false);
+    const checkInteraction = async (newMedName) => {
+      if(!newMedName.trim()) return;
+      const key = localStorage.getItem("hj_apikey") || "";
+      if(!key) return;
+      const currentMeds = myMeds.map(m=>`${m.name}（${m.dose||""}${m.timing||""}）`).join("、");
+      if(!currentMeds) return;
+      setInteractionLoading(true);
+      setInteractionWarning("");
+      try {
+        const prompt = `你是藥劑師。請評估以下新增藥物/保健品與現有用藥的交互作用風險，用繁體中文回答，不超過60字，只說最重要的風險，沒有風險就說「無明顯交互作用」。
+
+新增：${newMedName}
+現有用藥：${currentMeds}
+
+只回傳風險說明，不要標題，不要條列：`;
+        const result = await callClaude([{role:"user",content:prompt}], 200);
+        setInteractionWarning(result||"");
+      } catch(e) { console.log("interaction check error", e); }
+      setInteractionLoading(false);
+    };
     const saveMyMeds = (list)=>{
       setMyMeds(list);
       localStorage.setItem("hj_mymeds", JSON.stringify(list));
@@ -6101,19 +6090,58 @@ ${exSummary}
     // ── 列表主頁 ──
     const groups = [...new Set(KNOWLEDGE_ITEMS.map(i=>i.group))];
     const searchLower = kbSearch.toLowerCase().trim();
+    // ★ v4.68 同義詞搜尋對照表
+    const SYNONYMS = {
+      "肝":["alt","ast","ggt","alp","ldh","肝功能","肝臟","脂肪肝","tbil","dbil","tp","alb"],
+      "腎":["creatinine","gfr","bun","upcr","腎功能","eGFR","肌酸酐"],
+      "血糖":["hba1c","glucose","糖化","糖尿病","空腹"],
+      "血脂":["hdl","ldl","tg","cholesterol","膽固醇","三酸甘油酯"],
+      "尿酸":["uric","痛風"],
+      "甲狀腺":["tsh","ft3","ft4"],
+      "血壓":["systolic","diastolic","高血壓"],
+      "貧血":["hb","rbc","hct","mcv","mch","鐵","ferritin","血紅素"],
+      "白血球":["wbc","ne","ly","mo","eo","嗜中性","淋巴","免疫"],
+      "發炎":["crp","inflammation","發炎"],
+      "心臟":["ck","ldh","心血管","心臟"],
+      "胰臟":["amy","lip","amylase","lipase"],
+      "電解質":["na","k","cl","ca","mg","phos","鈉","鉀","氯","鈣","鎂"],
+      "尿液":["urine","尿糖","尿潛血","尿白血球","尿比重"],
+      "膽固醇":["hdl","ldl","cholesterol","chol"],
+      "蛋白尿":["upcr","urine_protein","蛋白"],
+      "維生素":["vitamin","tsh","ferritin","d3"],
+      "肌肉":["ck","creatinine","肌酸"],
+      "肝炎":["hbsag","anti_hcv","anti_hbs","B肝","C肝","病毒"],
+      "癌症":["cea","afp","psa","腫瘤標記"],
+    };
+    // 展開同義詞：搜尋詞 + 對應的所有相關詞
+    const expandSearch = (q) => {
+      const terms = [q];
+      Object.entries(SYNONYMS).forEach(([key, synonyms]) => {
+        if(key.includes(q) || q.includes(key)) {
+          terms.push(...synonyms);
+        }
+        synonyms.forEach(s => { if(s.includes(q)) terms.push(key, ...synonyms); });
+      });
+      return [...new Set(terms)];
+    };
+    const searchTerms = searchLower ? expandSearch(searchLower) : [];
+    const matchesAny = (text) => searchTerms.some(t => text.toLowerCase().includes(t));
+
     const filteredLab = searchLower
       ? KNOWLEDGE_ITEMS.filter(i=>
-          i.title.toLowerCase().includes(searchLower)||
-          (i.fullName||"").toLowerCase().includes(searchLower)||
-          i.key.toLowerCase().includes(searchLower)||
-          i.group.toLowerCase().includes(searchLower)
+          matchesAny(i.title)||
+          matchesAny(i.fullName||"")||
+          matchesAny(i.key)||
+          matchesAny(i.group)||
+          matchesAny(i.desc||"")||
+          (i.tips||[]).some(t=>matchesAny(t))
         )
       : null;
     const filteredArticles = searchLower
       ? allArticles.filter(a=>
-          a.title.toLowerCase().includes(searchLower)||
-          a.tag.toLowerCase().includes(searchLower)||
-          a.content.toLowerCase().includes(searchLower)
+          matchesAny(a.title)||
+          matchesAny(a.tag)||
+          matchesAny(a.content)
         )
       : null;
 
@@ -6301,8 +6329,25 @@ ${exSummary}
               {showMedForm&&(
                 <div style={{background:C.bg,borderRadius:10,padding:10,marginBottom:8}}>
                   <input className="input-field" placeholder="藥品/保健品名稱（例：舒脈康 5/40mg）"
-                    value={medForm.name} onChange={e=>setMedForm(f=>({...f,name:e.target.value}))}
+                    value={medForm.name}
+                    onChange={e=>{setMedForm(f=>({...f,name:e.target.value}));setInteractionWarning("");}}
+                    onBlur={e=>checkInteraction(e.target.value)}
                     style={{marginBottom:6}}/>
+                  {interactionLoading&&(
+                    <div style={{fontSize:11,color:C.textMuted,marginBottom:6,padding:"6px 10px",
+                      background:"rgba(255,179,71,0.08)",borderRadius:8}}>⏳ 檢查交互作用中...</div>
+                  )}
+                  {interactionWarning&&!interactionLoading&&(()=>{
+                    const isRisk=!interactionWarning.includes("無明顯")&&!interactionWarning.includes("安全");
+                    return(
+                      <div style={{fontSize:12,marginBottom:8,padding:"8px 10px",lineHeight:1.7,
+                        background:isRisk?"rgba(255,90,126,0.08)":"rgba(46,204,138,0.08)",
+                        border:`1px solid ${isRisk?C.red:C.green}44`,borderRadius:8,
+                        color:isRisk?C.red:C.green}}>
+                        {isRisk?"⚠️ ":"✅ "}{interactionWarning}
+                      </div>
+                    );
+                  })()}
                   <div style={{display:"flex",gap:6,marginBottom:6}}>
                     <input className="input-field" placeholder="劑量（例：1錠）" style={{flex:1}}
                       value={medForm.dose} onChange={e=>setMedForm(f=>({...f,dose:e.target.value}))}/>
@@ -6326,65 +6371,33 @@ ${exSummary}
                       if(!medForm.name.trim()){showToast("⚠️ 請輸入名稱");return;}
                       saveMyMeds([...myMeds,{id:Date.now(),...medForm,startDate:today()}]);
                       setMedForm({name:"",dose:"",freq:"每天",timing:"早餐後",note:""});
+                      setInteractionWarning("");
                       setShowMedForm(false);
                       showToast("✅ 已加入清單");
                     }}>儲存</button>
                 </div>
-              )}
+              )}}
               {myMeds.length===0&&!showMedForm&&(
                 <div style={{fontSize:11,color:C.textMuted,marginTop:6}}>記錄你實際服用的藥物與保健品（存於手機本地）</div>
               )}
-              {myMeds.length>0&&!medLogLoaded&&(
-                <button onClick={loadMedLog}
-                  style={{width:"100%",padding:"7px",marginBottom:8,borderRadius:8,fontSize:12,
-                    background:"rgba(46,204,138,0.08)",border:`1px solid ${C.border}`,
-                    color:C.green,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}>
-                  📋 載入服藥歷史記錄
-                </button>
-              )}
-              {myMeds.map(med=>{
-                const todayStr=today();
-                const takenToday=medLog.some(l=>l.medId===med.id&&normalizeDate(l.date)===todayStr);
-                const last7=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;});
-                const hit7=last7.filter(ds=>medLog.some(l=>l.medId===med.id&&normalizeDate(l.date)===ds)).length;
-                return(
-                  <div key={med.id} style={{padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
-                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-                      <div style={{flex:1}}>
-                        <div style={{fontSize:13,fontWeight:600,color:C.text}}>{med.name}</div>
-                        <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>{[med.dose,med.freq,med.timing,med.note].filter(Boolean).join(" · ")}</div>
-                      </div>
-                      <div style={{display:"flex",alignItems:"center",gap:6}}>
-                        <button onClick={()=>!takenToday&&takeMed(med.id,med.name)}
-                          style={{padding:"5px 12px",borderRadius:8,fontSize:12,fontWeight:700,cursor:takenToday?"default":"pointer",
-                            background:takenToday?"rgba(46,204,138,0.15)":"rgba(46,204,138,0.9)",
-                            border:`1px solid ${takenToday?C.green:C.greenDark}`,color:takenToday?C.green:"#000",
-                            fontFamily:"'Noto Sans TC',sans-serif"}}>
-                          {takenToday?"✅ 已服":"打卡"}
-                        </button>
-                        <button onClick={()=>{if(window.confirm(`刪除「${med.name}」？`)){saveMyMeds(myMeds.filter(m=>m.id!==med.id));showToast("🗑️ 已刪除");}}}
-                          style={{background:"transparent",border:"none",color:C.textMuted,fontSize:16,cursor:"pointer",padding:"4px 8px"}}>×</button>
-                      </div>
+              {myMeds.map(med=>(
+                <div key={med.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                  padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600,color:C.text}}>{med.name}</div>
+                    <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>
+                      {[med.dose,med.freq,med.timing,med.note].filter(Boolean).join(" · ")}
                     </div>
-                    {medLogLoaded&&(
-                      <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                        {[...last7].reverse().map((ds,i)=>{
-                          const hit=medLog.some(l=>l.medId===med.id&&normalizeDate(l.date)===ds);
-                          return(
-                            <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-                              <div style={{width:18,height:18,borderRadius:"50%",
-                                background:hit?"rgba(46,204,138,0.85)":"rgba(100,100,100,0.2)",
-                                border:ds===todayStr?`2px solid ${C.green}`:"2px solid transparent"}}/>
-                              <div style={{fontSize:8,color:C.textMuted}}>{ds.slice(8)}</div>
-                            </div>
-                          );
-                        })}
-                        <div style={{fontSize:10,color:C.textMuted,marginLeft:4}}>近7天 {hit7}/7</div>
-                      </div>
-                    )}
                   </div>
-                );
-              })}
+                  <button onClick={()=>{
+                    if(window.confirm(`刪除「${med.name}」？`)){
+                      saveMyMeds(myMeds.filter(m=>m.id!==med.id));
+                      showToast("🗑️ 已刪除");
+                    }
+                  }}
+                    style={{background:"transparent",border:"none",color:C.textMuted,fontSize:16,cursor:"pointer",padding:"4px 8px"}}>×</button>
+                </div>
+              ))}
             </div>
             {/* 保健品/藥物 子Tab切換 */}
             <div style={{display:"flex",gap:8,marginBottom:12}}>
@@ -6962,31 +6975,14 @@ ${exSummary}
             // 動態追蹤事項（依實際異常自動生成）
             const alerts=[];
             const v=k=>parseFloat(latest[k]);
-            if(!isNaN(v("hba1c"))){
-              if(v("hba1c")>=6.5)alerts.push(`⚠️ HbA1c ${latest.hba1c}% 已達糖尿病標準 → 立即就醫評估用藥`);
-              else if(v("hba1c")>=5.7)alerts.push(`HbA1c ${latest.hba1c}%（糖尿病前期）→ 每3個月追蹤，飲食控制+運動`);
-              else alerts.push(`HbA1c ${latest.hba1c}%（正常）→ 維持目前飲食習慣`);
-            }
-            if(!isNaN(v("alt"))&&(v("alt")>80||v("ggt")>100))alerts.push(`❌ 肝功能顯著偏高 ALT ${latest.alt||"—"} / GGT ${latest.ggt||"—"} → 需就醫評估`);
-            else if(!isNaN(v("alt"))&&(v("alt")>40||v("ggt")>60))alerts.push(`肝功能偏高 ALT ${latest.alt||"—"} / GGT ${latest.ggt||"—"} → 每6個月追蹤`);
-            if(!isNaN(v("hdl"))&&v("hdl")<35)alerts.push(`❌ HDL ${latest.hdl} mg/dL 偏低 → 加強有氧運動，評估藥物`);
-            else if(!isNaN(v("hdl"))&&v("hdl")<40)alerts.push(`HDL ${latest.hdl} mg/dL 偏低（目標&gt;40）→ 規律有氧運動、橄欖油、Omega-3`);
-            if(!isNaN(v("ldl"))&&v("ldl")>130)alerts.push(`LDL ${latest.ldl} mg/dL 偏高 → 減少飽和脂肪`);
-            if(!isNaN(v("tg"))&&v("tg")>200)alerts.push(`三酸甘油酯 ${latest.tg} mg/dL 偏高 → 減少精緻糖和酒精`);
-            if(!isNaN(v("uric_acid"))&&v("uric_acid")>8.5)alerts.push(`❌ 尿酸 ${latest.uric_acid} mg/dL 高危 → 考慮藥物治療`);
-            else if(!isNaN(v("uric_acid"))&&v("uric_acid")>7)alerts.push(`尿酸 ${latest.uric_acid} mg/dL 偏高 → 每日飲水2000mL+、限高普林食物`);
-            if(!isNaN(v("gfr"))&&v("gfr")<60)alerts.push(`❌ eGFR ${latest.gfr}（CKD G3）→ 腎臟科就診`);
-            else if(!isNaN(v("gfr"))&&v("gfr")<75)alerts.push(`eGFR ${latest.gfr}（G2期）→ 每6個月追蹤腎功能`);
-            if(!isNaN(v("upcr"))&&v("upcr")>300)alerts.push(`❌ UPCR ${latest.upcr} mg/g 蛋白尿顯著 → 腎臟科就診`);
-            else if(!isNaN(v("upcr"))&&v("upcr")>30)alerts.push(`UPCR ${latest.upcr} mg/g 微量蛋白尿 → 嚴格控制血糖血壓`);
-            if(!isNaN(v("platelet"))&&v("platelet")<100)alerts.push(`❌ 血小板 ${latest.platelet} K/uL 嚴重偏低 → 立即就醫`);
-            else if(!isNaN(v("platelet"))&&v("platelet")<150)alerts.push(`血小板 ${latest.platelet} K/uL 偏低 → 服用Plavix需注意出血風險`);
-            if(avgSys&&avgSys>=140)alerts.push(`❌ 血壓均值 ${avgSys}/${avgDia} mmHg → 藥物需調整，立即回診`);
-            else if(avgSys&&avgSys>130)alerts.push(`血壓均值 ${avgSys}/${avgDia} mmHg 偏高 → 目標&lt;130/80`);
-            const imgFindings=imagingHistory.map(r=>r.finding||"").join(" ");
-            if(imgFindings.includes("囊腫")){const cyst=imagingHistory.find(r=>(r.finding||"").includes("囊腫"));if(cyst)alerts.push(`${cyst.type||"影像"}發現囊腫 → 每年超音波追蹤（最近：${fmtDate(cyst.date)}）`);}
-            if(imgFindings.includes("脂肪肝")){const fl=imagingHistory.find(r=>(r.finding||"").includes("脂肪肝"));if(fl)alerts.push(`${fl.type||"超音波"}確認脂肪肝 → 每6個月追蹤`);}
-            if(imgFindings.includes("動脈瘤")||imgFindings.includes("狹窄"))alerts.push("心血管結構異常（動脈瘤/冠狀動脈狹窄）→ 每6個月心臟科追蹤");
+            if(v("hba1c")>=5.7)alerts.push(`HbA1c ${latest.hba1c}%（目標&lt;5.7%）→ 每3個月追蹤，飲食控制+運動`);
+            if(v("alt")>40||v("ggt")>60)alerts.push(`肝功能偏高 ALT ${latest.alt} / GGT ${latest.ggt} → 每6個月追蹤，超音波確認脂肪肝`);
+            if(v("hdl")<40)alerts.push(`HDL ${latest.hdl} mg/dL 偏低（目標&gt;40）→ 規律有氧運動、橄欖油、Omega-3`);
+            if(v("uric_acid")>7)alerts.push(`尿酸 ${latest.uric_acid} mg/dL 偏高 → 每日飲水2000mL+、限高普林食物`);
+            if(v("platelet")<150)alerts.push(`血小板 ${latest.platelet} K/uL 偏低 → 服用Plavix需注意出血風險，告知醫師`);
+            if(v("egfr")<75||v("egfr")>0&&v("egfr")<75)alerts.push(`eGFR ${latest.egfr}（G2期）→ 每6個月追蹤腎功能，避免腎毒性藥物`);
+            if(avgSys&&avgSys>130)alerts.push(`血壓近7筆均值 ${avgSys}/${avgDia} mmHg 仍偏高 → 確認用藥效果，目標&lt;130/80`);
+            alerts.push("右腎囊腫 10×12mm → 每年超音波追蹤");
             // 雷達分數
             const radarScores=computeRadarScores(latest,bpHistory);
             const radarRows=radarScores?radarScores.filter(d=>d.score!=null)
@@ -7163,73 +7159,8 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
           }}>
             🔧 更新 lab_reports 欄位
           </button>
-          <div style={{fontSize:11,color:C.textMuted,marginBottom:12}}>
+          <div style={{fontSize:11,color:C.textMuted}}>
             自動新增所有缺少的欄位，不影響現有資料
-          </div>
-          {/* ★ v4.66 一鍵重新解析舊抽血記錄 */}
-          <div style={{background:"rgba(90,180,255,0.06)",border:`1px solid rgba(90,180,255,0.3)`,borderRadius:10,padding:12,marginBottom:12}}>
-            <div style={{fontSize:13,fontWeight:700,color:C.blue,marginBottom:6}}>🔄 重新解析舊抽血記錄</div>
-            <div style={{fontSize:12,color:C.textMuted,marginBottom:8,lineHeight:1.7}}>
-              針對欄位不足（&lt;40項）的舊記錄，重新用AI解析並補齊數據。<br/>
-              <span style={{color:C.amber}}>⚠️ 需要API金鑰，每筆消耗約500 tokens</span>
-            </div>
-            {reparseProgress&&(
-              <div style={{fontSize:12,color:C.blue,marginBottom:8,padding:"6px 10px",
-                background:"rgba(90,180,255,0.1)",borderRadius:8}}>
-                {reparseProgress}
-              </div>
-            )}
-            <button onClick={async()=>{
-              const key=localStorage.getItem("hj_apikey")||"";
-              if(!key){showToast("⚠️ 請先設定API金鑰");return;}
-              if(labHistory.length===0){showToast("⚠️ 尚無抽血記錄");return;}
-              const SKIP=new Set(["id","date","hospital","country","doctor","fasting","note","extra_data","source_country","createdAt"]);
-              const oldRecords=labHistory.filter(r=>{
-                const cnt=Object.keys(r).filter(k=>!SKIP.has(k)&&r[k]!==null&&r[k]!==undefined&&r[k]!=="").length;
-                return cnt<40;
-              });
-              if(oldRecords.length===0){showToast("✅ 所有記錄都已是完整版，無需重新解析");return;}
-              if(!window.confirm(`找到 ${oldRecords.length} 筆舊記錄（欄位<40），確定重新解析？`))return;
-              setReparseLoading(true);
-              let done=0,failed=0;
-              for(const rec of oldRecords){
-                setReparseProgress(`⏳ 解析中 ${done+1}/${oldRecords.length}：${fmtDate(rec.date)} ${rec.hospital||""}`);
-                try{
-                  const existingVals=Object.entries(rec)
-                    .filter(([k,v])=>!SKIP.has(k)&&v!==null&&v!==undefined&&v!=="")
-                    .map(([k,v])=>`${k}: ${v}`).join("\n");
-                  const prompt=`你是醫療報告解析助手。以下是已知的抽血數值，請回傳完整JSON，已知欄位填入，未知填null。只回傳JSON。
-
-已知數值：
-${existingVals}
-
-回傳JSON：{"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"uric_acid":null,"creatinine":null,"gfr":null,"bun":null,"upcr":null,"tsh":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"crp":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"platelet":null,"ne_pct":null,"ly_pct":null,"mo_pct":null,"eo_pct":null,"ba_pct":null,"ne_abs":null,"ly_abs":null,"mo_abs":null,"hbsag":null,"anti_hcv":null,"anti_hbs":null,"cea":null,"afp":null,"urine_glucose":null,"urine_blood":null,"urine_leukocyte":null}`;
-                  const rawText=await callClaude([{role:"user",content:prompt}],600);
-                  let parsed={};
-                  try{
-                    const clean=rawText.replace(/```json|```/g,"").trim();
-                    parsed=JSON.parse(clean);
-                  }catch(e){
-                    const start=rawText.indexOf("{");const end=rawText.lastIndexOf("}");
-                    if(start>=0&&end>start)parsed=JSON.parse(rawText.slice(start,end+1));
-                  }
-                  Object.keys(parsed).forEach(k=>{if(parsed[k]===null||parsed[k]==="null"||parsed[k]==="")delete parsed[k];});
-                  const updated={...rec,...parsed,id:rec.id,date:rec.date,hospital:rec.hospital,country:rec.country};
-                  const r=await api.post("update","lab_reports",updated);
-                  if(r?.success)done++;else failed++;
-                }catch(e){failed++;console.log("reparse error:",e.message);}
-                await new Promise(res=>setTimeout(res,500));
-              }
-              setReparseLoading(false);
-              setReparseProgress(`✅ 完成！成功 ${done} 筆，失敗 ${failed} 筆`);
-              if(done>0)loadData();
-            }} disabled={reparseLoading}
-              style={{width:"100%",padding:"10px",borderRadius:10,fontSize:13,fontWeight:700,
-                background:reparseLoading?"rgba(90,180,255,0.2)":"rgba(90,180,255,0.9)",
-                border:"none",color:reparseLoading?"#999":"#000",cursor:reparseLoading?"not-allowed":"pointer",
-                fontFamily:"'Noto Sans TC',sans-serif"}}>
-              {reparseLoading?"⏳ 解析中，請稍候...":"🔄 一鍵重新解析舊記錄"}
-            </button>
           </div>
         </div>
 
