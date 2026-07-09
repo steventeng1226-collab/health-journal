@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.68";
+const VERSION = "v4.69";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -189,7 +189,7 @@ const LAB_FIELDS = [
 ];
 
 const styles=`
-  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=DM+Serif+Display&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
   *{box-sizing:border-box;margin:0;padding:0;}
   body{background:${C.bg};color:${C.text};font-family:'Noto Sans TC',sans-serif;}
   ::-webkit-scrollbar{width:4px;} ::-webkit-scrollbar-track{background:${C.bg};} ::-webkit-scrollbar-thumb{background:${C.greenDark};border-radius:2px;}
@@ -1393,11 +1393,28 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
     api.saveSetting("hospitals", updated); // 同步到Sheets
   };
 
+  // ★ v4.69 快取優先：啟動時先讀 localStorage 秒開，背景再同步
+  const restoreFromCache=useCallback(()=>{
+    try{
+      const c=JSON.parse(localStorage.getItem("hj_data_cache")||"null");
+      if(!c)return false;
+      if(c.lab)setLabHistory(c.lab);
+      if(c.glu)setGlucoseHistory(c.glu);
+      if(c.bp)setBpHistory(c.bp);
+      if(c.wt)setWeightHistory(c.wt);
+      if(c.bkf)setBreakfastLog(c.bkf);
+      if(c.ex)setExerciseLog(c.ex);
+      if(c.slp)setSleepLog(c.slp);
+      if(c.img)setImagingHistory(c.img);
+      return true;
+    }catch(e){return false;}
+  },[]);
+
   const loadData=useCallback(async()=>{
     setLoading(true);
     setSyncStatus("syncing");
     try{
-      const [lab,glu,bp,wt,settings,imaging,bkf]=await Promise.all([
+      const [lab,glu,bp,wt,settings,imaging,bkf,exLog,slp]=await Promise.all([
         api.get("getLabHistory"),
         api.get("getAll",{sheet:"daily_glucose"}),
         api.get("getAll",{sheet:"daily_bp"}),
@@ -1406,14 +1423,15 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
         api.get("getAll",{sheet:"imaging"}),
         api.get("getAll",{sheet:"breakfast_log"}),
         api.get("getAll",{sheet:"exercise_log"}),
+        api.get("getAll",{sheet:"sleep_log"}),
       ]);
       if(lab?.data)setLabHistory(lab.data);
       if(glu?.data)setGlucoseHistory(glu.data);
       if(bp?.data)setBpHistory(bp.data);
       if(wt?.data)setWeightHistory(wt.data);
       if(bkf?.data)setBreakfastLog(bkf.data.filter(r=>r.date&&String(r.date).trim()));
-      const [exLog]=await Promise.all([api.get("getAll",{sheet:"exercise_log"})]);
       if(exLog?.data)setExerciseLog(exLog.data.filter(r=>r.date&&String(r.date).trim()));
+      if(slp?.data)setSleepLog(slp.data.filter(r=>r.date&&String(r.date).trim()));
       if(imaging?.data){
         // 過濾空白列（id或date或type為空/空白的）
         const validImaging = imaging.data.filter(r =>
@@ -1448,7 +1466,27 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
     setLoading(false);
   },[]);
 
-  useEffect(()=>{loadData();},[loadData]);
+  // ★ v4.69 同步成功後存快取（供下次秒開）
+  useEffect(()=>{
+    if(syncStatus!=="synced")return;
+    try{
+      localStorage.setItem("hj_data_cache",JSON.stringify({
+        lab:labHistory.slice(-20),
+        glu:glucoseHistory.slice(-60),
+        bp:bpHistory.slice(-60),
+        wt:weightHistory.slice(-60),
+        bkf:breakfastLog.slice(-30),
+        ex:exerciseLog.slice(-30),
+        slp:sleepLog.slice(-30),
+        img:imagingHistory.slice(-30),
+      }));
+    }catch(e){console.log("快取儲存失敗",e);}
+  },[syncStatus,labHistory,glucoseHistory,bpHistory,weightHistory,breakfastLog,exerciseLog,sleepLog,imagingHistory]);
+
+  useEffect(()=>{
+    restoreFromCache();  // 先秒開
+    loadData();          // 背景同步
+  },[loadData,restoreFromCache]);
 
   // 儲存血糖
   const saveGlucose=async()=>{
@@ -2619,18 +2657,38 @@ const analyzeTrend = (key, data) => {
         <div style={{fontSize:10,color:C.green,fontWeight:700,letterSpacing:1,marginBottom:6,
           display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <span>🤖 健康顧問</span>
-          <button onClick={()=>{localStorage.removeItem("hj_daily_greeting");setDailyGreeting(null);generateDailyGreeting(true);}}
-            style={{fontSize:9,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
-            重新產生
-          </button>
+          {dailyGreeting&&!greetingLoading&&(
+            <button onClick={()=>{localStorage.removeItem("hj_daily_greeting");setDailyGreeting(null);}}
+              style={{fontSize:9,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
+              清除
+            </button>
+          )}
         </div>
         {greetingLoading
           ?<div style={{fontSize:12,color:C.textMuted}}>⏳ 顧問正在思考中...</div>
           :dailyGreeting
-            ?<div style={{fontSize:13,color:C.text,lineHeight:1.8}}>{dailyGreeting}</div>
-            :<div style={{fontSize:12,color:C.textMuted}}>
-                今日問候尚未產生
-                {!localStorage.getItem("hj_apikey")&&<span>（請先設定API金鑰）</span>}
+            ?<>
+                <div style={{fontSize:13,color:C.text,lineHeight:1.8}}>{dailyGreeting}</div>
+                <button onClick={()=>generateDailyGreeting(true)}
+                  style={{marginTop:8,fontSize:11,color:C.textMuted,background:"none",
+                    border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 10px",cursor:"pointer",
+                    fontFamily:"'Noto Sans TC',sans-serif"}}>
+                  🔄 重新產生
+                </button>
+              </>
+            :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{fontSize:12,color:C.textMuted,lineHeight:1.6}}>
+                  根據你的最新睡眠、血壓、血糖數據，產生今日個人化建議。
+                </div>
+                <button onClick={()=>generateDailyGreeting(true)}
+                  disabled={greetingLoading||!localStorage.getItem("hj_apikey")}
+                  style={{padding:"10px 0",background:localStorage.getItem("hj_apikey")
+                    ?`linear-gradient(135deg,${C.green},${C.greenDark})`:"rgba(100,100,100,0.3)",
+                    border:"none",borderRadius:10,color:localStorage.getItem("hj_apikey")?"#000":"#666",
+                    fontSize:13,fontWeight:700,cursor:localStorage.getItem("hj_apikey")?"pointer":"not-allowed",
+                    fontFamily:"'Noto Sans TC',sans-serif"}}>
+                  {localStorage.getItem("hj_apikey")?"🤖 產生今日健康建議":"⚙️ 請先設定 API 金鑰"}
+                </button>
               </div>
         }
       </div>
@@ -2679,7 +2737,7 @@ const analyzeTrend = (key, data) => {
                 <div>
                   <div style={{fontSize:10,color:C.textMuted,marginBottom:2}}>綜合健康分數</div>
                   <div style={{display:"flex",alignItems:"baseline",gap:4}}>
-                    <span style={{fontFamily:"'DM Serif Display',serif",fontSize:32,color:scoreColor,lineHeight:1}}>{total}</span>
+                    <span style={{fontFamily:"Georgia,serif",fontWeight:700,fontSize:32,color:scoreColor,lineHeight:1}}>{total}</span>
                     <span style={{fontSize:11,color:C.textMuted}}>/100</span>
                     {diff!=null&&<span style={{fontSize:11,color:diff>0?C.green:diff<0?C.red:C.textMuted,fontWeight:700}}>{diff>0?`▲+${diff}`:diff<0?`▼${diff}`:"→"}</span>}
                   </div>
@@ -2877,8 +2935,8 @@ const analyzeTrend = (key, data) => {
             <div style={{fontSize:11,fontWeight:700,color:C.blue,letterSpacing:1,marginBottom:6,
               display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span>🏥 整體健康評估
-                <span style={{fontSize:9,color:C.textMuted,fontWeight:400,marginLeft:6}}>
-                  {reportDate} {daysSinceReport<=1?"（今日）":daysSinceReport<=7?`（${daysSinceReport}天前）`:"（本週更新）"}
+                <span style={{fontSize:9,color:daysSinceReport>=7?C.amber:C.textMuted,fontWeight:daysSinceReport>=7?700:400,marginLeft:6}}>
+                  {reportDate} {daysSinceReport<=1?"（今日）":daysSinceReport<7?`（${daysSinceReport}天前）`:"⏰ 該更新了"}
                 </span>
               </span>
               <button onClick={()=>generateOverallReport(false)}
@@ -3618,7 +3676,7 @@ const analyzeTrend = (key, data) => {
                 <div className="card" style={{border:`1px solid ${color}44`}}>
                   <div className="card-title">最新血壓評估</div>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                    <span style={{fontSize:24,fontFamily:"'DM Serif Display',serif",color}}>{sys}/{dia}</span>
+                    <span style={{fontSize:24,fontFamily:"Georgia,serif",fontWeight:700,color}}>{sys}/{dia}</span>
                     <span style={{fontSize:13,fontWeight:700,color}}>{status}</span>
                   </div>
                   <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>💡 {advice}</div>
@@ -5555,20 +5613,14 @@ ${exSummary}
     setOverallLoading(false);
   };
 
-  // ── 每週自動觸發整體評估 ─────────────────────────────
-  React.useEffect(()=>{
-    const key=localStorage.getItem("hj_apikey")||"";
-    if(!key)return;
+  // ── v4.69：整體評估不再自動呼叫API，改為顯示「該更新了」提示 ──
+  const overallNeedsUpdate=(()=>{
     const cache=JSON.parse(localStorage.getItem("hj_overall_cache")||"null");
-    if(!cache||!cache.date)return generateOverallReport(true);
-    const daysSince=Math.floor((new Date()-new Date(cache.date))/(1000*60*60*24));
-    if(daysSince>=7)generateOverallReport(true);
-  },[labHistory.length,sleepLog.length]);
+    if(!cache||!cache.date)return true;
+    return Math.floor((new Date()-new Date(cache.date))/(1000*60*60*24))>=7;
+  })();
 
-  // ── 每日問候自動觸發（資料載入後執行）────────────────
-  React.useEffect(()=>{
-    if(!loading)generateDailyGreeting();
-  },[loading,sleepLog.length]);
+  // ── v4.69：每日問候改為手動點擊觸發，不再自動產生 ──
 
   // ── 載入後自動同步所有追蹤提醒日期（session只跑一次）──
   const reminderSyncDone=React.useRef(false);
@@ -5778,29 +5830,6 @@ ${exSummary}
     });
     const [showMedForm, setShowMedForm] = useState(false);
     const [medForm, setMedForm] = useState({name:"",dose:"",freq:"每天",timing:"早餐後",note:""});
-    // ★ v4.68 藥物交互作用提醒
-    const [interactionWarning, setInteractionWarning] = useState("");
-    const [interactionLoading, setInteractionLoading] = useState(false);
-    const checkInteraction = async (newMedName) => {
-      if(!newMedName.trim()) return;
-      const key = localStorage.getItem("hj_apikey") || "";
-      if(!key) return;
-      const currentMeds = myMeds.map(m=>`${m.name}（${m.dose||""}${m.timing||""}）`).join("、");
-      if(!currentMeds) return;
-      setInteractionLoading(true);
-      setInteractionWarning("");
-      try {
-        const prompt = `你是藥劑師。請評估以下新增藥物/保健品與現有用藥的交互作用風險，用繁體中文回答，不超過60字，只說最重要的風險，沒有風險就說「無明顯交互作用」。
-
-新增：${newMedName}
-現有用藥：${currentMeds}
-
-只回傳風險說明，不要標題，不要條列：`;
-        const result = await callClaude([{role:"user",content:prompt}], 200);
-        setInteractionWarning(result||"");
-      } catch(e) { console.log("interaction check error", e); }
-      setInteractionLoading(false);
-    };
     const saveMyMeds = (list)=>{
       setMyMeds(list);
       localStorage.setItem("hj_mymeds", JSON.stringify(list));
@@ -5986,7 +6015,7 @@ ${exSummary}
                 {isQual&&qualVal?(
                   <span style={{fontSize:22,fontWeight:700,color:qualVal.color}}>{qualVal.text}</span>
                 ):(
-                  <span style={{fontSize:28,fontFamily:"'DM Serif Display',serif",color:st?stColors[st]:C.text}}>{fmtLabVal(item.key,yourVal)}</span>
+                  <span style={{fontSize:28,fontFamily:"Georgia,serif",fontWeight:700,color:st?stColors[st]:C.text}}>{fmtLabVal(item.key,yourVal)}</span>
                 )}
                 {st&&!isQual&&(
                   <span className={`status-chip ${st==="ok"?"status-ok":st==="warn"?"status-warn":"status-alert"}`}>
@@ -6090,58 +6119,19 @@ ${exSummary}
     // ── 列表主頁 ──
     const groups = [...new Set(KNOWLEDGE_ITEMS.map(i=>i.group))];
     const searchLower = kbSearch.toLowerCase().trim();
-    // ★ v4.68 同義詞搜尋對照表
-    const SYNONYMS = {
-      "肝":["alt","ast","ggt","alp","ldh","肝功能","肝臟","脂肪肝","tbil","dbil","tp","alb"],
-      "腎":["creatinine","gfr","bun","upcr","腎功能","eGFR","肌酸酐"],
-      "血糖":["hba1c","glucose","糖化","糖尿病","空腹"],
-      "血脂":["hdl","ldl","tg","cholesterol","膽固醇","三酸甘油酯"],
-      "尿酸":["uric","痛風"],
-      "甲狀腺":["tsh","ft3","ft4"],
-      "血壓":["systolic","diastolic","高血壓"],
-      "貧血":["hb","rbc","hct","mcv","mch","鐵","ferritin","血紅素"],
-      "白血球":["wbc","ne","ly","mo","eo","嗜中性","淋巴","免疫"],
-      "發炎":["crp","inflammation","發炎"],
-      "心臟":["ck","ldh","心血管","心臟"],
-      "胰臟":["amy","lip","amylase","lipase"],
-      "電解質":["na","k","cl","ca","mg","phos","鈉","鉀","氯","鈣","鎂"],
-      "尿液":["urine","尿糖","尿潛血","尿白血球","尿比重"],
-      "膽固醇":["hdl","ldl","cholesterol","chol"],
-      "蛋白尿":["upcr","urine_protein","蛋白"],
-      "維生素":["vitamin","tsh","ferritin","d3"],
-      "肌肉":["ck","creatinine","肌酸"],
-      "肝炎":["hbsag","anti_hcv","anti_hbs","B肝","C肝","病毒"],
-      "癌症":["cea","afp","psa","腫瘤標記"],
-    };
-    // 展開同義詞：搜尋詞 + 對應的所有相關詞
-    const expandSearch = (q) => {
-      const terms = [q];
-      Object.entries(SYNONYMS).forEach(([key, synonyms]) => {
-        if(key.includes(q) || q.includes(key)) {
-          terms.push(...synonyms);
-        }
-        synonyms.forEach(s => { if(s.includes(q)) terms.push(key, ...synonyms); });
-      });
-      return [...new Set(terms)];
-    };
-    const searchTerms = searchLower ? expandSearch(searchLower) : [];
-    const matchesAny = (text) => searchTerms.some(t => text.toLowerCase().includes(t));
-
     const filteredLab = searchLower
       ? KNOWLEDGE_ITEMS.filter(i=>
-          matchesAny(i.title)||
-          matchesAny(i.fullName||"")||
-          matchesAny(i.key)||
-          matchesAny(i.group)||
-          matchesAny(i.desc||"")||
-          (i.tips||[]).some(t=>matchesAny(t))
+          i.title.toLowerCase().includes(searchLower)||
+          (i.fullName||"").toLowerCase().includes(searchLower)||
+          i.key.toLowerCase().includes(searchLower)||
+          i.group.toLowerCase().includes(searchLower)
         )
       : null;
     const filteredArticles = searchLower
       ? allArticles.filter(a=>
-          matchesAny(a.title)||
-          matchesAny(a.tag)||
-          matchesAny(a.content)
+          a.title.toLowerCase().includes(searchLower)||
+          a.tag.toLowerCase().includes(searchLower)||
+          a.content.toLowerCase().includes(searchLower)
         )
       : null;
 
@@ -6329,25 +6319,8 @@ ${exSummary}
               {showMedForm&&(
                 <div style={{background:C.bg,borderRadius:10,padding:10,marginBottom:8}}>
                   <input className="input-field" placeholder="藥品/保健品名稱（例：舒脈康 5/40mg）"
-                    value={medForm.name}
-                    onChange={e=>{setMedForm(f=>({...f,name:e.target.value}));setInteractionWarning("");}}
-                    onBlur={e=>checkInteraction(e.target.value)}
+                    value={medForm.name} onChange={e=>setMedForm(f=>({...f,name:e.target.value}))}
                     style={{marginBottom:6}}/>
-                  {interactionLoading&&(
-                    <div style={{fontSize:11,color:C.textMuted,marginBottom:6,padding:"6px 10px",
-                      background:"rgba(255,179,71,0.08)",borderRadius:8}}>⏳ 檢查交互作用中...</div>
-                  )}
-                  {interactionWarning&&!interactionLoading&&(()=>{
-                    const isRisk=!interactionWarning.includes("無明顯")&&!interactionWarning.includes("安全");
-                    return(
-                      <div style={{fontSize:12,marginBottom:8,padding:"8px 10px",lineHeight:1.7,
-                        background:isRisk?"rgba(255,90,126,0.08)":"rgba(46,204,138,0.08)",
-                        border:`1px solid ${isRisk?C.red:C.green}44`,borderRadius:8,
-                        color:isRisk?C.red:C.green}}>
-                        {isRisk?"⚠️ ":"✅ "}{interactionWarning}
-                      </div>
-                    );
-                  })()}
                   <div style={{display:"flex",gap:6,marginBottom:6}}>
                     <input className="input-field" placeholder="劑量（例：1錠）" style={{flex:1}}
                       value={medForm.dose} onChange={e=>setMedForm(f=>({...f,dose:e.target.value}))}/>
@@ -6371,12 +6344,11 @@ ${exSummary}
                       if(!medForm.name.trim()){showToast("⚠️ 請輸入名稱");return;}
                       saveMyMeds([...myMeds,{id:Date.now(),...medForm,startDate:today()}]);
                       setMedForm({name:"",dose:"",freq:"每天",timing:"早餐後",note:""});
-                      setInteractionWarning("");
                       setShowMedForm(false);
                       showToast("✅ 已加入清單");
                     }}>儲存</button>
                 </div>
-              )}}
+              )}
               {myMeds.length===0&&!showMedForm&&(
                 <div style={{fontSize:11,color:C.textMuted,marginTop:6}}>記錄你實際服用的藥物與保健品（存於手機本地）</div>
               )}
@@ -6570,7 +6542,7 @@ ${exSummary}
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
                   <div style={{fontSize:13,fontWeight:700,color:C.text}}>📊 早餐組合評估</div>
                   <div style={{display:"flex",alignItems:"center",gap:4}}>
-                    <span style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:C.green}}>9</span>
+                    <span style={{fontFamily:"Georgia,serif",fontWeight:700,fontSize:22,color:C.green}}>9</span>
                     <span style={{fontSize:11,color:C.textMuted}}>/10</span>
                     <span style={{fontSize:14,marginLeft:2}}>⭐</span>
                   </div>
