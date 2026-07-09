@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.69";
+const VERSION = "v4.70";
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -189,7 +189,7 @@ const LAB_FIELDS = [
 ];
 
 const styles=`
-  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=DM+Serif+Display&display=swap');
   *{box-sizing:border-box;margin:0;padding:0;}
   body{background:${C.bg};color:${C.text};font-family:'Noto Sans TC',sans-serif;}
   ::-webkit-scrollbar{width:4px;} ::-webkit-scrollbar-track{background:${C.bg};} ::-webkit-scrollbar-thumb{background:${C.greenDark};border-radius:2px;}
@@ -1250,7 +1250,7 @@ export default function HealthJournal(){
   const [submitting,setSubmitting]=useState(false); // 防重複提交
 
   // 表單
-  const [glucoseForm,setGlucoseForm]=useState({value:"",unit:"mmol/L",timePoint:"空腹",source:"日常",note:""});
+  const [glucoseForm,setGlucoseForm]=useState({value:"",unit:localStorage.getItem("hj_glucose_unit")||"mmol/L",timePoint:"空腹",source:"日常",note:""});
   const [bpForm,setBpForm]=useState({sys:"",dia:"",pulse:"",source:"日常"});
   const [editBPRecord,setEditBPRecord]=useState(null);
   const [weightForm,setWeightForm]=useState({value:""});
@@ -1393,28 +1393,11 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
     api.saveSetting("hospitals", updated); // 同步到Sheets
   };
 
-  // ★ v4.69 快取優先：啟動時先讀 localStorage 秒開，背景再同步
-  const restoreFromCache=useCallback(()=>{
-    try{
-      const c=JSON.parse(localStorage.getItem("hj_data_cache")||"null");
-      if(!c)return false;
-      if(c.lab)setLabHistory(c.lab);
-      if(c.glu)setGlucoseHistory(c.glu);
-      if(c.bp)setBpHistory(c.bp);
-      if(c.wt)setWeightHistory(c.wt);
-      if(c.bkf)setBreakfastLog(c.bkf);
-      if(c.ex)setExerciseLog(c.ex);
-      if(c.slp)setSleepLog(c.slp);
-      if(c.img)setImagingHistory(c.img);
-      return true;
-    }catch(e){return false;}
-  },[]);
-
   const loadData=useCallback(async()=>{
     setLoading(true);
     setSyncStatus("syncing");
     try{
-      const [lab,glu,bp,wt,settings,imaging,bkf,exLog,slp]=await Promise.all([
+      const [lab,glu,bp,wt,settings,imaging,bkf]=await Promise.all([
         api.get("getLabHistory"),
         api.get("getAll",{sheet:"daily_glucose"}),
         api.get("getAll",{sheet:"daily_bp"}),
@@ -1423,15 +1406,14 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
         api.get("getAll",{sheet:"imaging"}),
         api.get("getAll",{sheet:"breakfast_log"}),
         api.get("getAll",{sheet:"exercise_log"}),
-        api.get("getAll",{sheet:"sleep_log"}),
       ]);
       if(lab?.data)setLabHistory(lab.data);
       if(glu?.data)setGlucoseHistory(glu.data);
       if(bp?.data)setBpHistory(bp.data);
       if(wt?.data)setWeightHistory(wt.data);
       if(bkf?.data)setBreakfastLog(bkf.data.filter(r=>r.date&&String(r.date).trim()));
+      const [exLog]=await Promise.all([api.get("getAll",{sheet:"exercise_log"})]);
       if(exLog?.data)setExerciseLog(exLog.data.filter(r=>r.date&&String(r.date).trim()));
-      if(slp?.data)setSleepLog(slp.data.filter(r=>r.date&&String(r.date).trim()));
       if(imaging?.data){
         // 過濾空白列（id或date或type為空/空白的）
         const validImaging = imaging.data.filter(r =>
@@ -1466,27 +1448,24 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
     setLoading(false);
   },[]);
 
-  // ★ v4.69 同步成功後存快取（供下次秒開）
-  useEffect(()=>{
-    if(syncStatus!=="synced")return;
-    try{
-      localStorage.setItem("hj_data_cache",JSON.stringify({
-        lab:labHistory.slice(-20),
-        glu:glucoseHistory.slice(-60),
-        bp:bpHistory.slice(-60),
-        wt:weightHistory.slice(-60),
-        bkf:breakfastLog.slice(-30),
-        ex:exerciseLog.slice(-30),
-        slp:sleepLog.slice(-30),
-        img:imagingHistory.slice(-30),
-      }));
-    }catch(e){console.log("快取儲存失敗",e);}
-  },[syncStatus,labHistory,glucoseHistory,bpHistory,weightHistory,breakfastLog,exerciseLog,sleepLog,imagingHistory]);
+  useEffect(()=>{loadData();},[loadData]);
 
+  // ★ v4.70 開App檢查到期項目並發通知（每天最多一次）
   useEffect(()=>{
-    restoreFromCache();  // 先秒開
-    loadData();          // 背景同步
-  },[loadData,restoreFromCache]);
+    if(!localStorage.getItem("hj_notify"))return;
+    if(!("Notification" in window)||Notification.permission!=="granted")return;
+    const lastNotify=localStorage.getItem("hj_last_notify_date");
+    const todayStr=today();
+    if(lastNotify===todayStr)return;
+    const overdue=reminders.filter(r=>new Date(r.nextDate)<=new Date());
+    if(overdue.length>0){
+      new Notification("健康日誌提醒",{
+        body:`有 ${overdue.length} 項追蹤到期：${overdue.slice(0,3).map(r=>r.title).join("、")}`,
+        icon:"/health-journal/icon-192.png"
+      });
+      localStorage.setItem("hj_last_notify_date",todayStr);
+    }
+  },[reminders]);
 
   // 儲存血糖
   const saveGlucose=async()=>{
@@ -1501,7 +1480,14 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
       value_original:glucoseForm.value,unit_original:glucoseForm.unit,
       source:glucoseForm.source,note:glucoseForm.note,
     });
-    if(r?.success){showToast(`✅ 血糖 ${mgdl} mg/dL 已儲存`);setGlucoseForm({value:"",unit:"mmol/L",timePoint:"空腹",source:"日常",note:""});loadData();}
+    if(r?.success){
+      showToast(`✅ 血糖 ${mgdl} mg/dL 已儲存`);
+      // ★ v4.70 異常值即時提醒
+      if(mgdl>=126)setTimeout(()=>window.alert(`⚠️ 血糖 ${mgdl} mg/dL 已達糖尿病標準（≥126）\n建議：確認是否空腹量測，若持續偏高請就醫`),300);
+      else if(mgdl>=100)setTimeout(()=>window.alert(`⚠️ 血糖 ${mgdl} mg/dL 偏高（正常<100）\n建議：注意飲食，持續追蹤`),300);
+      setGlucoseForm({value:"",unit:localStorage.getItem("hj_glucose_unit")||"mmol/L",timePoint:"空腹",source:"日常",note:""});
+      loadData();
+    }
     else showToast("❌ 血糖儲存失敗：" + (r?.error || "請檢查網路連線"));
     setSubmitting(false);
   };
@@ -1532,7 +1518,15 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
       systolic:parseInt(bpForm.sys),diastolic:parseInt(bpForm.dia),
       pulse:parseInt(bpForm.pulse)||"",source:bpForm.source,
     });
-    if(r?.success){showToast("✅ 血壓已儲存");setBpForm({sys:"",dia:"",pulse:"",source:"日常"});loadData();}
+    if(r?.success){
+      showToast("✅ 血壓已儲存");
+      // ★ v4.70 異常值即時提醒
+      const s=parseInt(bpForm.sys),d=parseInt(bpForm.dia);
+      if(s>=160||d>=100)setTimeout(()=>window.alert(`🚨 血壓 ${s}/${d} mmHg 顯著偏高！\n建議：休息15分鐘後再量一次，若仍≥160/100請盡快就醫`),300);
+      else if(s>=140||d>=90)setTimeout(()=>window.alert(`⚠️ 血壓 ${s}/${d} mmHg 偏高（≥140/90）\n建議：確認服藥狀況，連續3天偏高請回診`),300);
+      setBpForm({sys:"",dia:"",pulse:"",source:"日常"});
+      loadData();
+    }
     else showToast("❌ 儲存失敗");
     setSubmitting(false);
   };
@@ -2657,38 +2651,18 @@ const analyzeTrend = (key, data) => {
         <div style={{fontSize:10,color:C.green,fontWeight:700,letterSpacing:1,marginBottom:6,
           display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <span>🤖 健康顧問</span>
-          {dailyGreeting&&!greetingLoading&&(
-            <button onClick={()=>{localStorage.removeItem("hj_daily_greeting");setDailyGreeting(null);}}
-              style={{fontSize:9,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
-              清除
-            </button>
-          )}
+          <button onClick={()=>{localStorage.removeItem("hj_daily_greeting");setDailyGreeting(null);generateDailyGreeting(true);}}
+            style={{fontSize:9,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
+            重新產生
+          </button>
         </div>
         {greetingLoading
           ?<div style={{fontSize:12,color:C.textMuted}}>⏳ 顧問正在思考中...</div>
           :dailyGreeting
-            ?<>
-                <div style={{fontSize:13,color:C.text,lineHeight:1.8}}>{dailyGreeting}</div>
-                <button onClick={()=>generateDailyGreeting(true)}
-                  style={{marginTop:8,fontSize:11,color:C.textMuted,background:"none",
-                    border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 10px",cursor:"pointer",
-                    fontFamily:"'Noto Sans TC',sans-serif"}}>
-                  🔄 重新產生
-                </button>
-              </>
-            :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-                <div style={{fontSize:12,color:C.textMuted,lineHeight:1.6}}>
-                  根據你的最新睡眠、血壓、血糖數據，產生今日個人化建議。
-                </div>
-                <button onClick={()=>generateDailyGreeting(true)}
-                  disabled={greetingLoading||!localStorage.getItem("hj_apikey")}
-                  style={{padding:"10px 0",background:localStorage.getItem("hj_apikey")
-                    ?`linear-gradient(135deg,${C.green},${C.greenDark})`:"rgba(100,100,100,0.3)",
-                    border:"none",borderRadius:10,color:localStorage.getItem("hj_apikey")?"#000":"#666",
-                    fontSize:13,fontWeight:700,cursor:localStorage.getItem("hj_apikey")?"pointer":"not-allowed",
-                    fontFamily:"'Noto Sans TC',sans-serif"}}>
-                  {localStorage.getItem("hj_apikey")?"🤖 產生今日健康建議":"⚙️ 請先設定 API 金鑰"}
-                </button>
+            ?<div style={{fontSize:13,color:C.text,lineHeight:1.8}}>{dailyGreeting}</div>
+            :<div style={{fontSize:12,color:C.textMuted}}>
+                今日問候尚未產生
+                {!localStorage.getItem("hj_apikey")&&<span>（請先設定API金鑰）</span>}
               </div>
         }
       </div>
@@ -2737,7 +2711,7 @@ const analyzeTrend = (key, data) => {
                 <div>
                   <div style={{fontSize:10,color:C.textMuted,marginBottom:2}}>綜合健康分數</div>
                   <div style={{display:"flex",alignItems:"baseline",gap:4}}>
-                    <span style={{fontFamily:"Georgia,serif",fontWeight:700,fontSize:32,color:scoreColor,lineHeight:1}}>{total}</span>
+                    <span style={{fontFamily:"'DM Serif Display',serif",fontSize:32,color:scoreColor,lineHeight:1}}>{total}</span>
                     <span style={{fontSize:11,color:C.textMuted}}>/100</span>
                     {diff!=null&&<span style={{fontSize:11,color:diff>0?C.green:diff<0?C.red:C.textMuted,fontWeight:700}}>{diff>0?`▲+${diff}`:diff<0?`▼${diff}`:"→"}</span>}
                   </div>
@@ -2806,7 +2780,15 @@ const analyzeTrend = (key, data) => {
                   tab:"glucose"},
                 {icon:"💓",label:"血壓",
                   val:latestBP?`${latestBP.systolic}/${latestBP.diastolic}`:"無記錄",
-                  date:latestBP?fmtDateShort(latestBP.date):"",
+                  date:(()=>{
+                    // ★ v4.70 本週達標率
+                    const week=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;});
+                    const weekBP=bpHistory.filter(r=>week.includes(normalizeDate(r.date)));
+                    if(weekBP.length===0)return latestBP?fmtDateShort(latestBP.date):"";
+                    const okDays=new Set(weekBP.filter(r=>parseInt(r.systolic)<140&&parseInt(r.diastolic)<90).map(r=>normalizeDate(r.date))).size;
+                    const measuredDays=new Set(weekBP.map(r=>normalizeDate(r.date))).size;
+                    return `本週達標 ${okDays}/${measuredDays}天`;
+                  })(),
                   color:latestBP&&parseFloat(latestBP.systolic)>=140?C.red
                     :latestBP&&parseFloat(latestBP.systolic)>=130?C.amber:C.green,
                   tab:"bp"},
@@ -2935,8 +2917,8 @@ const analyzeTrend = (key, data) => {
             <div style={{fontSize:11,fontWeight:700,color:C.blue,letterSpacing:1,marginBottom:6,
               display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span>🏥 整體健康評估
-                <span style={{fontSize:9,color:daysSinceReport>=7?C.amber:C.textMuted,fontWeight:daysSinceReport>=7?700:400,marginLeft:6}}>
-                  {reportDate} {daysSinceReport<=1?"（今日）":daysSinceReport<7?`（${daysSinceReport}天前）`:"⏰ 該更新了"}
+                <span style={{fontSize:9,color:C.textMuted,fontWeight:400,marginLeft:6}}>
+                  {reportDate} {daysSinceReport<=1?"（今日）":daysSinceReport<=7?`（${daysSinceReport}天前）`:"（本週更新）"}
                 </span>
               </span>
               <button onClick={()=>generateOverallReport(false)}
@@ -3676,7 +3658,7 @@ const analyzeTrend = (key, data) => {
                 <div className="card" style={{border:`1px solid ${color}44`}}>
                   <div className="card-title">最新血壓評估</div>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                    <span style={{fontSize:24,fontFamily:"Georgia,serif",fontWeight:700,color}}>{sys}/{dia}</span>
+                    <span style={{fontSize:24,fontFamily:"'DM Serif Display',serif",color}}>{sys}/{dia}</span>
                     <span style={{fontSize:13,fontWeight:700,color}}>{status}</span>
                   </div>
                   <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>💡 {advice}</div>
@@ -4530,7 +4512,7 @@ const analyzeTrend = (key, data) => {
               <div style={{display:"flex",gap:8}}>
                 <input className="input-field" type="number" step="0.1" placeholder={glucoseForm.unit==="mmol/L"?"例：5.7":"例：104"}
                   value={glucoseForm.value} onChange={e=>setGlucoseForm(f=>({...f,value:e.target.value}))} style={{flex:2}}/>
-                <select className="input-field" value={glucoseForm.unit} onChange={e=>setGlucoseForm(f=>({...f,unit:e.target.value}))} style={{flex:1}}>
+                <select className="input-field" value={glucoseForm.unit} onChange={e=>{setGlucoseForm(f=>({...f,unit:e.target.value}));localStorage.setItem("hj_glucose_unit",e.target.value);}} style={{flex:1}}>
                   <option>mmol/L</option><option>mg/dL</option>
                 </select>
               </div>
@@ -4663,9 +4645,52 @@ const analyzeTrend = (key, data) => {
           );
         })()}
 
-        {recordTab==="weight"&&(
+        {recordTab==="weight"&&(()=>{
+          // ★ v4.70 BMI 計算
+          const heightCm=parseFloat(localStorage.getItem("hj_height")||"0");
+          const latestW=[...weightHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+          const latestKg=latestW?parseFloat(latestW.value_kg||latestW.value):null;
+          const bmi=heightCm>0&&latestKg?latestKg/Math.pow(heightCm/100,2):null;
+          const bmiColor=bmi?(bmi>=27?C.red:bmi>=24?C.amber:bmi>=18.5?C.green:C.amber):C.textMuted;
+          const bmiLabel=bmi?(bmi>=27?"肥胖":bmi>=24?"過重":bmi>=18.5?"正常":"過輕"):"";
+          const idealMax=heightCm>0?Math.round(24*Math.pow(heightCm/100,2)*10)/10:null;
+          return(
           <div className="card">
             <div className="card-title">記錄體重（小米體重計）</div>
+            {/* BMI 顯示 */}
+            {heightCm>0?(
+              <div style={{background:C.bg,borderRadius:10,padding:"10px 12px",marginBottom:12,
+                display:"flex",justifyContent:"space-around",textAlign:"center"}}>
+                <div>
+                  <div style={{fontSize:20,fontWeight:700,color:bmiColor}}>{bmi?bmi.toFixed(1):"—"}</div>
+                  <div style={{fontSize:10,color:C.textMuted}}>BMI {bmiLabel}</div>
+                </div>
+                <div>
+                  <div style={{fontSize:20,fontWeight:700,color:C.text}}>{latestKg||"—"}</div>
+                  <div style={{fontSize:10,color:C.textMuted}}>目前 kg</div>
+                </div>
+                {idealMax&&latestKg&&(
+                  <div>
+                    <div style={{fontSize:20,fontWeight:700,color:latestKg>idealMax?C.amber:C.green}}>
+                      {latestKg>idealMax?`-${(latestKg-idealMax).toFixed(1)}`:"✓"}
+                    </div>
+                    <div style={{fontSize:10,color:C.textMuted}}>{latestKg>idealMax?"距BMI24目標":"已達標"}</div>
+                  </div>
+                )}
+              </div>
+            ):(
+              <div style={{background:C.bg,borderRadius:10,padding:"10px 12px",marginBottom:12,
+                display:"flex",gap:8,alignItems:"center"}}>
+                <input className="input-field" type="number" placeholder="輸入身高cm（只需一次）" style={{flex:1}}
+                  id="heightInput"/>
+                <button className="btn-secondary" style={{flexShrink:0,padding:"10px 14px"}}
+                  onClick={()=>{
+                    const h=document.getElementById("heightInput")?.value;
+                    if(h&&parseFloat(h)>100){localStorage.setItem("hj_height",h);showToast("✅ 身高已儲存");setWeightForm(f=>({...f}));}
+                    else showToast("⚠️ 請輸入正確身高");
+                  }}>儲存身高</button>
+              </div>
+            )}
             <div style={{marginBottom:16}}>
               <div className="field-label">體重 (kg)</div>
               <input className="input-field" type="number" step="0.1" placeholder="例：75.2" value={weightForm.value} onChange={e=>setWeightForm({value:e.target.value})}/>
@@ -4673,7 +4698,8 @@ const analyzeTrend = (key, data) => {
             <div style={{background:C.bg,borderRadius:10,padding:10,marginBottom:14,fontSize:12,color:C.textMuted}}>💡 建議每天早上空腹量測</div>
             <button className="btn-primary" onClick={saveWeight}>儲存</button>
           </div>
-        )}
+          );
+        })()}
 
         {recordTab==="lab"&&<LabReportTab/>}
 
@@ -5190,6 +5216,37 @@ REM（分鐘）：
                 <button className="btn-primary" onClick={saveSleepRecord}>💾 儲存睡眠記錄</button>
               </div>
 
+              {/* ★ v4.70 睡眠趨勢圖（14天）*/}
+              {savedSleep.length>=3&&(()=>{
+                const trend14=[...savedSleep].slice(0,14).reverse();
+                const scoreData=trend14.filter(r=>r.score>0).map(r=>({date:normalizeDate(r.date),v:parseInt(r.score)}));
+                const deepData=trend14.filter(r=>r.total_min>0).map(r=>({date:normalizeDate(r.date),v:Math.round((r.deep_min||0)/(r.total_min||1)*100)}));
+                const spo2Data=trend14.filter(r=>r.spo2_avg>0).map(r=>({date:normalizeDate(r.date),v:parseInt(r.spo2_avg)}));
+                return(
+                  <div className="card" style={{marginBottom:12}}>
+                    <div className="card-title">📈 睡眠趨勢（近14天）</div>
+                    {scoreData.length>0&&(
+                      <div style={{marginBottom:14}}>
+                        <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>睡眠評分（目標≥80）</div>
+                        <LineChart datasets={[{data:scoreData}]} min={40} max={100} refLines={[{v:80,label:"良好"}]} height={100}/>
+                      </div>
+                    )}
+                    {deepData.length>0&&(
+                      <div style={{marginBottom:14}}>
+                        <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>深層睡眠 %（目標18-22%）</div>
+                        <LineChart datasets={[{data:deepData}]} min={0} max={35} refLines={[{v:18,label:"目標"}]} height={100}/>
+                      </div>
+                    )}
+                    {spo2Data.length>0&&(
+                      <div>
+                        <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>血氧平均 %（≥95正常）</div>
+                        <LineChart datasets={[{data:spo2Data}]} min={85} max={100} refLines={[{v:95,label:"正常"},{v:90,label:"警戒"}]} height={100}/>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* 近期睡眠記錄 */}
               {savedSleep.length>0&&(
                 <div className="card" style={{marginBottom:12}}>
@@ -5613,14 +5670,20 @@ ${exSummary}
     setOverallLoading(false);
   };
 
-  // ── v4.69：整體評估不再自動呼叫API，改為顯示「該更新了」提示 ──
-  const overallNeedsUpdate=(()=>{
+  // ── 每週自動觸發整體評估 ─────────────────────────────
+  React.useEffect(()=>{
+    const key=localStorage.getItem("hj_apikey")||"";
+    if(!key)return;
     const cache=JSON.parse(localStorage.getItem("hj_overall_cache")||"null");
-    if(!cache||!cache.date)return true;
-    return Math.floor((new Date()-new Date(cache.date))/(1000*60*60*24))>=7;
-  })();
+    if(!cache||!cache.date)return generateOverallReport(true);
+    const daysSince=Math.floor((new Date()-new Date(cache.date))/(1000*60*60*24));
+    if(daysSince>=7)generateOverallReport(true);
+  },[labHistory.length,sleepLog.length]);
 
-  // ── v4.69：每日問候改為手動點擊觸發，不再自動產生 ──
+  // ── 每日問候自動觸發（資料載入後執行）────────────────
+  React.useEffect(()=>{
+    if(!loading)generateDailyGreeting();
+  },[loading,sleepLog.length]);
 
   // ── 載入後自動同步所有追蹤提醒日期（session只跑一次）──
   const reminderSyncDone=React.useRef(false);
@@ -5693,6 +5756,69 @@ ${exSummary}
     const [aiQuestion,setAiQuestion]=useState("");
     const [aiAnswer,setAiAnswer]=useState(null);
     const [aiQLoading,setAiQLoading]=useState(false);
+    // ★ v4.70 看診摘要產生器（純資料整理，不需API）
+    const [visitSummary,setVisitSummary]=useState("");
+    const generateVisitSummary=()=>{
+      const now=new Date();
+      const cutoff=new Date();cutoff.setMonth(cutoff.getMonth()-3);
+      const cutoffStr=`${cutoff.getFullYear()}-${String(cutoff.getMonth()+1).padStart(2,"0")}-${String(cutoff.getDate()).padStart(2,"0")}`;
+      // 血壓（近3個月）
+      const bp3m=bpHistory.filter(r=>normalizeDate(r.date)>=cutoffStr);
+      const avgS=bp3m.length>0?Math.round(bp3m.reduce((s,r)=>s+parseInt(r.systolic||0),0)/bp3m.length):null;
+      const avgD=bp3m.length>0?Math.round(bp3m.reduce((s,r)=>s+parseInt(r.diastolic||0),0)/bp3m.length):null;
+      const maxS=bp3m.length>0?Math.max(...bp3m.map(r=>parseInt(r.systolic||0))):null;
+      const okRate=bp3m.length>0?Math.round(bp3m.filter(r=>parseInt(r.systolic)<140&&parseInt(r.diastolic)<90).length/bp3m.length*100):null;
+      // 血糖（近3個月）
+      const glu3m=glucoseHistory.filter(r=>normalizeDate(r.date)>=cutoffStr);
+      const avgGlu=glu3m.length>0?Math.round(glu3m.reduce((s,r)=>s+parseFloat(r.value_mgdl||0),0)/glu3m.length):null;
+      const maxGlu=glu3m.length>0?Math.max(...glu3m.map(r=>parseFloat(r.value_mgdl||0))):null;
+      // 最新抽血
+      const lab=latestLab;
+      // 睡眠（近1個月）
+      const cutoff1m=new Date();cutoff1m.setMonth(cutoff1m.getMonth()-1);
+      const cutoff1mStr=`${cutoff1m.getFullYear()}-${String(cutoff1m.getMonth()+1).padStart(2,"0")}-${String(cutoff1m.getDate()).padStart(2,"0")}`;
+      const slp1m=sleepLog.filter(r=>normalizeDate(r.date)>=cutoff1mStr);
+      const avgSleepMin=slp1m.length>0?Math.round(slp1m.reduce((s,r)=>s+(parseInt(r.total_min)||0),0)/slp1m.length):null;
+      const lowSpo2Days=slp1m.filter(r=>parseFloat(r.spo2_below90_min)>10).length;
+      // 用藥
+      const meds=JSON.parse(localStorage.getItem("hj_mymeds")||"[]");
+      // 異常項目
+      const abnormal=[];
+      if(lab){
+        const chk=(k,label,unit)=>{
+          const st=getStatus(k,lab[k]);
+          if(st==="alert"||st==="warn")abnormal.push(`${label} ${lab[k]}${unit}${st==="alert"?"（異常）":"（偏高/偏低）"}`);
+        };
+        chk("hba1c","HbA1c","%");chk("glucose_ac","空腹血糖","mg/dL");
+        chk("alt","ALT","U/L");chk("ggt","GGT","U/L");
+        chk("hdl","HDL","mg/dL");chk("ldl","LDL","mg/dL");chk("tg","TG","mg/dL");
+        chk("uric_acid","尿酸","mg/dL");chk("creatinine","肌酸酐","mg/dL");
+        chk("upcr","UPCR","mg/g");chk("platelet","血小板","K/uL");chk("wbc","WBC","K/uL");
+      }
+      const txt=`【看診摘要】${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}
+病史：高血壓、糖尿病前期、脂肪肝G2、髂動脈瘤、LAD1狹窄35%、高尿酸、血小板偏低
+
+━━ 血壓（近3個月，${bp3m.length}筆）━━
+${avgS?`平均 ${avgS}/${avgD} mmHg｜最高收縮壓 ${maxS}｜<140/90達標率 ${okRate}%`:"無記錄"}
+
+━━ 血糖（近3個月，${glu3m.length}筆）━━
+${avgGlu?`空腹平均 ${avgGlu} mg/dL｜最高 ${maxGlu} mg/dL`:"無記錄"}
+
+━━ 最新抽血（${lab?fmtDateFull(lab.date):"無"}）━━
+${lab?`HbA1c ${lab.hba1c||"—"}%｜空腹血糖 ${lab.glucose_ac||"—"}｜ALT ${lab.alt||"—"}｜GGT ${lab.ggt||"—"}
+HDL ${lab.hdl||"—"}｜LDL ${lab.ldl||"—"}｜TG ${lab.tg||"—"}｜尿酸 ${lab.uric_acid||"—"}
+肌酸酐 ${lab.creatinine||"—"}｜eGFR ${lab.gfr||"—"}｜UPCR ${lab.upcr||"—"}｜血小板 ${lab.platelet||"—"}`:"無記錄"}
+
+━━ 異常項目 ━━
+${abnormal.length>0?abnormal.map(a=>"・"+a).join("\n"):"無明顯異常"}
+
+━━ 睡眠（近1個月，${slp1m.length}筆）━━
+${avgSleepMin?`平均 ${Math.floor(avgSleepMin/60)}h${avgSleepMin%60}m${lowSpo2Days>0?`｜血氧低於90%超過10分鐘：${lowSpo2Days}天 ⚠️`:""}`:"無記錄"}
+
+━━ 目前用藥/保健品 ━━
+${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"+m.timing+"）":""}`).join("\n"):"（請口頭補充）"}`;
+      setVisitSummary(txt);
+    };
     const askAI=async()=>{
       if(!aiQuestion.trim())return;
       const key=localStorage.getItem("hj_apikey")||apiKey||"";
@@ -5708,6 +5834,34 @@ ${exSummary}
     return(
     <div className="fade-in" style={{padding:"16px 16px 80px"}}>
       <div className="section-header">🤖 AI 健康分析</div>
+      {/* ★ v4.70 看診摘要產生器 */}
+      <div className="card" style={{marginBottom:12,border:`1px solid ${C.blue}44`}}>
+        <div className="card-title" style={{color:C.blue}}>🏥 看診摘要（給醫師看）</div>
+        {!visitSummary?(
+          <>
+            <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.7}}>
+              自動整理近3個月血壓/血糖均值、最新抽血、異常項目、用藥清單，看診時直接給醫師看。不需API、即時產生。
+            </div>
+            <button className="btn-primary" style={{background:C.blue,padding:"10px"}} onClick={generateVisitSummary}>
+              📋 產生看診摘要
+            </button>
+          </>
+        ):(
+          <>
+            <div style={{fontSize:12,color:C.text,lineHeight:1.8,whiteSpace:"pre-wrap",
+              background:C.bg,borderRadius:10,padding:12,marginBottom:10,
+              maxHeight:400,overflowY:"auto"}}>{visitSummary}</div>
+            <div style={{display:"flex",gap:8}}>
+              <button className="btn-secondary" style={{flex:1}}
+                onClick={()=>{navigator.clipboard?.writeText(visitSummary).then(()=>showToast("✅ 已複製，可貼到訊息或列印"));}}>
+                📋 複製全文
+              </button>
+              <button className="btn-secondary" style={{flex:1}} onClick={generateVisitSummary}>🔄 重新產生</button>
+              <button className="btn-sm" onClick={()=>setVisitSummary("")}>收起</button>
+            </div>
+          </>
+        )}
+      </div>
       {!apiKey&&(
         <div className="card" style={{marginBottom:12,border:`1px solid ${C.amber}44`,cursor:"pointer"}} onClick={()=>setTab("setting")}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -6015,7 +6169,7 @@ ${exSummary}
                 {isQual&&qualVal?(
                   <span style={{fontSize:22,fontWeight:700,color:qualVal.color}}>{qualVal.text}</span>
                 ):(
-                  <span style={{fontSize:28,fontFamily:"Georgia,serif",fontWeight:700,color:st?stColors[st]:C.text}}>{fmtLabVal(item.key,yourVal)}</span>
+                  <span style={{fontSize:28,fontFamily:"'DM Serif Display',serif",color:st?stColors[st]:C.text}}>{fmtLabVal(item.key,yourVal)}</span>
                 )}
                 {st&&!isQual&&(
                   <span className={`status-chip ${st==="ok"?"status-ok":st==="warn"?"status-warn":"status-alert"}`}>
@@ -6542,7 +6696,7 @@ ${exSummary}
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
                   <div style={{fontSize:13,fontWeight:700,color:C.text}}>📊 早餐組合評估</div>
                   <div style={{display:"flex",alignItems:"center",gap:4}}>
-                    <span style={{fontFamily:"Georgia,serif",fontWeight:700,fontSize:22,color:C.green}}>9</span>
+                    <span style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:C.green}}>9</span>
                     <span style={{fontSize:11,color:C.textMuted}}>/10</span>
                     <span style={{fontSize:14,marginLeft:2}}>⭐</span>
                   </div>
@@ -7058,6 +7212,79 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
             </div>
           );
         })()}
+        {/* ★ v4.70 資料匯出備份 */}
+        <div className="card">
+          <div className="card-title">📦 資料匯出備份</div>
+          <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.6}}>
+            匯出所有記錄成 CSV 檔（可用 Excel 開啟），建議每月備份一次。
+          </div>
+          <button className="btn-primary" style={{marginBottom:8}} onClick={()=>{
+            try{
+              const esc=(v)=>{
+                if(v===null||v===undefined)return"";
+                const s=String(v);
+                return s.includes(",")||s.includes('"')||s.includes("\n")?'"'+s.replace(/"/g,'""')+'"':s;
+              };
+              const toCSV=(rows,name)=>{
+                if(!rows||rows.length===0)return"";
+                const keys=[...new Set(rows.flatMap(r=>Object.keys(r)))];
+                const head=keys.join(",");
+                const body=rows.map(r=>keys.map(k=>esc(r[k])).join(",")).join("\n");
+                return`===== ${name} =====\n${head}\n${body}\n\n`;
+              };
+              let csv="\ufeff";
+              csv+=toCSV(labHistory,"抽血記錄 lab_reports");
+              csv+=toCSV(glucoseHistory,"血糖 daily_glucose");
+              csv+=toCSV(bpHistory,"血壓 daily_bp");
+              csv+=toCSV(weightHistory,"體重 daily_weight");
+              csv+=toCSV(sleepLog,"睡眠 sleep_log");
+              csv+=toCSV(imagingHistory,"影像 imaging");
+              csv+=toCSV(breakfastLog,"早餐 breakfast_log");
+              csv+=toCSV(exerciseLog,"運動 exercise_log");
+              const meds=JSON.parse(localStorage.getItem("hj_mymeds")||"[]");
+              csv+=toCSV(meds,"用藥清單 my_meds");
+              const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
+              const url=URL.createObjectURL(blob);
+              const a=document.createElement("a");
+              a.href=url;
+              a.download=`健康日誌備份_${today()}.csv`;
+              a.click();
+              URL.revokeObjectURL(url);
+              showToast("✅ 已下載備份檔");
+            }catch(e){showToast("❌ 匯出失敗："+e.message);}
+          }}>
+            💾 匯出全部資料（CSV）
+          </button>
+        </div>
+
+        {/* ★ v4.70 瀏覽器通知 */}
+        <div className="card">
+          <div className="card-title">🔔 到期通知</div>
+          <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.6}}>
+            開啟後，每次打開App時若有追蹤項目到期，會發送手機通知。
+          </div>
+          <button className="btn-primary" style={{marginBottom:4}} onClick={async()=>{
+            if(!("Notification" in window)){showToast("❌ 此瀏覽器不支援通知");return;}
+            const perm=await Notification.requestPermission();
+            if(perm==="granted"){
+              localStorage.setItem("hj_notify","1");
+              showToast("✅ 通知已開啟");
+              const overdue=reminders.filter(r=>new Date(r.nextDate)<=new Date());
+              if(overdue.length>0){
+                new Notification("健康日誌提醒",{
+                  body:`有 ${overdue.length} 項追蹤到期：${overdue.slice(0,3).map(r=>r.title).join("、")}`,
+                  icon:"/health-journal/icon-192.png"
+                });
+              }
+            }else{
+              localStorage.removeItem("hj_notify");
+              showToast("⚠️ 通知權限被拒絕，請到瀏覽器設定開啟");
+            }
+          }}>
+            {localStorage.getItem("hj_notify")?"🔔 通知已開啟（點擊測試）":"🔕 開啟到期通知"}
+          </button>
+        </div>
+
         {/* 維護工具 */}
         <div className="card">
           <div className="card-title">維護工具</div>
