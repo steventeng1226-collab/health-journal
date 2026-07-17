@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.70";
+const VERSION = "v4.72"; // v4.72: GAS請求15秒timeout+快取限90天日常記錄防爆量+影像編輯Modal照片直接上傳
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -29,32 +29,40 @@ const callClaude = async (messages, maxTokens=1000) => {
   return data.content?.map(b => b.text || "").join("") || "";
 };
 
+// ★ v4.72 GAS請求逾時保護：GAS冷啟動偶爾卡30秒+，15秒後放棄該請求（快取資料仍可用）
+const GAS_TIMEOUT_MS = 15000;
+const fetchT = async (url, opts={}) => {
+  const ctrl = new AbortController();
+  const t = setTimeout(()=>ctrl.abort(), GAS_TIMEOUT_MS);
+  try { return await fetch(url, {...opts, signal: ctrl.signal}); }
+  finally { clearTimeout(t); }
+};
 const api = {
   get: async (action, params={}) => {
-    try { const q=new URLSearchParams({action,...params}).toString(); return (await fetch(`${GAS_URL}?${q}`)).json(); }
-    catch(e){ return {error:e.toString()}; }
+    try { const q=new URLSearchParams({action,...params}).toString(); return (await fetchT(`${GAS_URL}?${q}`)).json(); }
+    catch(e){ return {error:e.name==="AbortError"?"逾時(15秒)":e.toString()}; }
   },
   post: async (action, sheet, data) => {
-    try { return (await fetch(GAS_URL,{method:"POST",body:JSON.stringify({action,sheet,data})})).json(); }
-    catch(e){ return {error:e.toString()}; }
+    try { return (await fetchT(GAS_URL,{method:"POST",body:JSON.stringify({action,sheet,data})})).json(); }
+    catch(e){ return {error:e.name==="AbortError"?"逾時(15秒)":e.toString()}; }
   },
   // 刪除記錄
   deleteRow: async (sheet, id) => {
     try {
-      return (await fetch(GAS_URL,{method:"POST",body:JSON.stringify({action:"deleteRow",sheet,id})})).json();
-    } catch(e){ return {error:e.toString()}; }
+      return (await fetchT(GAS_URL,{method:"POST",body:JSON.stringify({action:"deleteRow",sheet,id})})).json();
+    } catch(e){ return {error:e.name==="AbortError"?"逾時(15秒)":e.toString()}; }
   },
   // 設定同步
   saveSetting: async (key, value) => {
     try {
-      return (await fetch(GAS_URL,{method:"POST",body:JSON.stringify({
+      return (await fetchT(GAS_URL,{method:"POST",body:JSON.stringify({
         action:"saveSetting", key, value: JSON.stringify(value)
       })})).json();
-    } catch(e){ return {error:e.toString()}; }
+    } catch(e){ return {error:e.name==="AbortError"?"逾時(15秒)":e.toString()}; }
   },
   loadSettings: async () => {
-    try { return (await fetch(`${GAS_URL}?action=getSettings`)).json(); }
-    catch(e){ return {error:e.toString()}; }
+    try { return (await fetchT(`${GAS_URL}?action=getSettings`)).json(); }
+    catch(e){ return {error:e.name==="AbortError"?"逾時(15秒)":e.toString()}; }
   },
 };
 
@@ -1173,7 +1181,7 @@ export default function HealthJournal(){
   const [isOnline,setIsOnline]=useState(navigator.onLine);
 
   useEffect(()=>{
-    const handleOnline=()=>{setIsOnline(true);showToast("✅ 網路已恢復");loadData();};
+    const handleOnline=()=>{setIsOnline(true);showToast("✅ 網路已恢復");if(Date.now()-lastLoadRef.current>120000)loadData();};
     const handleOffline=()=>{setIsOnline(false);showToast("⚠️ 離線中，資料暫存本地");};
     window.addEventListener('online',handleOnline);
     window.addEventListener('offline',handleOffline);
@@ -1243,6 +1251,7 @@ export default function HealthJournal(){
   const [exerciseLog,setExerciseLog]=useState([]);
   const [imagingPhotos,setImagingPhotos]=useState([]);
   const imagingPhotoRef = React.useRef();
+  const editImagingPhotoRef = React.useRef(); // ★ v4.72 編輯Modal照片上傳
   const [lightboxUrl,setLightboxUrl]=useState(null);
   const [imagingHistory,setImagingHistory]=useState([]);
   const [syncStatus,setSyncStatus]=useState("idle"); // idle|syncing|synced|error
@@ -1393,11 +1402,28 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
     api.saveSetting("hospitals", updated); // 同步到Sheets
   };
 
+  // ★ v4.71 上次成功載入時間（online防抖用）
+  const lastLoadRef=useRef(0);
   const loadData=useCallback(async()=>{
+    // ★ v4.71 快取優先秒開：先用本地快取渲染，再背景更新
+    try{
+      const cached=JSON.parse(localStorage.getItem("hj_data_cache")||"null");
+      if(cached){
+        if(cached.lab)setLabHistory(cached.lab);
+        if(cached.glu)setGlucoseHistory(cached.glu);
+        if(cached.bp)setBpHistory(cached.bp);
+        if(cached.wt)setWeightHistory(cached.wt);
+        if(cached.sleep)setSleepLog(cached.sleep);
+        if(cached.imaging)setImagingHistory(cached.imaging);
+        if(cached.bkf)setBreakfastLog(cached.bkf);
+        if(cached.ex)setExerciseLog(cached.ex);
+      }
+    }catch(e){}
     setLoading(true);
     setSyncStatus("syncing");
     try{
-      const [lab,glu,bp,wt,settings,imaging,bkf]=await Promise.all([
+      const cacheObj={};
+      const [lab,glu,bp,wt,settings,imaging,bkf,exLog,slp]=await Promise.all([
         api.get("getLabHistory"),
         api.get("getAll",{sheet:"daily_glucose"}),
         api.get("getAll",{sheet:"daily_bp"}),
@@ -1406,14 +1432,15 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
         api.get("getAll",{sheet:"imaging"}),
         api.get("getAll",{sheet:"breakfast_log"}),
         api.get("getAll",{sheet:"exercise_log"}),
+        api.get("getAll",{sheet:"sleep_log"}),
       ]);
-      if(lab?.data)setLabHistory(lab.data);
-      if(glu?.data)setGlucoseHistory(glu.data);
-      if(bp?.data)setBpHistory(bp.data);
-      if(wt?.data)setWeightHistory(wt.data);
-      if(bkf?.data)setBreakfastLog(bkf.data.filter(r=>r.date&&String(r.date).trim()));
-      const [exLog]=await Promise.all([api.get("getAll",{sheet:"exercise_log"})]);
-      if(exLog?.data)setExerciseLog(exLog.data.filter(r=>r.date&&String(r.date).trim()));
+      if(lab?.data){setLabHistory(lab.data);cacheObj.lab=lab.data;}
+      if(glu?.data){setGlucoseHistory(glu.data);cacheObj.glu=glu.data;}
+      if(bp?.data){setBpHistory(bp.data);cacheObj.bp=bp.data;}
+      if(wt?.data){setWeightHistory(wt.data);cacheObj.wt=wt.data;}
+      if(bkf?.data){const v=bkf.data.filter(r=>r.date&&String(r.date).trim());setBreakfastLog(v);cacheObj.bkf=v;}
+      if(exLog?.data){const v=exLog.data.filter(r=>r.date&&String(r.date).trim());setExerciseLog(v);cacheObj.ex=v;}
+      if(slp?.data){const v=slp.data.filter(r=>r.date&&String(r.date).trim());setSleepLog(v);cacheObj.sleep=v;}
       if(imaging?.data){
         // 過濾空白列（id或date或type為空/空白的）
         const validImaging = imaging.data.filter(r =>
@@ -1422,7 +1449,20 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
           r.type && String(r.type).trim()
         );
         setImagingHistory(validImaging);
+        cacheObj.imaging=validImaging;
       }
+      // ★ v4.71 寫入本地快取（下次開App秒開）
+      // ★ v4.72 容量保護：日常記錄只快取近90天（秒開夠用，完整歷史由背景同步補齊）；lab與imaging全存
+      try{
+        const cutoff=new Date(Date.now()-90*86400*1000).toISOString().split("T")[0];
+        const recent=(arr)=>Array.isArray(arr)?arr.filter(r=>String(r.date||"")>=cutoff):arr;
+        localStorage.setItem("hj_data_cache",JSON.stringify({
+          ...cacheObj,
+          glu:recent(cacheObj.glu),bp:recent(cacheObj.bp),wt:recent(cacheObj.wt),
+          sleep:recent(cacheObj.sleep),bkf:recent(cacheObj.bkf),ex:recent(cacheObj.ex),
+        }));
+      }catch(e){console.log("快取寫入失敗(可能超過容量):",e);}
+      lastLoadRef.current=Date.now();
       setSyncStatus("synced");
       setLastSync(new Date());
       // 從 Sheets 恢復設定
@@ -2643,7 +2683,7 @@ const analyzeTrend = (key, data) => {
           </div>
         )}
       </div>
-      {loading&&<div style={{textAlign:"center",color:C.textMuted,fontSize:12,marginBottom:12}}><span className="spin">⟳</span> 載入中...</div>}
+      {loading&&<div style={{position:"fixed",top:10,right:10,zIndex:999,background:"rgba(20,20,20,0.92)",border:`1px solid ${C.border}`,borderRadius:20,padding:"4px 12px",fontSize:11,color:C.textMuted,pointerEvents:"none"}}><span className="spin">⟳</span> 同步中</div>}
       {!isOnline&&<div style={{background:"rgba(255,179,71,0.1)",border:"1px solid rgba(255,179,71,0.3)",borderRadius:10,padding:"8px 12px",marginBottom:10,fontSize:12,color:C.amber,textAlign:"center"}}>📴 離線模式 · 顯示本地快取資料</div>}
       {/* 每日AI顧問問候 */}
       <div style={{background:"linear-gradient(135deg,rgba(46,204,138,0.12),rgba(52,152,219,0.12))",
@@ -2661,7 +2701,7 @@ const analyzeTrend = (key, data) => {
           :dailyGreeting
             ?<div style={{fontSize:13,color:C.text,lineHeight:1.8}}>{dailyGreeting}</div>
             :<div style={{fontSize:12,color:C.textMuted}}>
-                今日問候尚未產生
+                ⏰ 該更新了 — 按「重新產生」取得今日問候
                 {!localStorage.getItem("hj_apikey")&&<span>（請先設定API金鑰）</span>}
               </div>
         }
@@ -2918,7 +2958,7 @@ const analyzeTrend = (key, data) => {
               display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span>🏥 整體健康評估
                 <span style={{fontSize:9,color:C.textMuted,fontWeight:400,marginLeft:6}}>
-                  {reportDate} {daysSinceReport<=1?"（今日）":daysSinceReport<=7?`（${daysSinceReport}天前）`:"（本週更新）"}
+                  {reportDate} {daysSinceReport<=1?"（今日）":daysSinceReport<=7?`（${daysSinceReport}天前）`:"⏰ 已超過7天，建議重新產生"}
                 </span>
               </span>
               <button onClick={()=>generateOverallReport(false)}
@@ -5670,20 +5710,7 @@ ${exSummary}
     setOverallLoading(false);
   };
 
-  // ── 每週自動觸發整體評估 ─────────────────────────────
-  React.useEffect(()=>{
-    const key=localStorage.getItem("hj_apikey")||"";
-    if(!key)return;
-    const cache=JSON.parse(localStorage.getItem("hj_overall_cache")||"null");
-    if(!cache||!cache.date)return generateOverallReport(true);
-    const daysSince=Math.floor((new Date()-new Date(cache.date))/(1000*60*60*24));
-    if(daysSince>=7)generateOverallReport(true);
-  },[labHistory.length,sleepLog.length]);
-
-  // ── 每日問候自動觸發（資料載入後執行）────────────────
-  React.useEffect(()=>{
-    if(!loading)generateDailyGreeting();
-  },[loading,sleepLog.length]);
+  // ★ v4.71 移除每週評估/每日問候自動API呼叫（v4.69規格）：改為UI內「⏰該更新了」提示+手動按鈕
 
   // ── 載入後自動同步所有追蹤提醒日期（session只跑一次）──
   const reminderSyncDone=React.useRef(false);
@@ -7464,8 +7491,54 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
                   placeholder="其他備註..."/>
               </div>
             </div>
-            {/* 照片URL */}
-            <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>照片網址（Cloudinary上傳後填入，多張用逗號分隔）</div>
+            {/* ★ v4.72 照片：直接上傳（縮圖+刪除），沿用Cloudinary標準（1200px JPEG 75%）*/}
+            <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>照片（最多3張）</div>
+            {(()=>{
+              const urls=(editImaging.driveUrl||"").split(",").map(s=>s.trim()).filter(Boolean);
+              return(
+                <div style={{marginBottom:8}}>
+                  {urls.length>0&&(
+                    <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                      {urls.map((p,i)=>(
+                        <div key={i} className="photo-preview">
+                          <img src={p} alt={`影像${i+1}`}/>
+                          <button className="photo-del" onClick={()=>{
+                            const next=urls.filter((_,idx)=>idx!==i);
+                            setEditImaging(v=>({...v,driveUrl:next.join(",")}));
+                          }}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {urls.length<3&&(
+                    <div style={{border:`2px dashed ${C.border}`,borderRadius:10,padding:"12px",textAlign:"center",cursor:"pointer"}}
+                      onClick={()=>editImagingPhotoRef.current?.click()}>
+                      <div style={{fontSize:20,marginBottom:2}}>📷</div>
+                      <div style={{fontSize:12,color:C.textMuted}}>點擊上傳照片</div>
+                    </div>
+                  )}
+                  <input ref={editImagingPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}}
+                    onChange={async e=>{
+                      const cloudName=localStorage.getItem("cloudinary_name");
+                      if(!cloudName){showToast("⚠️ 請先在設定頁填入 Cloudinary 設定");e.target.value="";return;}
+                      const files=Array.from(e.target.files).slice(0,3-urls.length);
+                      showToast(`⏳ 上傳中（0/${files.length}）...`);
+                      const newUrls=[];
+                      for(let i=0;i<files.length;i++){
+                        try{
+                          const url=await uploadToCloudinary(files[i]);
+                          newUrls.push(url);
+                          showToast(`⏳ 上傳中（${i+1}/${files.length}）...`);
+                        }catch(err){showToast("❌ 上傳失敗："+err.message);e.target.value="";return;}
+                      }
+                      setEditImaging(v=>({...v,driveUrl:[...urls,...newUrls].slice(0,3).join(",")}));
+                      showToast(`✅ ${newUrls.length} 張照片已上傳`);
+                      e.target.value="";
+                    }}/>
+                </div>
+              );
+            })()}
+            <div style={{fontSize:10,color:C.textMuted,marginBottom:4}}>照片網址（進階：可手動編輯，多張用逗號分隔）</div>
             <textarea className="input-field" rows={2} style={{marginBottom:12,fontSize:11}}
               value={editImaging.driveUrl||""}
               onChange={e=>setEditImaging(v=>({...v,driveUrl:e.target.value}))}
