@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.76"; // v4.76: 早餐/晚上營養星等一覽表（項目×身體面向矩陣，1-5星，可收合）
+const VERSION = "v4.77"; // v4.77: 星等一覽表新增午後區（黑咖啡+黑巧克力85%）
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
 const GEMINI_MODEL = "gemini-3.5-flash";
@@ -4494,6 +4494,10 @@ const STAR_BREAKFAST=[
   {name:"EX NEO",s:[4,0,0,0,3,0,0]},
   {name:"若元",s:[2,0,0,0,0,0,5]},
 ];
+const STAR_AFTERNOON=[
+  {name:"黑咖啡300cc",s:[4,2,0,5,4,0,0]},
+  {name:"黑巧克力85%",s:[0,0,4,0,3,3,0]},
+];
 const STAR_DINNER=[
   {name:"橄欖油",s:[0,4,0,5,0,4,0]},
   {name:"希臘酸奶",s:[3,0,0,0,0,0,4]},
@@ -5237,6 +5241,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
                 {showStarMatrix&&(
                   <div style={{marginTop:10}}>
                     <StarMatrix title="🍳 早餐" rows={STAR_BREAKFAST}/>
+                    <StarMatrix title="☀️ 午後（13:00–14:00）" rows={STAR_AFTERNOON}/>
                     <StarMatrix title="🌙 晚上" rows={STAR_DINNER}/>
                     <div style={{fontSize:10,color:C.textMuted,lineHeight:1.6}}>
                       ★★★★★＝強力人體實證且直接命中你的弱項 · ★★★＝實證明確 · ★＝次要幫助<br/>
