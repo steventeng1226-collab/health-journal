@@ -1,32 +1,28 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.73"; // v4.73: 取消早餐打卡(固定早餐無需打卡)+早餐/晚上固定清單更新(香蕉/藍莓新增,橄欖油移晚上,份量校正)
+const VERSION = "v4.76"; // v4.76: 早餐/晚上營養星等一覽表（項目×身體面向矩陣，1-5星，可收合）
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
-// Claude API 直接呼叫
-const callClaude = async (messages, maxTokens=1000) => {
+// ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
+const GEMINI_MODEL = "gemini-3.5-flash";
+const callAI = async (messages, maxTokens=1000) => {
   const key = localStorage.getItem("hj_apikey") || "";
   if (!key) throw new Error("NO_API_KEY");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const contents = messages.map(m=>({role:m.role==="assistant"?"model":"user",parts:[{text:m.content}]}));
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": key,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
+    headers: { "Content-Type": "application/json", "x-goog-api-key": key },
     body: JSON.stringify({
-      model: "claude-haiku-4-5",
-      max_tokens: maxTokens,
-      messages: messages,
+      contents,
+      // thinkingBudget:0 必要：3.5系列會把token花在內部思考導致回覆被截斷（InvestHub踩過的坑）
+      generationConfig: { maxOutputTokens: maxTokens, thinkingConfig: { thinkingBudget: 0 } },
     })
   });
-  if (!res.ok) {
-    const err = await res.json().catch(()=>({}));
-    throw new Error(err?.error?.message || "HTTP "+res.status);
-  }
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-  return data.content?.map(b => b.text || "").join("") || "";
+  if (res.status===429) throw new Error("Gemini 免費額度已達上限，請稍後再試");
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok) throw new Error(data?.error?.message || "HTTP "+res.status);
+  const t = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!t) throw new Error("Gemini 沒有回傳內容");
+  return String(t).trim();
 };
 
 // ★ v4.72 GAS請求逾時保護：GAS冷啟動偶爾卡30秒+，15秒後放棄該請求（快取資料仍可用）
@@ -1164,1161 +1160,8 @@ const computeRadarScores=(lab,bpHistory)=>{
   ].map(d=>({...d,score:d.score==null?null:Math.round(d.score*10)/10}));
 };
 
-export default function HealthJournal(){
-  const [tab,setTab]=useState("home");
-  const [recordTab,setRecordTab]=useState("glucose");
-  const [selectedKnowledge,setSelectedKnowledge]=useState(null);
-  const [kbTab,setKbTab]=useState("lab");
-  const [selectedArticle,setSelectedArticle]=useState(null);
-  const [selectedMedicine,setSelectedMedicine]=useState(null);
-  const [customArticles,setCustomArticles]=useState(()=>{
-    try{return JSON.parse(localStorage.getItem("hj_articles")||"[]");}catch(e){return[];}
-  });
-  const [showAddArticle,setShowAddArticle]=useState(false);
-  const [trendItem,setTrendItem]=useState("overview");
-  const [toast,setToast]=useState("");
-  const [loading,setLoading]=useState(false);
-  const [isOnline,setIsOnline]=useState(navigator.onLine);
-
-  useEffect(()=>{
-    const handleOnline=()=>{setIsOnline(true);showToast("✅ 網路已恢復");if(Date.now()-lastLoadRef.current>120000)loadData();};
-    const handleOffline=()=>{setIsOnline(false);showToast("⚠️ 離線中，資料暫存本地");};
-    window.addEventListener('online',handleOnline);
-    window.addEventListener('offline',handleOffline);
-    return()=>{window.removeEventListener('online',handleOnline);window.removeEventListener('offline',handleOffline);};
-  },[]);
-  const [apiKey,setApiKey]=useState(localStorage.getItem("hj_apikey")||"");
-
-  // 後端資料
-  const [labHistory,setLabHistory]=useState([]);
-  const [glucoseHistory,setGlucoseHistory]=useState([]);
-  const [bpHistory,setBpHistory]=useState([]);
-  const [weightHistory,setWeightHistory]=useState([]);
-  const [hospitalList,setHospitalList]=useState(
-    JSON.parse(localStorage.getItem("hj_hospitals")||'["台灣新陳代謝科","越南醫院"]')
-  );
-
-  // 提醒
-  const DEFAULT_REMINDERS=[
-    {id:"R001",title:"洗牙",icon:"🦷",intervalDays:180,lastDate:"2025-12-03",nextDate:"2026-06-01"},
-    {id:"R002",title:"HbA1c追蹤",icon:"🩸",intervalDays:90,lastDate:"2026-05-27",nextDate:"2026-08-27"},
-    {id:"R003",title:"腎功能追蹤",icon:"🫘",intervalDays:180,lastDate:"2026-05-27",nextDate:"2026-11-27"},
-    {id:"R004",title:"眼底檢查",icon:"👁️",intervalDays:365,lastDate:"2025-05-27",nextDate:"2026-05-27"},
-    {id:"R005",title:"心電圖",icon:"💓",intervalDays:365,lastDate:"2025-05-27",nextDate:"2026-05-27"},
-  ];
-  const [reminders,setReminders]=useState(()=>{
-    try{
-      const saved=localStorage.getItem("hj_reminders");
-      return saved?JSON.parse(saved):DEFAULT_REMINDERS;
-    }catch(e){return DEFAULT_REMINDERS;}
-  });
-  const [editReminder,setEditReminder]=useState(null);
-  const [sleepLog,setSleepLog]=useState([]);
-  const emptySleepForm={date:today(),bedtime:"",waketime:"",
-    total_min:"",actual_min:"",score:"",deep_min:"",light_min:"",rem_min:"",
-    awake_min:"",spo2_avg:"",spo2_below90_min:"",spo2_min:"",
-    hr_avg:"",hr_min:"",breath_rate:"",sleep_efficiency:0,
-    pre_sleep_eurodin:false,pre_sleep_alcohol:false,
-    pre_sleep_coffee:"",pre_sleep_dinner:"",pre_sleep_yogurt:"",
-    pre_sleep_exercise:"",pre_sleep_stress:"無",note:""};
-  const [sleepForm,setSleepForm]=useState(emptySleepForm);
-  const [sleepPasteText,setSleepPasteText]=useState("");
-  const [showSleepPaste,setShowSleepPaste]=useState(false);
-  const [sleepAnalysis,setSleepAnalysis]=useState(null);
-  const [sleepAnalyzing,setSleepAnalyzing]=useState(false);
-  const [editSleepRecord,setEditSleepRecord]=useState(null);
-  const [showOverdue,setShowOverdue]=useState(false);
-  const [trackItems,setTrackItems]=useState(()=>{
-    try{ const s=localStorage.getItem("hj_track"); return s?JSON.parse(s):DEFAULT_TRACK; }
-    catch(e){ return DEFAULT_TRACK; }
-  });
-  const [showTrackPicker,setShowTrackPicker]=useState(false);
-  const [trendAiKey,setTrendAiKey]=useState(null);
-  const [labInfoKey,setLabInfoKey]=useState(null);
-  const [kbNotes,setKbNotes]=useState(()=>{
-    try{const s=localStorage.getItem("hj_kb");return s?JSON.parse(s):[];}
-    catch(e){return[];}
-  });
-  const [kbForm,setKbForm]=useState({title:"",category:"飲食",content:"",photo:null});
-  const [kbAiLoading,setKbAiLoading]=useState(false);
-  const [showKbForm,setShowKbForm]=useState(false);
-  const kbPhotoRef=React.useRef();
-  const [trendAiResult,setTrendAiResult]=useState({});
-  const [trendAiLoading,setTrendAiLoading]=useState(false);
-  const [imagingForm,setImagingForm]=useState({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
-  const [editImaging,setEditImaging]=useState(null);
-  const [exerciseLog,setExerciseLog]=useState([]);
-  const [imagingPhotos,setImagingPhotos]=useState([]);
-  const imagingPhotoRef = React.useRef();
-  const editImagingPhotoRef = React.useRef(); // ★ v4.72 編輯Modal照片上傳
-  const [lightboxUrl,setLightboxUrl]=useState(null);
-  const [imagingHistory,setImagingHistory]=useState([]);
-  const [syncStatus,setSyncStatus]=useState("idle"); // idle|syncing|synced|error
-  const [lastSync,setLastSync]=useState(null);
-  const [submitting,setSubmitting]=useState(false); // 防重複提交
-
-  // 表單
-  const [glucoseForm,setGlucoseForm]=useState({value:"",unit:localStorage.getItem("hj_glucose_unit")||"mmol/L",timePoint:"空腹",source:"日常",note:""});
-  const [bpForm,setBpForm]=useState({sys:"",dia:"",pulse:"",source:"日常"});
-  const [editBPRecord,setEditBPRecord]=useState(null);
-  const [weightForm,setWeightForm]=useState({value:""});
-
-  // 抽血報告解析
-  const [labStep,setLabStep]=useState("input"); // input | parsing | confirm | saving
-  const [labInputText,setLabInputText]=useState("");
-  const [labPhotos,setLabPhotos]=useState([]); // [{dataUrl,file}]
-  const [labParsed,setLabParsed]=useState({});
-  const [labForm,setLabForm]=useState({date:"",hospital:"",country:"台灣",fasting:"空腹"});
-  const [showPhotoWarning,setShowPhotoWarning]=useState(false);
-  const [pendingPhotos,setPendingPhotos]=useState(null);
-  // ── 每日AI顧問問候 ──────────────────────────────────
-  const [dailyGreeting,setDailyGreeting]=useState(()=>{
-    try{
-      const cache=JSON.parse(localStorage.getItem("hj_daily_greeting")||"null");
-      if(cache&&cache.date===new Date().toISOString().split("T")[0])return cache.greeting;
-    }catch(e){}
-    return null;
-  });
-  const [greetingLoading,setGreetingLoading]=useState(false);
-
-  const generateDailyGreeting=async(force=false)=>{
-    const key=localStorage.getItem("hj_apikey")||"";
-    if(!key||greetingLoading)return;
-    const todayStr=new Date().toISOString().split("T")[0];
-    // 建立「資料摘要key」— 有新記錄就重新產生
-    const lastSleep=[...sleepLog].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
-    const lastBP=[...bpHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
-    const lastGluc=[...glucoseHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
-    const dataKey=`${todayStr}|${lastSleep?.date||""}|${lastSleep?.score||""}|${lastBP?.date||""}|${lastGluc?.date||""}`;
-    const cache=JSON.parse(localStorage.getItem("hj_daily_greeting")||"null");
-    // 條件：同dataKey且未超過3天 → 直接用快取
-    const cacheAge=cache?.date?Math.floor((new Date()-new Date(cache.date))/(1000*60*60*24)):999;
-    if(!force&&cache&&cache.dataKey===dataKey&&cacheAge<3)return;
-    setGreetingLoading(true);
-    try{
-      const hour=new Date().getHours();
-      const weekday=["日","一","二","三","四","五","六"][new Date().getDay()];
-      const isWeekend=new Date().getDay()===0||new Date().getDay()===6;
-      const timeStr=hour<6?"凌晨":hour<12?"早上":hour<14?"中午":hour<18?"下午":hour<22?"晚上":"深夜";
-      // 睡眠詳情
-      const sleepNote=lastSleep?(()=>{
-        const h=Math.floor((lastSleep.total_min||0)/60);
-        const m=(lastSleep.total_min||0)%60;
-        const deepPct=Math.round((lastSleep.deep_min||0)/(lastSleep.total_min||1)*100);
-        const spo2=lastSleep.spo2_avg||0;
-        const score=lastSleep.score||0;
-        const daysDiff=Math.floor((new Date()-new Date(lastSleep.date))/(1000*60*60*24));
-        return `${daysDiff===0?"昨晚":daysDiff===1?"前晚":`${daysDiff}天前`}睡眠：${h}小時${m}分，深層${deepPct}%${deepPct>=18?"✓":"（偏低）"}，評分${score||"—"}${spo2>0?`，血氧${spo2}%${spo2<90?"⚠️低氧":""}`:""}`+
-          (lastSleep.spo2_below90_min>10?`，低於90%達${lastSleep.spo2_below90_min}分鐘`:"");
-      })():"無近期睡眠記錄";
-      // 血壓詳情
-      const bpNote=lastBP?(()=>{
-        const daysDiff=Math.floor((new Date()-new Date(lastBP.date))/(1000*60*60*24));
-        const status=lastBP.systolic>=140?"偏高":lastBP.systolic>=130?"需注意":"正常";
-        return `血壓${lastBP.systolic}/${lastBP.diastolic}（${daysDiff===0?"今天":daysDiff+"天前"}，${status}）`;
-      })():"無血壓記錄";
-      // 血糖詳情
-      const glucNote=lastGluc?(()=>{
-        const daysDiff=Math.floor((new Date()-new Date(lastGluc.date))/(1000*60*60*24));
-        const status=lastGluc.value_mgdl>=126?"偏高":lastGluc.value_mgdl>=100?"需注意":"正常";
-        return `血糖${lastGluc.value_mgdl}mg/dL（${daysDiff===0?"今天":daysDiff+"天前"}，${status}）`;
-      })():"無血糖記錄";
-      // 到期追蹤（依嚴重度排序）
-      const overdues=reminders.filter(r=>new Date(r.nextDate)<=new Date())
-        .sort((a,b)=>new Date(a.nextDate)-new Date(b.nextDate))
-        .slice(0,3).map(r=>`${r.title}（已逾期${Math.floor((new Date()-new Date(r.nextDate))/(1000*60*60*24))}天）`);
-      // 近3天運動
-      const recentEx=[...exerciseLog].filter(r=>{
-        const d=new Date(r.date);return(new Date()-d)/(1000*60*60*24)<=3;
-      });
-      const prompt=`你是Steven的私人健康顧問。根據今天的實際數據，用自然、有溫度的方式說話，不要重複昨天說過的話。
-
-【今天】${todayStr} 週${weekday} ${timeStr}${hour}點${isWeekend?" 週末":""}
-
-【最新健康數據】
-・${sleepNote}
-・${bpNote}
-・${glucNote}
-・近3天運動：${recentEx.length>0?recentEx.length+"次":"無記錄"}
-${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
-
-【Steven背景】55歲台灣男性，越南海防獨自工作，七項並發診斷（高血壓、動脈瘤、冠狀動脈狹窄、脂肪肝G2、高尿酸、肝酶偏高、糖尿病前期）。
-
-請根據上面的「今天實際數據」，用2-3句話直接跟Steven說話：
-・第一句：針對最新睡眠或數據給具體評語（數字要說出來，例如「深層21%達標」或「血氧低於90%達33分要注意」）
-・第二句：今天一個最重要的複合提醒（至少連結兩個健康面向）
-・第三句：簡短鼓勵或今日具體行動建議
-注意：語氣像關心的朋友，不像醫療報告，繁體中文，不用標題和條列。`;
-      const result=await callClaude([{role:"user",content:prompt}],350);
-      if(result&&!result.startsWith("❌")){
-        setDailyGreeting(result);
-        localStorage.setItem("hj_daily_greeting",JSON.stringify({date:todayStr,dataKey,greeting:result}));
-      }
-    }catch(e){console.log("greeting error",e);}
-    setGreetingLoading(false);
-  };
-
-  const [aiReport,setAiReport]=useState(()=>{
-    try{
-      const cache=JSON.parse(localStorage.getItem("hj_weekly_cache")||"null");
-      if(cache&&cache.date===new Date().toISOString().split("T")[0])return cache.report;
-    }catch(e){}
-    return null;
-  });
-  const [aiReportDate,setAiReportDate]=useState(()=>{
-    try{
-      const cache=JSON.parse(localStorage.getItem("hj_weekly_cache")||"null");
-      if(cache&&cache.date===new Date().toISOString().split("T")[0])return cache.date;
-    }catch(e){}
-    return null;
-  });
-  const [aiLoading,setAiLoading]=useState(false);
-  const [overallReport,setOverallReport]=useState(()=>{
-    try{
-      const cache=JSON.parse(localStorage.getItem("hj_overall_cache")||"null");
-      if(cache)return cache.report;
-    }catch(e){}
-    return null;
-  });
-  const [overallDate,setOverallDate]=useState(()=>{
-    try{
-      const cache=JSON.parse(localStorage.getItem("hj_overall_cache")||"null");
-      if(cache)return cache.date;
-    }catch(e){}
-    return null;
-  });
-  const [overallLoading,setOverallLoading]=useState(false);
-  const [showApiInput,setShowApiInput]=useState(false);
-  const photoInputRef=useRef();
-
-  const showToast=(msg)=>{setToast(msg);setTimeout(()=>setToast(""),2800);};
-
-  const saveHospital=(name)=>{
-    if(!name||hospitalList.includes(name))return;
-    const updated=[name,...hospitalList].slice(0,10);
-    setHospitalList(updated);
-    localStorage.setItem("hj_hospitals",JSON.stringify(updated));
-    api.saveSetting("hospitals", updated); // 同步到Sheets
-  };
-
-  // ★ v4.71 上次成功載入時間（online防抖用）
-  const lastLoadRef=useRef(0);
-  const loadData=useCallback(async()=>{
-    // ★ v4.71 快取優先秒開：先用本地快取渲染，再背景更新
-    try{
-      const cached=JSON.parse(localStorage.getItem("hj_data_cache")||"null");
-      if(cached){
-        if(cached.lab)setLabHistory(cached.lab);
-        if(cached.glu)setGlucoseHistory(cached.glu);
-        if(cached.bp)setBpHistory(cached.bp);
-        if(cached.wt)setWeightHistory(cached.wt);
-        if(cached.sleep)setSleepLog(cached.sleep);
-        if(cached.imaging)setImagingHistory(cached.imaging);
-        if(cached.ex)setExerciseLog(cached.ex);
-      }
-    }catch(e){}
-    setLoading(true);
-    setSyncStatus("syncing");
-    try{
-      const cacheObj={};
-      const [lab,glu,bp,wt,settings,imaging,exLog,slp]=await Promise.all([
-        api.get("getLabHistory"),
-        api.get("getAll",{sheet:"daily_glucose"}),
-        api.get("getAll",{sheet:"daily_bp"}),
-        api.get("getAll",{sheet:"daily_weight"}),
-        api.loadSettings(),
-        api.get("getAll",{sheet:"imaging"}),
-        api.get("getAll",{sheet:"exercise_log"}),
-        api.get("getAll",{sheet:"sleep_log"}),
-      ]);
-      if(lab?.data){setLabHistory(lab.data);cacheObj.lab=lab.data;}
-      if(glu?.data){setGlucoseHistory(glu.data);cacheObj.glu=glu.data;}
-      if(bp?.data){setBpHistory(bp.data);cacheObj.bp=bp.data;}
-      if(wt?.data){setWeightHistory(wt.data);cacheObj.wt=wt.data;}
-      if(exLog?.data){const v=exLog.data.filter(r=>r.date&&String(r.date).trim());setExerciseLog(v);cacheObj.ex=v;}
-      if(slp?.data){const v=slp.data.filter(r=>r.date&&String(r.date).trim());setSleepLog(v);cacheObj.sleep=v;}
-      if(imaging?.data){
-        // 過濾空白列（id或date或type為空/空白的）
-        const validImaging = imaging.data.filter(r =>
-          r.id && String(r.id).trim() &&
-          r.date && String(r.date).trim() &&
-          r.type && String(r.type).trim()
-        );
-        setImagingHistory(validImaging);
-        cacheObj.imaging=validImaging;
-      }
-      // ★ v4.71 寫入本地快取（下次開App秒開）
-      // ★ v4.72 容量保護：日常記錄只快取近90天（秒開夠用，完整歷史由背景同步補齊）；lab與imaging全存
-      try{
-        const cutoff=new Date(Date.now()-90*86400*1000).toISOString().split("T")[0];
-        const recent=(arr)=>Array.isArray(arr)?arr.filter(r=>String(r.date||"")>=cutoff):arr;
-        localStorage.setItem("hj_data_cache",JSON.stringify({
-          ...cacheObj,
-          glu:recent(cacheObj.glu),bp:recent(cacheObj.bp),wt:recent(cacheObj.wt),
-          sleep:recent(cacheObj.sleep),ex:recent(cacheObj.ex),
-        }));
-      }catch(e){console.log("快取寫入失敗(可能超過容量):",e);}
-      lastLoadRef.current=Date.now();
-      setSyncStatus("synced");
-      setLastSync(new Date());
-      // 從 Sheets 恢復設定
-      if(settings?.data){
-        const s=settings.data;
-        if(s.hospitals){
-          const h=JSON.parse(s.hospitals);
-          setHospitalList(h);
-          localStorage.setItem("hj_hospitals",JSON.stringify(h));
-        }
-        if(s.reminders){
-          const r=JSON.parse(s.reminders);
-          setReminders(r);
-          localStorage.setItem("hj_reminders",JSON.stringify(r));
-        }
-        if(s.trackItems){
-          const t=JSON.parse(s.trackItems);
-          setTrackItems(t);
-          localStorage.setItem("hj_track",JSON.stringify(t));
-        }
-      }
-    }catch(e){console.log("載入失敗:",e);setSyncStatus("error");}
-    setLoading(false);
-  },[]);
-
-  useEffect(()=>{loadData();},[loadData]);
-
-  // ★ v4.70 開App檢查到期項目並發通知（每天最多一次）
-  useEffect(()=>{
-    if(!localStorage.getItem("hj_notify"))return;
-    if(!("Notification" in window)||Notification.permission!=="granted")return;
-    const lastNotify=localStorage.getItem("hj_last_notify_date");
-    const todayStr=today();
-    if(lastNotify===todayStr)return;
-    const overdue=reminders.filter(r=>new Date(r.nextDate)<=new Date());
-    if(overdue.length>0){
-      new Notification("健康日誌提醒",{
-        body:`有 ${overdue.length} 項追蹤到期：${overdue.slice(0,3).map(r=>r.title).join("、")}`,
-        icon:"/health-journal/icon-192.png"
-      });
-      localStorage.setItem("hj_last_notify_date",todayStr);
-    }
-  },[reminders]);
-
-  // 儲存血糖
-  const saveGlucose=async()=>{
-    if(submitting){return;}
-    if(!glucoseForm.value){showToast("⚠️ 請輸入血糖值");return;}
-    setSubmitting(true);
-    const mgdl=toMgdl(glucoseForm.value,glucoseForm.unit);
-    const now=new Date();
-    const r=await api.post("append","daily_glucose",{
-      date:now.toISOString().split("T")[0],time:now.toTimeString().slice(0,5),
-      timePoint:glucoseForm.timePoint,value_mgdl:mgdl,
-      value_original:glucoseForm.value,unit_original:glucoseForm.unit,
-      source:glucoseForm.source,note:glucoseForm.note,
-    });
-    if(r?.success){
-      showToast(`✅ 血糖 ${mgdl} mg/dL 已儲存`);
-      // ★ v4.70 異常值即時提醒
-      if(mgdl>=126)setTimeout(()=>window.alert(`⚠️ 血糖 ${mgdl} mg/dL 已達糖尿病標準（≥126）\n建議：確認是否空腹量測，若持續偏高請就醫`),300);
-      else if(mgdl>=100)setTimeout(()=>window.alert(`⚠️ 血糖 ${mgdl} mg/dL 偏高（正常<100）\n建議：注意飲食，持續追蹤`),300);
-      setGlucoseForm({value:"",unit:localStorage.getItem("hj_glucose_unit")||"mmol/L",timePoint:"空腹",source:"日常",note:""});
-      loadData();
-    }
-    else showToast("❌ 血糖儲存失敗：" + (r?.error || "請檢查網路連線"));
-    setSubmitting(false);
-  };
-
-  const updateBP=async(record)=>{
-    const r=await api.post("update","daily_bp",record);
-    if(r?.success){
-      setBpHistory(prev=>prev.map(b=>b.id===record.id?record:b));
-      setEditBPRecord(null);
-      showToast("✅ 血壓記錄已更新");
-    }else showToast("❌ 更新失敗");
-  };
-  const deleteBP=async(id)=>{
-    if(!window.confirm("確定刪除這筆血壓記錄？"))return;
-    const r=await api.deleteRow("daily_bp",id);
-    if(r?.success){
-      setBpHistory(prev=>prev.filter(b=>b.id!==id));
-      showToast("✅ 已刪除");
-    }else showToast("❌ 刪除失敗");
-  };
-  const saveBP=async()=>{
-    if(submitting){return;}
-    if(!bpForm.sys||!bpForm.dia){showToast("⚠️ 請輸入血壓值");return;}
-    setSubmitting(true);
-    const now=new Date();
-    const r=await api.post("append","daily_bp",{
-      date:now.toISOString().split("T")[0],time:now.toTimeString().slice(0,5),
-      systolic:parseInt(bpForm.sys),diastolic:parseInt(bpForm.dia),
-      pulse:parseInt(bpForm.pulse)||"",source:bpForm.source,
-    });
-    if(r?.success){
-      showToast("✅ 血壓已儲存");
-      // ★ v4.70 異常值即時提醒
-      const s=parseInt(bpForm.sys),d=parseInt(bpForm.dia);
-      if(s>=160||d>=100)setTimeout(()=>window.alert(`🚨 血壓 ${s}/${d} mmHg 顯著偏高！\n建議：休息15分鐘後再量一次，若仍≥160/100請盡快就醫`),300);
-      else if(s>=140||d>=90)setTimeout(()=>window.alert(`⚠️ 血壓 ${s}/${d} mmHg 偏高（≥140/90）\n建議：確認服藥狀況，連續3天偏高請回診`),300);
-      setBpForm({sys:"",dia:"",pulse:"",source:"日常"});
-      loadData();
-    }
-    else showToast("❌ 儲存失敗");
-    setSubmitting(false);
-  };
-
-  const saveWeight=async()=>{
-    if(submitting){return;}
-    if(!weightForm.value){showToast("⚠️ 請輸入體重");return;}
-    setSubmitting(true);
-    const r=await api.post("append","daily_weight",{date:today(),value_kg:parseFloat(weightForm.value)});
-    if(r?.success){showToast("✅ 體重已儲存");setWeightForm({value:""});loadData();}
-    else showToast("❌ 儲存失敗");
-    setSubmitting(false);
-  };
-
-  // 照片處理
-  const handlePhotoChange=async(files)=>{
-    if(!files||files.length===0)return;
-    const newPhotos=[];
-    for(const file of Array.from(files).slice(0,5)){
-      const dataUrl=await new Promise(res=>{
-        const reader=new FileReader();
-        reader.onload=e=>res(e.target.result);
-        reader.readAsDataURL(file);
-      });
-      newPhotos.push({dataUrl,file});
-    }
-    setLabPhotos(prev=>[...prev,...newPhotos].slice(0,5));
-  };
-
-  const labPhotoInputRef2 = React.useRef();
-  const confirmPhotos=()=>{
-    setShowPhotoWarning(false);
-    setPendingPhotos(null);
-    setTimeout(()=>{ photoInputRef.current?.click(); }, 100);
-  };
-
-  // AI 解析報告（文字）
-  const parseLabText=async()=>{
-    const key=localStorage.getItem("hj_apikey")||apiKey||"";
-    if(!key){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");return;}
-    if(!labInputText.trim()&&labPhotos.length===0){showToast("⚠️ 請先貼上報告文字或上傳照片");return;}
-    setLabStep("parsing");
-
-    try{
-      let content=[];
-      // 加入照片
-      labPhotos.forEach(p=>{
-        const b64=p.dataUrl.split(",")[1];
-        const mime=p.dataUrl.split(";")[0].split(":")[1];
-        content.push({type:"image",source:{type:"base64",media_type:mime,data:b64}});
-      });
-      // 加入文字
-      const textPart=labInputText.trim()||"（請從圖片中辨識所有檢驗數值）";
-      content.push({type:"text",text:`你是醫療報告解析助手。任務：從以下報告提取所有數值，回傳純JSON，禁止任何說明文字。
-
-重要規則：
-1. 抓取報告中出現的所有數值，不要遺漏
-2. key名稱用以下對應（小寫英文）：
-   hba1c=HbA1c/糖化血色素
-   glucose_ac=Glucose AC/空腹血糖/GLU（空腹）
-   alt=ALT/SGPT
-   ast=AST/SGOT
-   alp=ALP/鹼性磷酸酶
-   ggt=GGT/麩胺轉移酶
-   ldh=LDH
-   tbil=Total Bilirubin/總膽紅素/TBILC
-   dbil=Direct Bilirubin/直接膽紅素/DBILC
-   tp=Total Protein/總蛋白/TP
-   alb=Albumin/白蛋白/ALB
-   glob=Globulin/球蛋白/GLO
-   ag_ratio=A/G Ratio
-   hdl=HDL-C/HDL/高密度脂蛋白
-   ldl=LDL-C/LDL/低密度脂蛋白
-   tg=TG/Triglyceride/三酸甘油酯
-   cholesterol=Total Cholesterol/總膽固醇/CHOL
-   chol_hdl=CHOL/HDL-C比值/膽固醇HDL比值
-   uric_acid=Uric Acid/尿酸/UA
-   creatinine=Creatinine/肌酸酐/CRE（血清，非尿液）
-   gfr=GFR（取第一個數值，通常是CKD-EPI公式）
-   gfr2=eGFR(MDRD)/第二個eGFR數值
-   bun=BUN/血中尿素氮
-   upcr=UPCR/Protein Creatinine Ratio
-   urine_creatinine=Urine Creatinine/尿液肌酸酐/CREA(Random Urine)
-   urine_protein=Urine Protein/尿液蛋白/Micro-Total Protein/Total Protein(Urine)
-   tsh=TSH/甲狀腺促素
-   ft3=Free T3
-   ft4=Free T4
-   na=Sodium/鈉/Na
-   k=Potassium/鉀/K
-   cl=Chloride/氯/Cl
-   ca=Calcium/鈣/Ca
-   mg=Magnesium/鎂/MG
-   phos=Phosphorus/磷/PHOS
-   crp=CRP/C反應蛋白
-   amy=Amylase/澱粉酶/AMY
-   lip=Lipase/脂肪酶/LIP
-   ck=CK/肌酸激酶
-   fe=Iron/鐵/FE
-   uibc=UIBC
-   tibc=TIBC
-   fe_sat=Iron Saturation/鐵飽和度/FE_sat
-   hb=Hb/Hemoglobin/血紅素
-   wbc=WBC/白血球
-   rbc=RBC/紅血球
-   hct=Hct/血球容積
-   mcv=MCV（平均紅血球容積）
-   mch=MCH（平均紅血球血色素）
-   mchc=MCHC（平均紅血球血色素濃度）
-   rdw_cv=RDW-CV（紅血球分布寬度CV）
-   rdw_sd=RDW-SD（紅血球分布寬度SD）
-   platelet=Platelet/PLT/血小板
-   mpv=MPV（平均血小板容積）
-3. 數值只填數字，不要單位
-4. 找不到的欄位填null
-5. 單位換算規則（非常重要，必須正確換算）：
-
-   血糖/葡萄糖 mmol/L → mg/dL：×18.016
-   膽固醇/HDL/LDL/TG mmol/L → mg/dL：×38.67
-   肌酸酐 μmol/L或umol/L → mg/dL：÷88.4
-   尿酸 μmol/L或umol/L → mg/dL：÷59.48
-   尿素/BUN mmol/L → mg/dL：×2.8（注意：越南報告的Urea mmol/L換算BUN）
-   鈣 mmol/L → mg/dL：×4.008
-   磷 mmol/L → mg/dL：×3.097
-   鎂 mmol/L → mg/dL：×2.431
-   血紅素/Hb g/L → g/dL：÷10
-   MCHC g/L → g/dL：÷10
-   總膽紅素 μmol/L → mg/dL：÷17.1
-   直接膽紅素 μmol/L → mg/dL：÷17.1
-   白蛋白 g/L → g/dL：÷10
-   總蛋白 g/L → g/dL：÷10
-   電解質 Na/K/Cl mmol/L = mEq/L（不需換算）
-   HCT：若為小數（0.453）請×100轉成百分比（45.3）
-   WBC/RBC/PLT：G/L = 10³/μL（不需換算數值）
-
-6. 支援多種報告格式：
-   台灣格式：「ALT: 45 U/L」
-   越南格式：「ALT(GPT): 54 U/L」「Creatinine: 69.5 μmol/L」
-   DxC 700 AU：「ALT 43」「CRE 0.82」
-
-7. 欄位對應（補充）：
-   amy=AMY/Amylase
-   ck=CK
-   ggt=GGT/Gamma-GT
-   fe=FE/Iron/Sắt
-   lip=LIP/Lipase
-   tp=TP/Total Protein/Protein toàn phần（若g/L請÷10）
-   ldh=LDH
-   k=K/Potassium/Kali
-   ag_ratio=A/G Ratio
-   alb=ALB/Albumin（若g/L請÷10）
-   crp=CRP
-   mg=MG/Magnesium（若mmol/L請×2.431）
-   uibc=UIBC
-   na=Na/Sodium/Natri
-   tibc=TIBC
-   alp=ALP
-   dbil=DBILC/Direct Bilirubin（若μmol/L請÷17.1）
-   phos=PHOS/Phosphorus（若mmol/L請×3.097）
-   tbil=TBILC/Total Bilirubin（若μmol/L請÷17.1）
-   bun=BUN/Urea（Urea mmol/L請×2.8換算BUN mg/dL）
-   ca=CA/Calcium（若mmol/L請×4.008）
-   cl=Cl/Chloride
-   glob=GLO/Globulin（若g/L請÷10）
-   fe_sat=FE_sat/Iron Saturation
-   creatinine=CRE/Creatinine（若μmol/L請÷88.4）
-   uric_acid=UA/Uric Acid（若μmol/L請÷59.48）
-   glucose_ac=GLU/Glucose/HbA1c旁的血糖（若mmol/L請×18.016）
-   cholesterol=CHOL/Total Cholesterol（若mmol/L請×38.67）
-   hb=HGB/Hemoglobin（若g/L請÷10）
-   mchc=MCHC（若g/L請÷10）
-   ne_pct=NE%/Neutrophil%/嗜中性球%（百分比）
-   ly_pct=LY%/Lymphocyte%/淋巴球%（百分比）
-   mo_pct=MO%/Monocyte%/單核球%（百分比）
-   eo_pct=EO%/Eosinophil%/嗜酸性球%（百分比）
-   ba_pct=BA%/Basophil%/嗜鹼性球%（百分比）
-   ne_abs=NE#/Neutrophil#/嗜中性球絕對值（G/L或10^3/uL）
-   ly_abs=LY#/Lymphocyte#/淋巴球絕對值
-   mo_abs=MO#/Monocyte#/單核球絕對值
-   eo_abs=EO#/Eosinophil#/嗜酸性球絕對值
-   ba_abs=BA#/Basophil#/嗜鹼性球絕對值
-   hbsag=HBsAg（陰性填0，陽性填1）
-   anti_hcv=Anti-HCV（陰性填0，陽性填1）
-   anti_hbs=Anti-HBs（陰性填0，陽性填1）
-   cea=CEA/癌胚抗原
-   afp=AFP/甲胎蛋白
-   psa=PSA/攝護腺特異抗原
-   asto=ASTO/抗鏈球菌溶血素O（陰性填0，陽性填1）
-   rf=RF/類風濕因子（陰性填0，陽性填1）
-   urine_glucose=尿糖/Glucose(Urine)（negative填0，positive填1）
-   urine_bilirubin=尿膽紅素/Bilirubin(Urine)（negative填0，positive填1）
-   urine_ketone=尿酮體/Ketone(Urine)（negative填0，positive填1）
-   urine_sg=尿比重/Specific Gravity（填數值如1.010）
-   urine_ph=尿液pH（填數值如6.0）
-   urine_nitrite=亞硝酸鹽/Nitrite（negative填0，positive填1）
-   urine_urobilinogen=尿膽素原/Urobilinogen（negative填0，positive填1）
-   urine_blood=尿潛血/Blood(Urine)（negative填0，positive填1）
-   urine_leukocyte=尿白血球/Leukocyte(Urine)（negative填0，positive填1）
-   insulin=胰島素/Insulin（μIU/mL 或 mIU/L）
-   vitamin_d3=維生素D3/Vitamin D3/25(OH)D（ng/mL 或 nmol/L÷2.496換算）
-   ferritin=鐵蛋白/Ferritin（ng/mL 或 μg/L）
-   hs_crp=高敏CRP/hsCRP/hs-CRP（mg/L）
-   insulin_resistance=胰島素阻抗指數/HOMA-IR（計算值）
-
-報告內容：
-${textPart}
-
-只回傳JSON格式，包含所有找到的欄位（有值的填數值，沒有的填null）：
-{"date":null,"hospital":null,"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"gfr2":null,"bun":null,"upcr":null,"urine_creatinine":null,"urine_protein":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"ck_mb":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"ne_pct":null,"ly_pct":null,"mo_pct":null,"eo_pct":null,"ba_pct":null,"ne_abs":null,"ly_abs":null,"mo_abs":null,"eo_abs":null,"ba_abs":null,"hbsag":null,"anti_hcv":null,"anti_hbs":null,"cea":null,"afp":null,"psa":null,"asto":null,"rf":null,"urine_glucose":null,"urine_bilirubin":null,"urine_ketone":null,"urine_sg":null,"urine_ph":null,"urine_nitrite":null,"urine_urobilinogen":null,"urine_blood":null,"urine_leukocyte":null,"insulin":null,"vitamin_d3":null,"ferritin":null,"hs_crp":null,"insulin_resistance":null,"note":null}`});
-
-      const rawText = await callClaude([{role:"user",content}], 1200);
-      console.log("Raw text:",rawText.slice(0,500));
-      // 清理並解析JSON - 多重嘗試
-      let parsed={};
-      try{
-        const clean=rawText.replace(/```json|```|\n/g,"").trim();
-        parsed=JSON.parse(clean);
-      }catch(e1){
-        try{
-          const start=rawText.indexOf("{");
-          const end=rawText.lastIndexOf("}");
-          if(start>=0&&end>start){
-            parsed=JSON.parse(rawText.slice(start,end+1));
-          }
-        }catch(e2){
-          console.log("JSON parse failed:",rawText);
-          // 嘗試手動提取數值
-          const extract=(pattern)=>{
-            const m=rawText.match(pattern);
-            return m?parseFloat(m[1]):null;
-          };
-          parsed={
-            hba1c:extract(/hba1c["\s:]+([0-9.]+)/i),
-            glucose_ac:extract(/glucose[_\s]?ac["\s:]+([0-9.]+)/i)||extract(/glucose["\s:]+([0-9.]+)/i),
-            alt:extract(/alt["\s:]+([0-9.]+)/i)||extract(/sgpt["\s:]+([0-9.]+)/i),
-            hdl:extract(/hdl["\s:]+([0-9.]+)/i),
-            ldl:extract(/ldl["\s:]+([0-9.]+)/i),
-            tg:extract(/tg["\s:]+([0-9.]+)/i)||extract(/triglyceride["\s:]+([0-9.]+)/i),
-            cholesterol:extract(/cholesterol["\s:]+([0-9.]+)/i),
-            uric_acid:extract(/uric[_\s]?acid["\s:]+([0-9.]+)/i),
-            creatinine:extract(/creatinine["\s:]+([0-9.]+)/i),
-            tsh:extract(/tsh["\s:]+([0-9.]+)/i),
-            hb:extract(/hb["\s:]+([0-9.]+)/i)||extract(/hemoglobin["\s:]+([0-9.]+)/i),
-            wbc:extract(/wbc["\s:]+([0-9.]+)/i),
-            platelet:extract(/platelet["\s:]+([0-9.]+)/i),
-          };
-        }
-      }
-      // 過濾null值
-      Object.keys(parsed).forEach(k=>{
-        if(parsed[k]===null||parsed[k]===undefined||parsed[k]==="null"||parsed[k]==="")delete parsed[k];
-      });
-
-      // ── Batch2：extra_data 兜底 ─────────────────────────
-      // 已知欄位白名單（所有有定義的欄位）
-      const KNOWN_KEYS = new Set([
-        "date","hospital","country","fasting","doctor","note",
-        "hba1c","glucose_ac","glucose_pc","glucose_random",
-        "alt","ast","alp","ggt","ldh","tbil","dbil","tp","alb","glob","ag_ratio",
-        "hdl","ldl","tg","cholesterol","chol_hdl",
-        "uric_acid","creatinine","gfr","gfr2","bun","upcr","urine_creatinine","urine_protein","urine_protein2",
-        "tsh","ft3","ft4",
-        "na","k","cl","ca","mg","phos",
-        "crp","amy","lip","ck","ck_mb",
-        "fe","uibc","tibc","fe_sat",
-        "hb","wbc","rbc","hct","mcv","mch","mchc","rdw_cv","rdw_sd","platelet","mpv",
-        "ne_pct","ly_pct","mo_pct","eo_pct","ba_pct",
-        "ne_abs","ly_abs","mo_abs","eo_abs","ba_abs",
-        "hbsag","anti_hcv","anti_hbs",
-        "cea","afp","psa","asto","rf",
-        "urine_glucose","urine_bilirubin","urine_ketone","urine_sg","urine_ph",
-        "urine_nitrite","urine_urobilinogen","urine_blood","urine_leukocyte",
-        "extra_data","source_country","createdAt","id","insulin","vitamin_d3","ferritin","hs_crp","insulin_resistance",
-      ]);
-      // 找出不在白名單的欄位
-      const extraObj = {};
-      Object.keys(parsed).forEach(k=>{
-        if(!KNOWN_KEYS.has(k)) extraObj[k] = parsed[k];
-      });
-      if(Object.keys(extraObj).length > 0){
-        parsed._extraData = extraObj; // 暫存，saveLabReport時合併
-      }
-      // ───────────────────────────────────────────────────
-
-      console.log("Parsed:",JSON.stringify(parsed));
-
-      // 合併到表單
-      setLabParsed(parsed);
-      setLabForm(prev=>({
-        ...prev,
-        date:parsed.date||prev.date,
-        hospital:parsed.hospital||prev.hospital,
-      }));
-      setLabStep("confirm");
-    }catch(e){
-      if(e.message==="NO_API_KEY"){
-        showToast("⚠️ 請先在設定Tab輸入API金鑰");
-        setTab("setting");
-      }else if(e.message.includes("401")){
-        showToast("❌ API金鑰無效，請至設定Tab重新輸入");
-        setTab("setting");
-      }else if(e.message.includes("429")){
-        showToast("❌ API使用量超限，請稍後再試");
-      }else{
-        showToast("❌ 解析失敗："+e.message);
-      }
-      setLabStep("input");
-    }
-  };
-
-    // 確認儲存抽血報告
-  const saveLabReport=async()=>{
-    if(!labForm.hospital){showToast("⚠️ 請輸入醫院名稱");return;}
-    setLabStep("saving");
-    // 合併所有資料：labParsed（AI解析）+ labForm（使用者輸入）
-    // labForm 優先覆蓋
-    const {_extraData, ...parsedClean} = labParsed;
-    const data={...parsedClean,...labForm};
-    // 合併 extra_data（保留舊值，追加新值）
-    let existingExtra = {};
-    try { existingExtra = data.extra_data ? JSON.parse(data.extra_data) : {}; } catch(e){}
-    const mergedExtra = {...existingExtra, ...(_extraData||{})};
-    if(Object.keys(mergedExtra).length > 0){
-      data.extra_data = JSON.stringify(mergedExtra);
-    }
-    // 確保基本欄位都有
-    if(!data.createdAt) data.createdAt=new Date().toISOString();
-    if(!data.id) data.id="LAB"+Date.now();
-
-    // 先更新 Sheets 欄位（確保新欄位存在）
-    await api.get("updateLabColumns");
-
-    const r=await api.post("append","lab_reports",data);
-    if(r?.success){
-      saveHospital(labForm.hospital);
-      const SKIP_COUNT_KEYS = new Set(['id','date','hospital','country','doctor','fasting','note','extra_data','source_country','createdAt','_extraData','_type','_icon','_label','_summary']);
-      const dataCount = Object.keys(data).filter(k=>
-        !SKIP_COUNT_KEYS.has(k) &&
-        data[k]!==null && data[k]!==undefined && data[k]!==""
-      ).length;
-      showToast(`✅ 抽血報告已儲存（${dataCount}筆數據）`);
-      // 自動更新抽血相關追蹤提醒
-      await autoUpdateReminder("lab", labForm.date||data.date||today());
-      setLabStep("input");
-      setLabInputText("");setLabPhotos([]);
-      setLabParsed({});setLabForm({date:"",hospital:"",country:"台灣",fasting:"空腹"});
-      loadData();
-    }else{
-      showToast("❌ 儲存失敗：" + (r?.error || "請確認網路連線和Apps Script部署"));
-      setLabStep("confirm");
-    }
-  };
-
-  const toggleTrack = (key) => {
-    setTrackItems(prev => {
-      const updated = prev.includes(key) ? prev.filter(k=>k!==key) : [...prev, key];
-      localStorage.setItem("hj_track", JSON.stringify(updated));
-      api.saveSetting("trackItems", updated); // 同步到Sheets
-      return updated;
-    });
-  };
-
-  // ── 自動更新追蹤提醒（存入記錄時觸發）────────────────
-  const autoUpdateReminder=async(recordType,recordDate)=>{
-    if(!reminders||reminders.length===0)return;
-    // 配對規則：記錄類型關鍵字 → 提醒關鍵字 + 間隔月數
-    const RULES=[
-      {recKeys:["腹部超音波","腹部CT","腹部MRI","腹超"],reminderKeys:["腹","超音波","肝臟"],months:12},
-      {recKeys:["心臟超音波","心臟CT","心臟MRI","心電圖"],reminderKeys:["心臟","心血管","心電","LAD","冠狀"],months:12},
-      {recKeys:["頸動脈超音波"],reminderKeys:["頸動脈"],months:12},
-      {recKeys:["視野檢查","右眼視野"],reminderKeys:["視野"],months:12},
-      {recKeys:["眼底攝影","眼科綜合","眼底","OCT"],reminderKeys:["眼底","眼科","視網膜","OCT"],months:12},
-      {recKeys:["大腸鏡"],reminderKeys:["大腸"],months:60},
-      {recKeys:["胃鏡"],reminderKeys:["胃鏡"],months:24},
-      {recKeys:["腦部MRI","頭部CT"],reminderKeys:["腦部","神經"],months:12},
-      {recKeys:["骨密度"],reminderKeys:["骨密度"],months:24},
-      // 抽血 → 對應多種血液相關提醒（3個月）
-      {recKeys:["lab","抽血","血液"],reminderKeys:["血液","抽血","血常規","血液常規","CBC"],months:3},
-      {recKeys:["lab","抽血","肝功能"],reminderKeys:["肝功能","肝","ALT","AST","GGT","尿酸"],months:3},
-      {recKeys:["lab","抽血","腎功能"],reminderKeys:["腎功能","腎","肌酸酐","eGFR"],months:6},
-      {recKeys:["住院摘要"],reminderKeys:["心臟科","心血管"],months:6},
-    ];
-    // 找所有符合的規則（一筆抽血可能對應多項提醒）
-    const matchedRules=RULES.filter(r=>r.recKeys.some(k=>recordType.includes(k)||recordType===k));
-    if(matchedRules.length===0)return;
-    // 收集所有符合的提醒（去重）
-    const base0=new Date(recordDate);
-    if(isNaN(base0.getTime()))return;
-    let updated=0;
-    const updatedIds=new Set();
-    const localUpdates=[];
-    for(const rule of matchedRules){
-      const matched=reminders.filter(rem=>rule.reminderKeys.some(k=>(rem.title||"").includes(k)));
-      for(const rem of matched){
-        if(updatedIds.has(rem.id))continue;
-        updatedIds.add(rem.id);
-        const base=new Date(recordDate);
-        base.setMonth(base.getMonth()+rule.months);
-        const newNextDate=`${base.getFullYear()}-${String(base.getMonth()+1).padStart(2,"0")}-${String(base.getDate()).padStart(2,"0")}`;
-        const r=await api.post("updateReminder","reminders",
-          {id:rem.id,lastDate:recordDate,nextDate:newNextDate});
-        if(r?.success){updated++;localUpdates.push({id:rem.id,lastDate:recordDate,nextDate:newNextDate});}
-      }
-    }
-    if(updated>0){
-      // 立即更新本地state（靜默，不顯示Toast）
-      setReminders(prev=>prev.map(rem=>{
-        const u=localUpdates.find(x=>x.id===rem.id);
-        return u?{...rem,lastDate:u.lastDate,nextDate:u.nextDate}:rem;
-      }));
-    }
-    return;
-  };
-
-  const saveImaging = async () => {
-    if (!imagingForm.hospital) { showToast("⚠️ 請輸入醫院名稱"); return; }
-    if (!imagingForm.finding) { showToast("⚠️ 請輸入報告結論"); return; }
-    const r = await api.post("append", "imaging", {
-      date: imagingForm.date,
-      type: imagingForm.type,
-      hospital: imagingForm.hospital,
-      country: imagingForm.country,
-      finding: imagingForm.finding,
-      recommendation: imagingForm.recommendation,
-      nextDate: imagingForm.nextDate,
-      driveUrl: imagingPhotos.join(","),
-      note: imagingForm.note,
-    });
-    if (r?.success) {
-      showToast("✅ 影像檢查記錄已儲存");
-      saveHospital(imagingForm.hospital);
-      // 自動更新追蹤提醒
-      await autoUpdateReminder(imagingForm.type, imagingForm.date);
-      setImagingForm({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
-      setImagingPhotos([]);
-      loadData();
-    } else showToast("❌ 儲存失敗");
-  };
-
-  const updateImaging = async () => {
-    if (!editImaging) return;
-    if (!editImaging.hospital) { showToast("⚠️ 請輸入醫院名稱"); return; }
-    if (!editImaging.finding) { showToast("⚠️ 請輸入報告結論"); return; }
-    const r = await api.post("update", "imaging", {
-      id: editImaging.id,
-      date: editImaging.date,
-      type: editImaging.type,
-      hospital: editImaging.hospital,
-      country: editImaging.country,
-      finding: editImaging.finding,
-      recommendation: editImaging.recommendation,
-      nextDate: editImaging.nextDate,
-      driveUrl: editImaging.driveUrl||"",
-      note: editImaging.note||"",
-    });
-    if (r?.success) {
-      showToast("✅ 記錄已更新");
-      setEditImaging(null);
-      loadData();
-    } else showToast("❌ 更新失敗，請確認GAS有update功能");
-  };
-
-  const updateReminderDate=(id,lastDate)=>{
-    setReminders(prev=>{
-      const updated=prev.map(r=>{
-        if(r.id!==id)return r;
-        const next=new Date(lastDate);
-        next.setDate(next.getDate()+r.intervalDays);
-        return{...r,lastDate,nextDate:next.toISOString().split("T")[0]};
-      });
-      localStorage.setItem("hj_reminders",JSON.stringify(updated));
-      api.saveSetting("reminders", updated); // 同步到Sheets
-      return updated;
-    });
-    showToast("✅ 提醒已更新並同步到雲端");setEditReminder(null);
-  };
-
-  // 2025/03住院追蹤套組（一鍵建立）
-  const addHospitalFollowups=()=>{
-    const PACK=[
-      {id:"HF01",title:"心臟科追蹤（髂動脈瘤+LAD1狹窄）",icon:"🫀",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-09-19"},
-      {id:"HF02",title:"右眼視野複查",icon:"👁️",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-07-19"},
-      {id:"HF03",title:"眼底追蹤+OCT（視網膜退化）",icon:"👁️",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-09-19"},
-      {id:"HF04",title:"腹部超音波（脂肪肝G2+腎囊腫）",icon:"🔬",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-09-19"},
-      {id:"HF05",title:"血液常規（WBC+血小板追蹤）",icon:"🩸",intervalDays:90,lastDate:"2025-03-19",nextDate:"2025-06-19"},
-      {id:"HF06",title:"肝功能ALT+尿酸追蹤",icon:"🫁",intervalDays:90,lastDate:"2025-03-19",nextDate:"2025-06-19"},
-    ];
-    setReminders(prev=>{
-      const existIds=new Set(prev.map(r=>r.id));
-      const toAdd=PACK.filter(p=>!existIds.has(p.id));
-      if(toAdd.length===0){showToast("✅ 追蹤套組已存在，無需重複建立");return prev;}
-      const updated=[...prev,...toAdd];
-      localStorage.setItem("hj_reminders",JSON.stringify(updated));
-      api.saveSetting("reminders",updated);
-      showToast(`✅ 已建立 ${toAdd.length} 項住院追蹤提醒`);
-      return updated;
-    });
-  };
-
-  const latestGlucose=glucoseHistory.length>0?glucoseHistory[glucoseHistory.length-1]:null;
-  const latestBP=bpHistory.length>0?bpHistory[bpHistory.length-1]:null;
-  const latestWeight=weightHistory.length>0?weightHistory[weightHistory.length-1]:null;
-  const latestLab=labHistory.length>0?labHistory[labHistory.length-1]:null;
-  const overdueReminders=reminders.filter(r=>new Date(r.nextDate)<=new Date());
-
-
-
-// ── 檢驗項目說明資料庫 ────────────────────────────────
-const LAB_INFO = {
-  hba1c: {
-    name:"HbA1c（糖化血色素）",
-    desc:"反映過去2-3個月的平均血糖水平，是糖尿病診斷和控制的重要指標。",
-    range:"正常 <5.7%　糖尿病前期 5.7-6.4%　糖尿病 ≥6.5%",
-    meaning:"數值越高代表長期血糖控制越差，與心血管、腎臟、視網膜等併發症風險相關。",
-    improve:"減少精緻澱粉和甜食、規律運動、維持體重、睡眠充足",
-    related:"與空腹血糖、體重、三酸甘油酯密切相關",
-  },
-  glucose_ac: {
-    name:"空腹血糖（Fasting Glucose）",
-    desc:"禁食8小時後測量的血糖值，反映身體基礎血糖調節能力。",
-    range:"正常 70-99 mg/dL　前期 100-125　糖尿病 ≥126",
-    meaning:"空腹血糖偏高代表胰島素阻抗或胰臟功能下降，是T2D最早期指標之一。",
-    improve:"規律運動、減重、低GI飲食、避免睡前進食",
-    related:"與HbA1c、體重、三酸甘油酯、HDL相關",
-  },
-  alt: {
-    name:"ALT（丙胺酸轉胺酶）",
-    desc:"主要存在於肝細胞中，肝細胞受損時釋放入血液，是最敏感的肝功能指標。",
-    range:"正常 男性 <44 U/L　女性 <32 U/L",
-    meaning:"升高常見於脂肪肝、病毒性肝炎、藥物影響、過度飲酒。輕度升高（1-3倍）需追蹤。",
-    improve:"減重（尤其腹部脂肪）、戒酒、避免不必要藥物、規律運動",
-    related:"與體重、血脂、GGT密切相關",
-  },
-  ast: {
-    name:"AST（天門冬胺酸轉胺酶）",
-    desc:"存在於肝臟、心臟、肌肉中，比ALT更廣泛，特異性較低。",
-    range:"正常 <40 U/L",
-    meaning:"AST/ALT比值>2可能提示酒精性肝病。運動後AST也可能上升。",
-    improve:"同ALT改善方法",
-    related:"與ALT、CK、LDH相關",
-  },
-  hdl: {
-    name:"HDL-C（高密度脂蛋白）",
-    desc:"俗稱「好的膽固醇」，負責將血管中多餘膽固醇運回肝臟代謝清除。",
-    range:"正常 男性 >40 mg/dL　女性 >50 mg/dL",
-    meaning:"HDL越高越好，偏低代表心血管保護力不足，與T2D、代謝症候群相關。",
-    improve:"有氧運動（最有效）、戒菸、減少反式脂肪、適量飲酒（若無禁忌）",
-    related:"與三酸甘油酯呈反比，與體重、運動量相關",
-  },
-  ldl: {
-    name:"LDL-C（低密度脂蛋白）",
-    desc:"俗稱「壞的膽固醇」，過多時會沉積在血管壁形成動脈硬化斑塊。",
-    range:"正常 <130 mg/dL　T2D患者建議 <100 mg/dL",
-    meaning:"LDL偏高是心肌梗塞、腦中風的主要危險因子，T2D患者需嚴格控制。",
-    improve:"減少飽和脂肪和膽固醇、增加纖維攝取、規律運動",
-    related:"與總膽固醇、飲食脂肪攝取相關",
-  },
-  tg: {
-    name:"三酸甘油酯（Triglyceride）",
-    desc:"血液中最主要的脂肪形式，由飲食攝取或肝臟合成，儲存在脂肪細胞中。",
-    range:"正常 <150 mg/dL　邊緣 150-199　偏高 200-499",
-    meaning:"偏高與精緻糖、酒精攝取過多、肥胖、T2D密切相關，增加心血管風險。",
-    improve:"減少精緻糖和酒精、減重、增加omega-3攝取（魚油）",
-    related:"與HDL呈反比，與血糖、體重密切相關",
-  },
-  cholesterol: {
-    name:"總膽固醇（Total Cholesterol）",
-    desc:"血液中所有膽固醇的總和，包含HDL、LDL和其他成分。",
-    range:"正常 <200 mg/dL　邊緣 200-239　偏高 ≥240",
-    meaning:"需配合HDL/LDL比例分析，單純總膽固醇高不一定危險。",
-    improve:"均衡飲食、規律運動",
-    related:"HDL+LDL+其他脂蛋白的總和",
-  },
-  uric_acid: {
-    name:"尿酸（Uric Acid）",
-    desc:"嘌呤代謝的最終產物，由腎臟排出，過高會沉積在關節形成痛風。",
-    range:"正常 男性 3.4-7.6 mg/dL　女性 2.3-6.6",
-    meaning:"偏高與痛風、腎結石、代謝症候群、心血管疾病風險相關。",
-    improve:"多喝水（每天2L以上）、減少紅肉/海鮮/啤酒、減重",
-    related:"與腎功能、體重、飲食習慣相關",
-  },
-  creatinine: {
-    name:"肌酸酐（Creatinine）",
-    desc:"肌肉代謝產物，幾乎完全由腎臟過濾排出，是腎功能的重要指標。",
-    range:"正常 男性 0.7-1.3 mg/dL　女性 0.6-1.1",
-    meaning:"升高代表腎臟過濾功能下降，需配合eGFR一起判斷。",
-    improve:"多喝水、控制血糖血壓（T2D腎臟保護最重要）、避免腎毒性藥物",
-    related:"與eGFR、BUN、UPCR共同評估腎功能",
-  },
-  gfr: {
-    name:"eGFR（估算腎絲球過濾率）",
-    desc:"估算腎臟每分鐘能過濾多少血液，是腎功能最直接的評估指標。",
-    range:"正常 ≥60 mL/min/1.73m²　CKD分期依數值而定",
-    meaning:"數值越低代表腎功能越差，<60持續3個月以上為慢性腎臟病。",
-    improve:"控制血糖、血壓、體重，避免NSAID類止痛藥",
-    related:"與肌酸酐、UPCR、血壓、血糖密切相關",
-  },
-  upcr: {
-    name:"UPCR（尿液蛋白/肌酸酐比值）",
-    desc:"偵測尿液中是否有異常蛋白質，是糖尿病腎病變最早期的敏感指標。",
-    range:"正常 <30 mg/g　微量蛋白尿 30-300　顯性蛋白尿 >300",
-    meaning:"T2D患者UPCR偏高是腎臟早期損傷的警訊，需積極控制血糖血壓。",
-    improve:"嚴格控制血糖（HbA1c<7%）、血壓（<130/80）、ACEI/ARB藥物",
-    related:"與HbA1c、血壓、eGFR密切相關",
-  },
-  tsh: {
-    name:"TSH（甲狀腺促素）",
-    desc:"腦下垂體分泌的激素，調控甲狀腺功能，是甲狀腺疾病的第一線篩檢。",
-    range:"正常 0.34-5.60 uIU/mL",
-    meaning:"偏高=甲狀腺功能低下（疲倦、體重增加）；偏低=甲亢（心跳快、消瘦）。",
-    improve:"甲狀腺疾病需醫師治療，不能自行處理",
-    related:"T2D患者甲狀腺疾病風險較高，建議每年追蹤",
-  },
-  crp: {
-    name:"CRP（C反應蛋白）",
-    desc:"肝臟在急性發炎、感染、組織損傷時大量分泌的蛋白質，是發炎指標。",
-    range:"正常 <1.0 mg/L　輕度發炎 1-3　中度 3-10",
-    meaning:"慢性低度發炎（CRP 1-3）與T2D、心血管疾病、代謝症候群密切相關。",
-    improve:"規律運動、減重、地中海飲食、充足睡眠、戒菸",
-    related:"與血糖、血脂、體重、生活習慣相關",
-  },
-  ggt: {
-    name:"GGT（麩胺轉移酶）",
-    desc:"存在於肝臟、膽管、腎臟中，對脂肪肝和酒精性肝病特別敏感。",
-    range:"正常 男性 <60 U/L　女性 <45 U/L",
-    meaning:"GGT是脂肪肝最敏感的指標之一，飲酒後特別顯著升高。",
-    improve:"戒酒、減重（減少腹部脂肪）、規律運動",
-    related:"與ALT、體重、脂肪肝、飲酒習慣相關",
-  },
-  bun: {
-    name:"BUN（血中尿素氮）",
-    desc:"蛋白質代謝產物，由腎臟排出，反映腎功能和蛋白質攝取量。",
-    range:"正常 7-23 mg/dL",
-    meaning:"偏高可能是腎功能下降或高蛋白飲食；偏低可能是蛋白質攝取不足。",
-    improve:"適量蛋白質攝取、多喝水、控制血糖血壓",
-    related:"與肌酸酐、eGFR共同評估腎功能",
-  },
-  hb: {
-    name:"血紅素 Hb（Hemoglobin）",
-    desc:"紅血球中攜帶氧氣的蛋白質，反映貧血狀態。",
-    range:"正常 男性 13.7-17.0 g/dL",
-    meaning:"偏低代表貧血，可能影響疲勞感和運動能力；與T2D腎臟病變相關。",
-    improve:"補充鐵質、維生素B12、葉酸，治療潛在疾病",
-    related:"與RBC、HCT、MCV相關",
-  },
-  wbc: {
-    name:"WBC（白血球）",
-    desc:"免疫系統的主要細胞，負責對抗感染和異物。",
-    range:"正常 3.6-11.2 x10³/uL",
-    meaning:"偏高可能是感染、發炎、壓力；偏低可能是免疫抑制或骨髓問題。",
-    improve:"維持規律作息、均衡飲食、避免過度疲勞",
-    related:"與CRP、感染狀態相關",
-  },
-  platelet: {
-    name:"血小板（Platelet）",
-    desc:"負責血液凝固和止血的小細胞片段。",
-    range:"正常 130-400 x10³/uL",
-    meaning:"偏低增加出血風險；偏高增加血栓風險。T2D患者血小板功能常有異常。",
-    improve:"均衡飲食、避免NSAID類藥物（影響血小板功能）",
-    related:"與凝血功能、肝功能相關",
-  },
-};
-
-// ── 趨勢分析函數 ──────────────────────────────────────
-const analyzeTrend = (key, data) => {
-  if (!data || data.length < 2) return null;
-  const s = LAB_STATUS[key];
-  if (!s) return null;
-  const last = data[data.length-1]?.v;
-  const prev = data[data.length-2]?.v;
-  const first = data[0]?.v;
-  if (last===undefined || prev===undefined) return null;
-  const lastStatus = getStatus(key, last);
-  const prevStatus = getStatus(key, prev);
-  const diff = last - prev;
-  const diffPct = prev !== 0 ? ((diff/prev)*100).toFixed(1) : 0;
-  const isReverse = s.reverse; // HDL/eGFR 等越高越好
-
-  // 趨勢方向（以狀態變化為主，不只看數值方向）
-  let direction, color, icon, message;
-
-  if (Math.abs(diffPct) < 3) {
-    // 變化 < 3% 視為持平
-    direction = "stable";
-    icon = "→";
-    color = C.textMuted;
-    message = "穩定";
-  } else if (lastStatus === "ok" && prevStatus === "ok") {
-    // 兩次都正常：正常波動，不算惡化也不算改善
-    direction = "stable";
-    icon = "→";
-    color = C.textMuted;
-    message = "正常範圍內波動";
-  } else if (
-    (lastStatus === "warn" || lastStatus === "alert") &&
-    (prevStatus === "ok" || (prevStatus === "warn" && lastStatus === "alert"))
-  ) {
-    // 狀態變差：ok→warn 或 warn→alert
-    direction = "worse";
-    icon = lastStatus === "alert" ? "🔴" : "⚠️";
-    color = lastStatus === "alert" ? C.red : C.amber;
-    message = `偏高 ${Math.abs(diffPct)}%`;
-  } else if (
-    lastStatus === "ok" &&
-    (prevStatus === "warn" || prevStatus === "alert")
-  ) {
-    // 狀態改善：warn/alert→ok
-    direction = "better";
-    icon = "✅";
-    color = C.green;
-    message = `回到正常範圍`;
-  } else if ((!isReverse && diff > 0) || (isReverse && diff < 0)) {
-    // 同狀態內數值惡化方向（如 warn 內繼續升高）
-    direction = "worse";
-    icon = "▲";
-    color = lastStatus === "alert" ? C.red : C.amber;
-    message = `持續上升 ${Math.abs(diffPct)}%`;
-  } else {
-    // 同狀態內數值改善方向
-    direction = "better";
-    icon = lastStatus === "ok" ? "✅" : "▼";
-    color = lastStatus === "ok" ? C.green : C.amber;
-    message = `下降 ${Math.abs(diffPct)}%`;
-  }
-
-  // 建議文字
-  const suggestions = {
-    hba1c: {worse:"減少精緻澱粉、增加運動", better:"繼續維持良好飲食習慣", stable:"維持目前生活方式"},
-    glucose_ac: {worse:"注意睡前飲食、減少甜食", better:"血糖控制改善中", stable:"維持空腹規律"},
-    alt: {worse:"注意飲酒、避免油膩食物", better:"肝功能改善中", stable:"定期追蹤"},
-    hdl: {worse:"增加有氧運動、減少反式脂肪", better:"好膽固醇上升中", stable:"持續運動維持"},
-    ldl: {worse:"減少飽和脂肪、增加纖維攝取", better:"壞膽固醇下降中", stable:"定期追蹤"},
-    tg: {worse:"減少精緻糖和酒精", better:"三酸甘油酯改善中", stable:"定期追蹤"},
-    uric_acid: {worse:"多喝水、減少紅肉和海鮮", better:"尿酸下降中", stable:"定期追蹤"},
-    creatinine: {worse:"注意腎臟健康、多補充水分", better:"腎功能指標改善", stable:"定期追蹤"},
-    upcr: {worse:"注意腎臟早期病變", better:"蛋白尿指標改善", stable:"定期追蹤"},
-    crp: {worse:"注意發炎來源、改善生活習慣", better:"發炎指標下降", stable:"定期追蹤"},
-    ggt: {worse:"注意脂肪肝或飲酒影響", better:"肝膽指標改善", stable:"定期追蹤"},
-    ck: {worse:"避免過度激烈運動", better:"肌肉壓力減少", stable:"定期追蹤"},
-    bun: {worse:"注意腎功能或蛋白質攝取", better:"腎功能指標改善", stable:"定期追蹤"},
-    na: {worse:"注意電解質平衡", better:"鈉值趨於正常", stable:"維持均衡飲食"},
-    k: {worse:"注意電解質平衡", better:"鉀值趨於正常", stable:"維持均衡飲食"},
-    mg: {worse:"考慮補充鎂", better:"鎂值改善", stable:"維持均衡飲食"},
-    ca: {worse:"注意鈣質攝取", better:"鈣值改善", stable:"維持均衡飲食"},
-  };
-
-  const suggest = suggestions[key]?.[direction] || "定期追蹤";
-
-  // 近幾次數值
-  const recent = data.slice(-3).map(d => d.v);
-
-  return { direction, icon, color, message, suggest, recent, last, lastStatus, diffPct };
-};
-
-  // ── 折線圖 ─────────────────────────────────────────────
-  // 顏色規則：綠色=正常 紅色=超標 黃色=規格線
-  const LineChart=({datasets,min=0,max=200,refLines=[],height=120,statusKey=null})=>{
+// ═══ LineChart（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
+const LineChart=({datasets,min=0,max=200,refLines=[],height=120,statusKey=null})=>{
     const hasData=datasets&&datasets.some(d=>d.data.length>0);
     if(!hasData)return<div className="empty-state">📊 尚無資料<br/>請先記錄數值</div>;
     const W=320,H=height,P=26;
@@ -2378,8 +1221,8 @@ const analyzeTrend = (key, data) => {
     );
   };
 
-  // ── 抽血報告輸入 Tab ──────────────────────────────────
-  const LabReportTab=()=>{
+// ═══ LabReportTab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
+const LabReportTab=({hj})=>{ const{apiKey,handlePhotoChange,hospitalList,labForm,labInputText,labParsed,labPhotos,labStep,parseLabText,photoInputRef,saveLabReport,setApiKey,setLabForm,setLabInputText,setLabParsed,setLabPhotos,setLabStep,setShowPhotoWarning,showToast}=hj;
     // Step 1: 輸入
     if(labStep==="input")return(
       <div>
@@ -2388,9 +1231,9 @@ const analyzeTrend = (key, data) => {
         {/* API Key */}
         {!apiKey&&(
           <div className="card" style={{marginBottom:12,border:`1px solid ${C.amber}44`}}>
-            <div style={{fontSize:12,color:C.amber,marginBottom:8}}>⚠️ 需要 Claude API 金鑰才能解析報告</div>
+            <div style={{fontSize:12,color:C.amber,marginBottom:8}}>⚠️ 需要 Gemini API 金鑰才能解析報告</div>
             <div style={{fontSize:11,color:C.textMuted,marginBottom:8}}>前往「設定」Tab 輸入金鑰，或直接在下方輸入：</div>
-            <input className="input-field" type="password" placeholder="sk-ant-..." value={apiKey}
+            <input className="input-field" type="password" placeholder="AQ. 或 AIza 開頭金鑰" value={apiKey}
               onChange={e=>setApiKey(e.target.value)} style={{marginBottom:8}}/>
             <button className="btn-primary" onClick={()=>{if(apiKey){localStorage.setItem("hj_apikey",apiKey);showToast("✅ API金鑰已儲存");}else{showToast("⚠️請先輸入金鑰");}}}>儲存金鑰</button>
           </div>
@@ -2644,8 +1487,8 @@ const analyzeTrend = (key, data) => {
     );
   };
 
-  // ── 首頁 ───────────────────────────────────────────────
-  const HomeTab=()=>(
+// ═══ HomeTab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
+const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHistory,dailyGreeting,detectHealthAlerts,editReminder,exerciseLog,generateDailyGreeting,generateOverallReport,glucoseHistory,greetingLoading,imagingHistory,isOnline,labHistory,lastSync,latestLab,loading,overallDate,overallLoading,overallReport,overdueReminders,reminders,setDailyGreeting,setEditReminder,setExerciseLog,setKbTab,setRecordTab,setSelectedKnowledge,setShowOverdue,setTab,setTrendItem,showOverdue,showToast,syncStatus,updateReminderDate,weightHistory}=hj; return(
     <div className="fade-in" style={{padding:"16px 16px 80px"}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,position:"relative"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -3325,10 +2168,10 @@ const analyzeTrend = (key, data) => {
         );
       })()}
     </div>
-  );
+  );};
 
-  // ── 趨勢 ───────────────────────────────────────────────
-  const TrendTab=()=>{
+// ═══ TrendTab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
+const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHistory,labHistory,setRecordTab,setShowTrackPicker,setTab,setTrackItems,setTrendAiKey,setTrendAiLoading,setTrendAiResult,setTrendItem,showToast,showTrackPicker,toggleTrack,trackItems,trendAiKey,trendAiLoading,trendAiResult,trendItem,weightHistory}=hj;
     const BTNS=[{key:"overview",label:"📊總覽"},{key:"radar",label:"雷達"},{key:"organ",label:"🫀器官"},{key:"glucose",label:"血糖"},{key:"bp",label:"血壓"},{key:"weight",label:"體重"},{key:"lab",label:"抽血指標"}];
     const gDaily=glucoseHistory.filter(r=>r.source!=="醫院").map(r=>({date:r.date,v:parseFloat(r.value_mgdl)}));
     const gHosp=glucoseHistory.filter(r=>r.source==="醫院").map(r=>({date:r.date,v:parseFloat(r.value_mgdl)}));
@@ -3854,7 +2697,7 @@ const analyzeTrend = (key, data) => {
 指標：${s.label}（正常範圍：${s.low||0}-${s.warn} ${s.unit}）
 近期數值：${recentData}
 請給出：1.趨勢評估 2.一個具體行動建議。不超過60字。`;
-                                    const result=await callClaude([{role:"user",content:prompt}],300);
+                                    const result=await callAI([{role:"user",content:prompt}],300);
                                     setTrendAiResult(p=>({...p,[key]:result}));
                                   }catch(e){
                                     showToast("❌ AI分析失敗："+e.message);
@@ -3879,10 +2722,8 @@ const analyzeTrend = (key, data) => {
     );
   };
 
-
-
-  // ── 歷史記錄 Tab ──────────────────────────────────────
-  const HistoryTab = () => {
+// ═══ HistoryTab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
+const HistoryTab=({hj})=>{ const{imagingHistory,labHistory,lightboxUrl,loadData,loading,setEditImaging,setLightboxUrl,showToast}=hj;
     const [delConfirm, setDelConfirm] = useState(null);
     const [deleting, setDeleting] = useState(false);
     const [expanded, setExpanded] = useState(null);
@@ -4290,8 +3131,8 @@ const analyzeTrend = (key, data) => {
     );
   };
 
-  // ── 飲食記錄 Tab ──────────────────────────────────────
-  const MealTab = () => {
+// ═══ MealTab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
+const MealTab=({hj})=>{ const{setTab,showToast}=hj;
     const [mealType, setMealType] = useState("午餐");
     const [mealText, setMealText] = useState("");
     const [mealPhoto, setMealPhoto] = useState(null);
@@ -4346,7 +3187,7 @@ const analyzeTrend = (key, data) => {
   },
   "personal_tip": "針對你的脂肪肝+HDL偏低+糖尿病前期的個人化建議（30字內）"
 }`});
-        const result = await callClaude([{role:"user", content}], 800);
+        const result = await callAI([{role:"user", content}], 800);
         const clean = result.replace(/```json|```/g,"").trim();
         const parsed = JSON.parse(clean.slice(clean.indexOf("{"), clean.lastIndexOf("}")+1));
         setMealAnalysis(parsed);
@@ -4477,8 +3318,8 @@ const analyzeTrend = (key, data) => {
     );
   };
 
-  // ── 記錄 ───────────────────────────────────────────────
-  const RecordTab=()=>{
+// ═══ RecordTab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
+const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,editSleepRecord,emptySleepForm,glucoseForm,hospitalList,imagingForm,imagingPhotoRef,imagingPhotos,recordTab,saveBP,saveGlucose,saveImaging,saveWeight,setBpForm,setEditBPRecord,setEditSleepRecord,setGlucoseForm,setImagingForm,setImagingPhotos,setRecordTab,setShowSleepPaste,setSleepAnalysis,setSleepAnalyzing,setSleepForm,setSleepLog,setSleepPasteText,setWeightForm,showSleepPaste,showToast,sleepAnalysis,sleepAnalyzing,sleepForm,sleepLog,sleepPasteText,updateBP,weightForm,weightHistory}=hj;
     const SUBS=[{key:"history",label:"📂歷史"},{key:"glucose",label:"🩸血糖"},{key:"bp",label:"💓血壓"},{key:"weight",label:"⚖️體重"},{key:"lab",label:"📋抽血"},{key:"imaging",label:"🔬影像"},{key:"meal",label:"🍱飲食"},{key:"exercise",label:"🏃運動"},{key:"sleep",label:"😴睡眠"}];
     return(
       <div className="fade-in" style={{padding:"16px 16px 80px"}}>
@@ -4493,7 +3334,7 @@ const analyzeTrend = (key, data) => {
         </div>
 
         {recordTab==="history"&&(
-          <HistoryTab/>
+          <HistoryTab hj={hj}/>
         )}
 
         {recordTab==="glucose"&&(
@@ -4711,10 +3552,10 @@ const analyzeTrend = (key, data) => {
           );
         })()}
 
-        {recordTab==="lab"&&<LabReportTab/>}
+        {recordTab==="lab"&&<LabReportTab hj={hj}/>}
 
         {recordTab==="meal"&&(
-          <MealTab/>
+          <MealTab hj={hj}/>
         )}
 
         {recordTab==="imaging"&&(
@@ -4923,7 +3764,7 @@ ${weekData||"尚無記錄"}
 三、對身體的具體影響（結合你的血糖/血壓/荷爾蒙狀況）
 四、本週三個改善行動（具體可執行）
 五、長期追蹤目標（何時深層睡眠能達到18%）`;
-              const result=await callClaude([{role:"user",content:prompt}],1200);
+              const result=await callAI([{role:"user",content:prompt}],1200);
               setSleepAnalysis(result);
             }catch(e){showToast("❌ "+e.message);}
             setSleepAnalyzing(false);
@@ -5409,346 +4250,8 @@ REM（分鐘）：
     );
   };
 
-  // ── AI分析 ─────────────────────────────────────────────
-  const generateAIReport=async()=>{
-    const key=localStorage.getItem("hj_apikey")||apiKey||"";
-    if(!key){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");return;}
-    setAiLoading(true);
-    try{
-      showToast("⏳ 連接中，約20秒...");
-      // 近7日血壓均值
-      const recentBP7=[...bpHistory].slice(-7);
-      const avgSys7=recentBP7.length>0?Math.round(recentBP7.reduce((s,r)=>s+parseInt(r.systolic||0),0)/recentBP7.length):null;
-      const avgDia7=recentBP7.length>0?Math.round(recentBP7.reduce((s,r)=>s+parseInt(r.diastolic||0),0)/recentBP7.length):null;
-      // 打卡率
-      const exHit7=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}).filter(ds=>exerciseLog.some(r=>normalizeDate(r.date)===ds)).length;
-      // 雷達分數
-      const radar=computeRadarScores(latestLab,bpHistory);
-      const radarStr=radar?radar.filter(d=>d.score!=null).map(d=>`${d.label.split("\n")[0]}:${d.score}`).join("、"):"無資料";
-      // 最近體重
-      const latestWt=weightHistory.length>0?weightHistory[weightHistory.length-1]:null;
-      // 前次抽血對比
-      const prevLab=labHistory.length>1?labHistory[labHistory.length-2]:null;
-      const hba1cTrend=prevLab&&latestLab?`${prevLab.hba1c}%→${latestLab.hba1c}%`:`${latestLab?.hba1c||"—"}%`;
-      const hdlTrend=prevLab&&latestLab?`${prevLab.hdl}→${latestLab.hdl}`:`${latestLab?.hdl||"—"}`;
-      const prompt=`你是私人健康顧問，請用繁體中文產生本週健康週報，格式如下：
-
-【本週健康週報】
-
-一、本週總評（2-3句，依數據給出整體評價）
-
-二、數據重點
-・血糖控制：HbA1c ${hba1cTrend}，空腹血糖 ${latestGlucose?.value_mgdl||"—"} mg/dL
-・血壓均值（近7筆）：${avgSys7?`${avgSys7}/${avgDia7} mmHg`:"尚無數據"}
-・血脂 HDL：${hdlTrend} mg/dL（目標>40）
-・肝功能：ALT ${latestLab?.alt||"—"} / GGT ${latestLab?.ggt||"—"}
-・體重：${latestWt?latestWt.value_kg+" kg":"尚無記錄"}
-
-三、健康雷達本週分數
-${radarStr}
-（指出最弱面向並給1句改善建議）
-
-四、本週行為達成
-・運動打卡：${exHit7}/7天
-（依達成率給予鼓勵或提醒）
-
-五、本週三大行動建議（具體可執行，針對你的弱項）
-
-六、一句鼓勵（有溫度，結合55歲在越南工作的背景）
-
-病患背景：55歲台灣男性，越南工作，父親T2D家族史
-已確診問題（2025/03/19海防國際醫院住院確診）：
-- 糖尿病前期：HbA1c ${latestLab?.hba1c||5.7}%
-- 脂肪肝 Grade II：ALT ${latestLab?.alt||63}偏高
-- HDL偏低：${latestLab?.hdl||35} mg/dL
-- 高尿酸血症：尿酸 ${latestLab?.uric_acid||7.95} mg/dL
-- 高血壓：血壓130/90，服用舒脈康5/40
-- 雙側髂總動脈瘤（Bilateral common iliac artery aneurysm）
-- 左前降支LAD1冠狀動脈35%狹窄（輕度）
-- 頸動脈輕度動脈粥樣硬化
-- 右眼視野輕度異常（需追蹤）
-- 視網膜退行性變化+黃斑部亮度差（需補充葉黃素）
-- 左側眼瞼反射R1傳導異常（眼皮已不跳）
-- WBC 3.9/PLT 145偏低
-目前用藥：舒脈康5/40（2天1次晚上）、平脂4mg（每天晚上）、保栓通75mg（每天晚上）、DHA+EPA 6粒（晚餐後）、EX NEO維他命2錠（早餐後）、強力若元9粒（早上）
-保健品：橄欖油5ml+堅果奶昔（含核桃/杏仁/南瓜子/奇亞籽/亞麻籽/燕麥/薑黃+胡椒/甜菜根粉/無糖可可）、午後黑咖啡300cc+黑巧克力85%、晚上希臘酸奶200g+奇異果（含皮）
-不要用markdown符號或*號`;
-      const result=await callClaude([{role:"user",content:prompt}]);
-      setAiReport(result||"分析失敗");
-      const todayStr=new Date().toISOString().split("T")[0];
-      setAiReportDate(todayStr);
-      localStorage.setItem("hj_weekly_cache",JSON.stringify({date:todayStr,report:result}));
-    }catch(e){
-      if(e.message==="NO_API_KEY"){
-        showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");
-      }else if(e.message.includes("401")){
-        showToast("❌ API金鑰無效");setAiReport("❌ API金鑰無效");setTab("setting");
-      }else if(e.message.includes("429")){
-        showToast("❌ API使用量超限，請稍後再試");setAiReport("❌ API使用量超限");
-      }else{
-        setAiReport("❌ 分析失敗："+e.message);showToast("❌ AI分析失敗："+e.message);
-      }
-    }
-    setAiLoading(false);
-  };
-
-  // ── 階段四：異常/矛盾自動標記引擎 ───────────────────
-  const detectHealthAlerts=()=>{
-    const alerts=[];
-    const sorted=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
-    // 規則1：指標連續惡化（最近3次同方向）
-    const checkTrend=(key,label,dir,unit="")=>{
-      const series=sorted.filter(r=>r[key]!==null&&r[key]!==undefined&&r[key]!=="")
-        .map(r=>({date:r.date,v:parseFloat(r[key])})).filter(s=>!isNaN(s.v));
-      if(series.length<3)return;
-      const last3=series.slice(-3);
-      const worsening=dir==="low"
-        ?last3[0].v<last3[1].v&&last3[1].v<last3[2].v
-        :last3[0].v>last3[1].v&&last3[1].v>last3[2].v;
-      if(worsening){
-        alerts.push({level:"warn",icon:"📈",
-          title:`${label}連續${dir==="low"?"上升":"下降"}`,
-          desc:`近3次 ${last3.map(s=>s.v).join("→")}${unit}，持續惡化，建議追蹤原因`});
-      }
-    };
-    checkTrend("alt","ALT肝指數","low");
-    checkTrend("ast","AST肝指數","low");
-    checkTrend("uric_acid","尿酸","low");
-    checkTrend("ldl","LDL膽固醇","low");
-    checkTrend("creatinine","肌酸酐","low");
-    checkTrend("hdl","HDL好膽固醇","high");
-    checkTrend("platelet","血小板","high");
-    // 規則2：最新值超過警戒線
-    const latest=sorted[sorted.length-1];
-    if(latest){
-      const checkThreshold=(key,label,bad,dir="high")=>{
-        const v=parseFloat(latest[key]);
-        if(isNaN(v))return;
-        if((dir==="high"&&v>=bad)||(dir==="low"&&v<=bad)){
-          alerts.push({level:"warn",icon:"⚠️",title:`${label}偏${dir==="high"?"高":"低"}`,
-            desc:`最新 ${v}，已${dir==="high"?"超過":"低於"}警戒值 ${bad}`});
-        }
-      };
-      checkThreshold("alt","ALT",80,"high");
-      checkThreshold("uric_acid","尿酸",8.5,"high");
-      checkThreshold("wbc","白血球",4,"low");
-      checkThreshold("platelet","血小板",150,"low");
-      checkThreshold("hba1c","HbA1c",6.5,"high");
-    }
-    // 規則3：跨指標關聯（ALT高+脂肪肝）
-    const latestAlt=latest?parseFloat(latest.alt):NaN;
-    const hasFattyLiver=imagingHistory.some(r=>(r.finding||"").includes("脂肪肝")&&(r.finding||"").includes("II"));
-    if(!isNaN(latestAlt)&&latestAlt>50&&hasFattyLiver){
-      alerts.push({level:"alert",icon:"🔴",title:"肝臟需重點關注",
-        desc:`ALT ${latestAlt}偏高 + 脂肪肝Grade II，兩者互相印證，建議控制體重+減少精緻碳水，3個月複查肝功能`});
-    }
-    // 規則4：尿酸+ALT同時偏高
-    const latestUric=latest?parseFloat(latest.uric_acid):NaN;
-    if(!isNaN(latestAlt)&&!isNaN(latestUric)&&latestAlt>50&&latestUric>7.5){
-      alerts.push({level:"warn",icon:"🔗",title:"代謝負擔警訊",
-        desc:`ALT與尿酸同時偏高，常見於代謝症候群，注意飲食控制與水分攝取`});
-    }
-    // 規則5：結構性問題矛盾標記
-    const hasLVPW=imagingHistory.some(r=>(r.finding||"").includes("LVPWd")&&(r.finding||"").includes("18"));
-    if(hasLVPW){
-      alerts.push({level:"info",icon:"📋",title:"待複評：左心室後壁",
-        desc:"LVPWd影像值18.3mm偏高但報告判正常，建議回台灣時請心臟科複評確認"});
-    }
-    return alerts;
-  };
-
-  // ── 整體健康評估（複合視角，含睡眠/行為/結構性問題）──
-  const generateOverallReport=async(silent=false)=>{
-    const key=localStorage.getItem("hj_apikey")||apiKey||"";
-    if(!key){if(!silent){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");}return;}
-    if(labHistory.length===0){if(!silent)showToast("⚠️ 尚無抽血資料可分析");return;}
-    setOverallLoading(true);
-    try{
-      if(!silent)showToast("⏳ 讀取全部歷史分析中，約30秒...");
-      // 抽血趨勢
-      const sorted=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
-      const trackKeys=[
-        {k:"hba1c",label:"HbA1c(%)"},{k:"glucose_ac",label:"空腹血糖"},
-        {k:"alt",label:"ALT"},{k:"ast",label:"AST"},{k:"ggt",label:"GGT"},
-        {k:"hdl",label:"HDL"},{k:"ldl",label:"LDL"},{k:"tg",label:"TG"},
-        {k:"uric_acid",label:"尿酸"},{k:"creatinine",label:"肌酸酐"},
-        {k:"wbc",label:"WBC"},{k:"platelet",label:"血小板"},{k:"crp",label:"CRP"},
-      ];
-      const trendLines=trackKeys.map(t=>{
-        const series=sorted.filter(r=>r[t.k]!==null&&r[t.k]!==undefined&&r[t.k]!=="")
-          .map(r=>`${String(r.date).slice(5)}:${r[t.k]}`);
-        return series.length>0?`${t.label}: ${series.join(" → ")}`:null;
-      }).filter(Boolean).join("\n");
-      // 血壓趨勢
-      const bpSorted=[...bpHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
-      const bpLine=bpSorted.length>0
-        ?`血壓: ${bpSorted.slice(-10).map(r=>`${String(r.date).slice(5)}:${r.systolic}/${r.diastolic}`).join(" → ")}`
-        :"血壓: 尚無記錄";
-      // 影像診斷摘要
-      const imgSummary=imagingHistory.length>0
-        ?imagingHistory.map(r=>`・${r.date} ${r.type}: ${(r.finding||"").slice(0,80)}`).join("\n")
-        :"無影像記錄";
-      // 睡眠近4週摘要
-      const sleepSorted=[...sleepLog].filter(r=>r.date).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
-      const sleepRecent=sleepSorted.slice(0,28);
-      const avgTotalMin=sleepRecent.length>0?Math.round(sleepRecent.reduce((s,r)=>s+(parseInt(r.total_min)||0),0)/sleepRecent.length):null;
-      const avgDeepPct=sleepRecent.length>0?Math.round(sleepRecent.reduce((s,r)=>s+(parseInt(r.deep_min)||0),0)/sleepRecent.reduce((s,r)=>s+(parseInt(r.total_min)||1),0)*100):null;
-      const avgScore=sleepRecent.length>0?Math.round(sleepRecent.reduce((s,r)=>s+(parseInt(r.score)||0),0)/sleepRecent.length):null;
-      const avgSpo2=sleepRecent.filter(r=>r.spo2_avg>0).length>0
-        ?Math.round(sleepRecent.filter(r=>r.spo2_avg>0).reduce((s,r)=>s+(parseInt(r.spo2_avg)||0),0)/sleepRecent.filter(r=>r.spo2_avg>0).length):null;
-      const spo2Below90Days=sleepRecent.filter(r=>parseFloat(r.spo2_below90_min)>10).length;
-      const sleepSummary=sleepRecent.length>0
-        ?`近${sleepRecent.length}天睡眠：平均${avgTotalMin}分鐘/晚，深層${avgDeepPct}%，評分${avgScore||"—"}，血氧平均${avgSpo2||"—"}%，血氧低於90%超過10分鐘共${spo2Below90Days}天`
-        :"無睡眠記錄";
-      // 運動近4週
-      const exSorted=[...exerciseLog].filter(r=>r.date).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
-      const exDays28=exSorted.filter(r=>{const d=new Date(r.date);return(new Date()-d)/(1000*60*60*24)<=28;}).length;
-      const exSummary=exerciseLog.length>0?`近28天運動${exDays28}天`:"無運動記錄";
-      const prompt=`你是一位資深內科主治醫師兼複合健康顧問，正在為長期追蹤的病患做整體健康評估。請從複合視角分析，不要單點看待個別指標，要找出各維度之間的因果關聯。用繁體中文，不要用markdown符號或*號。
-
-【病患基本資料】
-55歲台灣男性，越南海防工作，與家人分隔兩地，父親T2D家族史。
-
-【2025/03/19住院確診七項並發診斷】
-①高血壓（血壓130/90）
-②雙側髂總動脈瘤（結構性，需定期追蹤）
-③左前降支LAD1冠狀動脈35%狹窄（輕度）
-④肝酶升高（ALT 63.54）
-⑤高尿酸血症（7.95 mg/dL）
-⑥脂肪肝 Grade II（從G1惡化）
-⑦眼瞼肌束顫動左側（已緩解）
-附加：右眼視野輕度異常、視網膜退化+黃斑部亮度差、頸動脈輕度粥樣硬化、LVPWd 18.3mm待複評、WBC/PLT偏低
-
-【目前用藥】
-舒脈康5/40（2天1次晚）、平脂4mg（每天晚）、保栓通Plavix 75mg（每天晚）、悠樂丁2mg（偶爾睡前）
-
-【保健品與飲食習慣】
-早餐（每天固定）：堅果奶昔（核桃/杏仁/南瓜子/奇亞籽/亞麻籽/黑芝麻粉/燕麥/薑黃/甜菜根粉/無糖可可）+雞蛋2-3顆+酪梨180g+蘋果200g+香蕉1根
-午晚：公司自助餐只吃菜+蛋白質，不吃白飯；週末麵食為主（最大血糖風險）
-晚上固定：橄欖油5ml、希臘酸奶150g+藍莓50g、奇異果1顆
-DHA+EPA 6粒晚餐後、EX NEO 2錠早、強力若元9粒早
-
-【抽血核心指標歷次趨勢】
-${trendLines}
-${bpLine}
-
-【影像與結構診斷記錄】
-${imgSummary}
-
-【睡眠數據（Samsung Watch 7）】
-${sleepSummary}
-注意：悠樂丁（BZD）會抑制深層睡眠，睡眠不足直接影響血糖、血壓、HDL、荷爾蒙。
-
-【行為數據】
-${exSummary}
-
-請依以下結構分析：
-
-【整體健康評估報告】
-
-一、健康全貌
-（從複合視角總結：這7項診斷之間的核心連結是什麼？最根本的健康主軸是什麼？2-3句）
-
-二、各維度趨勢（改善↑/持平→/惡化↓）
-（抽血指標、血壓、睡眠、體重各自方向，用箭頭標示）
-
-三、複合因果關聯
-（重點找出：哪些問題互相加重？例如睡眠差→血糖控制差→脂肪肝惡化→尿酸升高的連鎖；血壓未達標→動脈瘤風險加大的關係）
-
-四、結構性問題追蹤
-（動脈瘤、LAD1狹窄、視網膜退化等不出現在抽血的問題，目前狀態與追蹤重點）
-
-五、本週需要注意的紅旗
-（2-4項最需要立即關注的複合發現，每項標明涉及哪些維度）
-
-六、下次看診/抽血重點
-（具體建議追蹤哪些指標，與哪個科別）
-
-七、一句話總結`;
-      const result=await callClaude([{role:"user",content:prompt}],2500);
-      setOverallReport(result||"分析失敗");
-      const stamp=new Date().toISOString().split("T")[0];
-      setOverallDate(stamp);
-      localStorage.setItem("hj_overall_cache",JSON.stringify({date:stamp,report:result}));
-    }catch(e){
-      if(e.message==="NO_API_KEY"){if(!silent){showToast("⚠️ 請先設定API金鑰");setTab("setting");}}
-      else if(e.message.includes("401")){if(!silent){showToast("❌ API金鑰無效");setTab("setting");}}
-      else if(e.message.includes("429")){if(!silent)showToast("❌ API使用量超限");}
-      else{setOverallReport("❌ 分析失敗："+e.message);if(!silent)showToast("❌ "+e.message);}
-    }
-    setOverallLoading(false);
-  };
-
-  // ★ v4.71 移除每週評估/每日問候自動API呼叫（v4.69規格）：改為UI內「⏰該更新了」提示+手動按鈕
-
-  // ── 載入後自動同步所有追蹤提醒日期（session只跑一次）──
-  const reminderSyncDone=React.useRef(false);
-  React.useEffect(()=>{
-    if(loading)return;
-    if(!reminders||reminders.length===0)return;
-    if(labHistory.length===0&&imagingHistory.length===0)return;
-    if(reminderSyncDone.current)return; // session內只跑一次
-    // 每天只跑一次（跨session保護）
-    const todayStr=new Date().toISOString().split("T")[0];
-    if(localStorage.getItem("hj_reminder_sync_date")===todayStr){
-      reminderSyncDone.current=true;return;
-    }
-    reminderSyncDone.current=true; // 先鎖定，防止重複
-    const SYNC=[
-      {remKeys:["肝功能","ALT","尿酸"],src:"lab",months:3},
-      {remKeys:["血液常規","血常規","WBC","血小板"],src:"lab",months:3},
-      {remKeys:["腎功能","肌酸酐","eGFR"],src:"lab",months:6},
-      {remKeys:["眼底","視網膜","OCT"],src:"img",imgKey:"眼",months:12},
-      {remKeys:["視野"],src:"img",imgKey:"視野",months:12},
-      {remKeys:["心臟科","心電圖","心血管","LAD","冠狀"],src:"img",imgKey:"心",months:12},
-      {remKeys:["腹部","超音波","脂肪肝","肝囊","腎囊"],src:"img",imgKey:"腹",months:6},
-      {remKeys:["頸動脈"],src:"img",imgKey:"頸",months:12},
-    ];
-    const latestLabDate=labHistory.length>0
-      ?[...labHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0].date:null;
-    const getLatestImgDate=(kw)=>{
-      const m=[...imagingHistory].filter(r=>(r.type||"").includes(kw)||(r.finding||"").includes(kw))
-        .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
-      return m.length>0?m[0].date:null;
-    };
-    const addMonths=(dateStr,months)=>{
-      const d=new Date(dateStr);if(isNaN(d.getTime()))return null;
-      d.setMonth(d.getMonth()+months);
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-    };
-    const updates=[];
-    for(const rem of reminders){
-      const title=rem.title||"";
-      const rule=SYNC.find(s=>s.remKeys.some(k=>title.includes(k)));
-      if(!rule)continue;
-      const srcDate=rule.src==="lab"?latestLabDate:getLatestImgDate(rule.imgKey);
-      if(!srcDate)continue;
-      if(rem.lastDate&&String(srcDate)<=String(rem.lastDate))continue;
-      const newNext=addMonths(srcDate,rule.months);
-      if(!newNext)continue;
-      updates.push({id:rem.id,lastDate:srcDate,nextDate:newNext});
-    }
-    if(updates.length===0){
-      localStorage.setItem("hj_reminder_sync_date",todayStr);
-      return;
-    }
-    (async()=>{
-      // 直接更新本地state
-      const newReminders=reminders.map(rem=>{
-        const u=updates.find(x=>x.id===rem.id);
-        return u?{...rem,lastDate:u.lastDate,nextDate:u.nextDate}:rem;
-      });
-      setReminders(newReminders);
-      // 同步寫回 user_settings（App讀取來源，直接傳陣列不需stringify）
-      try{
-        await api.saveSetting("reminders", newReminders);
-        localStorage.setItem("hj_reminders",JSON.stringify(newReminders));
-      }catch(e){console.log("reminder sync error",e);}
-      localStorage.setItem("hj_reminder_sync_date",todayStr);
-    })();
-  },[loading]);
-
-  const AITab=()=>{
+// ═══ AITab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
+const AITab=({hj})=>{ const{aiLoading,aiReport,aiReportDate,apiKey,bpHistory,generateAIReport,generateOverallReport,glucoseHistory,imagingHistory,labHistory,latestLab,overallDate,overallLoading,overallReport,setAiReport,setAiReportDate,setOverallDate,setOverallReport,setTab,showToast,sleepLog}=hj;
     const [aiQuestion,setAiQuestion]=useState("");
     const [aiAnswer,setAiAnswer]=useState(null);
     const [aiQLoading,setAiQLoading]=useState(false);
@@ -5822,7 +4325,7 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
       setAiQLoading(true);
       try{
         const ctx=`病患背景：55歲台灣男性、糖尿病前期HbA1c ${latestLab?.hba1c||5.8}%、脂肪肝G1、HDL ${latestLab?.hdl||31}偏低、血壓130/90用藥中、血小板126偏低+Plavix。請用繁體中文回答，不用markdown符號：${aiQuestion}`;
-        const result=await callClaude([{role:"user",content:ctx}]);
+        const result=await callAI([{role:"user",content:ctx}]);
         setAiAnswer(result);
       }catch(e){showToast("❌ "+e.message);}
       setAiQLoading(false);
@@ -5864,7 +4367,7 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
             <span style={{fontSize:24}}>⚙️</span>
             <div>
               <div style={{fontSize:13,fontWeight:600,color:C.amber}}>尚未設定 API 金鑰</div>
-              <div style={{fontSize:11,color:C.textMuted}}>點此前往設定 → 輸入 Claude API Key</div>
+              <div style={{fontSize:11,color:C.textMuted}}>點此前往設定 → 輸入 Gemini API Key</div>
             </div>
             <span style={{color:C.textMuted,marginLeft:"auto",fontSize:18}}>›</span>
           </div>
@@ -5969,10 +4472,69 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
     </div>
   );};
 
+// ═══ KnowledgeTab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
+// ★ v4.76 早餐/晚上營養星等一覽表（項目×身體面向，1-5星；參考評級非醫囑，依實證強度+個人弱項起草）
+const STAR_COLS=["血糖","血脂","心血管","肝臟","大腦","抗發炎","腸道"];
+const STAR_BREAKFAST=[
+  {name:"雞蛋",s:[3,0,2,3,4,0,0]},
+  {name:"青菜",s:[4,0,3,0,0,0,3]},
+  {name:"酪梨",s:[2,5,4,0,0,0,0]},
+  {name:"核桃",s:[0,4,3,0,5,0,0]},
+  {name:"杏仁",s:[0,4,3,0,0,2,0]},
+  {name:"南瓜子",s:[0,2,4,0,0,0,0]},
+  {name:"奇亞籽",s:[5,3,0,0,0,0,3]},
+  {name:"亞麻籽",s:[0,4,0,0,0,4,3]},
+  {name:"黑芝麻粉",s:[0,0,3,4,0,0,0]},
+  {name:"燕麥",s:[4,5,0,0,0,0,3]},
+  {name:"無糖可可",s:[0,0,4,0,3,0,0]},
+  {name:"薑黃",s:[2,0,0,4,0,5,0]},
+  {name:"甜菜根粉",s:[0,2,5,0,0,0,0]},
+  {name:"蘋果",s:[3,3,0,0,0,0,3]},
+  {name:"香蕉",s:[2,0,3,0,0,0,0]},
+  {name:"EX NEO",s:[4,0,0,0,3,0,0]},
+  {name:"若元",s:[2,0,0,0,0,0,5]},
+];
+const STAR_DINNER=[
+  {name:"橄欖油",s:[0,4,0,5,0,4,0]},
+  {name:"希臘酸奶",s:[3,0,0,0,0,0,4]},
+  {name:"藍莓",s:[0,0,3,0,3,4,0]},
+  {name:"奇異果",s:[0,0,3,0,0,3,3]},
+];
+const StarMatrix=({title,rows})=>(
+  <div style={{marginBottom:10}}>
+    <div style={{fontSize:12,fontWeight:700,color:C.amber,marginBottom:6}}>{title}</div>
+    <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch",border:`1px solid ${C.border}`,borderRadius:10}}>
+      <table style={{borderCollapse:"collapse",fontSize:10,minWidth:420}}>
+        <thead>
+          <tr>
+            <th style={{position:"sticky",left:0,background:C.bgCard,textAlign:"left",padding:"6px 8px",color:C.textMuted,fontWeight:600,borderBottom:`1px solid ${C.border}`,zIndex:1}}>項目</th>
+            {STAR_COLS.map(c=>(
+              <th key={c} style={{padding:"6px 4px",color:C.textMuted,fontWeight:600,borderBottom:`1px solid ${C.border}`,whiteSpace:"nowrap",background:C.bgCard}}>{c}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r,ri)=>(
+            <tr key={r.name}>
+              <td style={{position:"sticky",left:0,background:C.bgCard,padding:"5px 8px",fontWeight:600,color:C.text,whiteSpace:"nowrap",borderBottom:ri<rows.length-1?`1px solid ${C.border}55`:"none",zIndex:1}}>{r.name}</td>
+              {r.s.map((v,i)=>(
+                <td key={i} style={{padding:"5px 4px",textAlign:"center",borderBottom:ri<rows.length-1?`1px solid ${C.border}55`:"none",
+                  color:v>=4?C.green:v===3?C.text:v>0?C.textMuted:C.border,
+                  fontSize:v>0?9:10,whiteSpace:"nowrap",letterSpacing:-0.5}}>
+                  {v>0?"★".repeat(v):"–"}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+);
 
-  // ── 知識庫 ─────────────────────────────────────────────
-  const KnowledgeTab=()=>{
+const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArticle,selectedKnowledge,selectedMedicine,setCustomArticles,setKbTab,setLightboxUrl,setSelectedArticle,setSelectedKnowledge,setSelectedMedicine,setShowAddArticle,showAddArticle,showToast}=hj;
     const [kbSearch, setKbSearch] = useState("");
+    const [showStarMatrix, setShowStarMatrix] = useState(false); // ★ v4.76 星等一覽表收合
     const [openGroup, setOpenGroup] = useState(null);
     const [medSubTab, setMedSubTab] = useState("supplement");
     const [myMeds, setMyMeds] = useState(()=>{
@@ -6665,6 +5227,24 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
               <div style={{background:"rgba(46,204,138,0.06)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:12,fontSize:12,color:C.textMuted,lineHeight:1.7}}>
                 💡 依吃的順序排列 · 綠標對應雷達圖弱項 · 每天執行+定期抽血驗證效果
               </div>
+              {/* ★ v4.76 營養星等一覽表（可收合）*/}
+              <div className="card" style={{marginBottom:12}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer"}}
+                  onClick={()=>setShowStarMatrix(v=>!v)}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>⭐ 營養星等一覽表</div>
+                  <span style={{fontSize:12,color:C.textMuted}}>{showStarMatrix?"收合 ▲":"展開 ▼"}</span>
+                </div>
+                {showStarMatrix&&(
+                  <div style={{marginTop:10}}>
+                    <StarMatrix title="🍳 早餐" rows={STAR_BREAKFAST}/>
+                    <StarMatrix title="🌙 晚上" rows={STAR_DINNER}/>
+                    <div style={{fontSize:10,color:C.textMuted,lineHeight:1.6}}>
+                      ★★★★★＝強力人體實證且直接命中你的弱項 · ★★★＝實證明確 · ★＝次要幫助<br/>
+                      參考評級（依實證強度＋個人健康弱項起草），非醫囑 · 表格可左右滑動
+                    </div>
+                  </div>
+                )}
+              </div>
               {/* 早餐組合評估 */}
               <div className="card" style={{marginBottom:12}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
@@ -6792,7 +5372,9 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
       </div>
     );
   };
-  const KnowledgeCard=({item,latestLab,onSelect})=>{
+
+// ═══ KnowledgeCard（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
+const KnowledgeCard=({item,latestLab,onSelect})=>{
     const yourVal = latestLab?.[item.key];
     const hasVal = yourVal!==null&&yourVal!==undefined&&yourVal!=="";
     const st = getStatus(item.key, yourVal);
@@ -6845,8 +5427,8 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
     );
   };
 
-  // 健康知識文章卡片
-  const ArticleCard=({art,onSelect})=>(
+// ═══ ArticleCard（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
+const ArticleCard=({art,onSelect})=>(
     <div style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:12,
       padding:"10px 8px",cursor:"pointer"}} onClick={()=>onSelect(art)}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginBottom:6}}>
@@ -6859,8 +5441,8 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
     </div>
   );
 
-  // ── 設定 ───────────────────────────────────────────────
-  const SettingTab=()=>{
+// ═══ SettingTab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
+const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hospitalList,imagingHistory,labHistory,lastSync,reminderSyncDone,reminders,setApiKey,setHospitalList,setReminders,showToast,sleepLog,weightHistory}=hj;
     const [inputKey,setInputKey]=useState(apiKey);
     const [newHospital,setNewHospital]=useState("");
     const [cloudName,setCloudName]=useState(localStorage.getItem("cloudinary_name")||"");
@@ -6872,16 +5454,16 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
 
         {/* API Key */}
         <div className="card">
-          <div className="card-title">Claude API 金鑰</div>
+          <div className="card-title">Gemini API 金鑰</div>
           <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.7}}>
-            至 <span style={{color:C.green}}>console.anthropic.com</span> 取得金鑰<br/>
-            格式：sk-ant-api03-...
+            至 <span style={{color:C.green}}>aistudio.google.com</span> 取得金鑰（與投資理財App同一組可共用）<br/>
+            格式：AQ. 或 AIza 開頭 · 免費額度 15次/分鐘、1,500次/天
           </div>
           {saved&&<div style={{fontSize:12,color:C.green,marginBottom:8,padding:"6px 10px",background:"rgba(46,204,138,0.1)",borderRadius:8}}>✅ 已儲存金鑰（輸入新金鑰可覆蓋）</div>}
           <div style={{marginBottom:10}}>
             <div className="field-label">API Key</div>
             <input className="input-field" type="password"
-              placeholder="sk-ant-api03-..."
+              placeholder="AQ. 或 AIza 開頭金鑰"
               value={inputKey}
               onChange={e=>setInputKey(e.target.value)}
               style={{marginBottom:10}}
@@ -7087,7 +5669,8 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
             const radarScores=computeRadarScores(latest,bpHistory);
             const radarRows=radarScores?radarScores.filter(d=>d.score!=null)
               .map(d=>`<tr><td style="padding:4px 12px">${d.label.split("\\n")[0]}</td><td style="padding:4px 12px;text-align:right;font-weight:bold;color:${d.score>=7?"#1a8c5e":d.score>=6?"#e67e22":"#e74c3c"}">${d.score}/10</td></tr>`).join(""):"";
-            // 用藥清單（取我的用藥及保健清單）
+            // 用藥清單（取我的用藥及保健清單）★v4.74修正：myMeds原引用KnowledgeTab內部state會ReferenceError，改讀localStorage
+            const myMeds=JSON.parse(localStorage.getItem("hj_mymeds")||"[]");
             const medList=myMeds.length>0?myMeds.map(m=>`${m.name}　${m.dose||""}　${m.freq||""}　${m.timing||""}`).join("<br/>"):"（請至知識庫→藥物→我的用藥及保健清單填寫）";
             // 打卡統計
             const exHit7=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}).filter(ds=>exerciseLog.some(r=>normalizeDate(r.date)===ds)).length;
@@ -7340,7 +5923,7 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
           {[
             {label:"版本",val:VERSION},
             {label:"後端",val:"Google Sheets"},
-            {label:"AI引擎",val:"Claude Sonnet"},
+            {label:"AI引擎",val:"Gemini 3.5 Flash"},
             {label:"資料存儲",val:"localStorage + Sheets"},
           ].map(item=>(
             <div key={item.label} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
@@ -7353,7 +5936,1509 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
     );
   };
 
-  const TABS=[
+export default function HealthJournal(){
+  const [tab,setTab]=useState("home");
+  const [recordTab,setRecordTab]=useState("glucose");
+  const [selectedKnowledge,setSelectedKnowledge]=useState(null);
+  const [kbTab,setKbTab]=useState("lab");
+  const [selectedArticle,setSelectedArticle]=useState(null);
+  const [selectedMedicine,setSelectedMedicine]=useState(null);
+  const [customArticles,setCustomArticles]=useState(()=>{
+    try{return JSON.parse(localStorage.getItem("hj_articles")||"[]");}catch(e){return[];}
+  });
+  const [showAddArticle,setShowAddArticle]=useState(false);
+  const [trendItem,setTrendItem]=useState("overview");
+  const [toast,setToast]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [isOnline,setIsOnline]=useState(navigator.onLine);
+
+  useEffect(()=>{
+    const handleOnline=()=>{setIsOnline(true);showToast("✅ 網路已恢復");if(Date.now()-lastLoadRef.current>120000)loadData();};
+    const handleOffline=()=>{setIsOnline(false);showToast("⚠️ 離線中，資料暫存本地");};
+    window.addEventListener('online',handleOnline);
+    window.addEventListener('offline',handleOffline);
+    return()=>{window.removeEventListener('online',handleOnline);window.removeEventListener('offline',handleOffline);};
+  },[]);
+  const [apiKey,setApiKey]=useState(localStorage.getItem("hj_apikey")||"");
+
+  // 後端資料
+  const [labHistory,setLabHistory]=useState([]);
+  const [glucoseHistory,setGlucoseHistory]=useState([]);
+  const [bpHistory,setBpHistory]=useState([]);
+  const [weightHistory,setWeightHistory]=useState([]);
+  const [hospitalList,setHospitalList]=useState(
+    JSON.parse(localStorage.getItem("hj_hospitals")||'["台灣新陳代謝科","越南醫院"]')
+  );
+
+  // 提醒
+  const DEFAULT_REMINDERS=[
+    {id:"R001",title:"洗牙",icon:"🦷",intervalDays:180,lastDate:"2025-12-03",nextDate:"2026-06-01"},
+    {id:"R002",title:"HbA1c追蹤",icon:"🩸",intervalDays:90,lastDate:"2026-05-27",nextDate:"2026-08-27"},
+    {id:"R003",title:"腎功能追蹤",icon:"🫘",intervalDays:180,lastDate:"2026-05-27",nextDate:"2026-11-27"},
+    {id:"R004",title:"眼底檢查",icon:"👁️",intervalDays:365,lastDate:"2025-05-27",nextDate:"2026-05-27"},
+    {id:"R005",title:"心電圖",icon:"💓",intervalDays:365,lastDate:"2025-05-27",nextDate:"2026-05-27"},
+  ];
+  const [reminders,setReminders]=useState(()=>{
+    try{
+      const saved=localStorage.getItem("hj_reminders");
+      return saved?JSON.parse(saved):DEFAULT_REMINDERS;
+    }catch(e){return DEFAULT_REMINDERS;}
+  });
+  const [editReminder,setEditReminder]=useState(null);
+  const [sleepLog,setSleepLog]=useState([]);
+  const emptySleepForm={date:today(),bedtime:"",waketime:"",
+    total_min:"",actual_min:"",score:"",deep_min:"",light_min:"",rem_min:"",
+    awake_min:"",spo2_avg:"",spo2_below90_min:"",spo2_min:"",
+    hr_avg:"",hr_min:"",breath_rate:"",sleep_efficiency:0,
+    pre_sleep_eurodin:false,pre_sleep_alcohol:false,
+    pre_sleep_coffee:"",pre_sleep_dinner:"",pre_sleep_yogurt:"",
+    pre_sleep_exercise:"",pre_sleep_stress:"無",note:""};
+  const [sleepForm,setSleepForm]=useState(emptySleepForm);
+  const [sleepPasteText,setSleepPasteText]=useState("");
+  const [showSleepPaste,setShowSleepPaste]=useState(false);
+  const [sleepAnalysis,setSleepAnalysis]=useState(null);
+  const [sleepAnalyzing,setSleepAnalyzing]=useState(false);
+  const [editSleepRecord,setEditSleepRecord]=useState(null);
+  const [showOverdue,setShowOverdue]=useState(false);
+  const [trackItems,setTrackItems]=useState(()=>{
+    try{ const s=localStorage.getItem("hj_track"); return s?JSON.parse(s):DEFAULT_TRACK; }
+    catch(e){ return DEFAULT_TRACK; }
+  });
+  const [showTrackPicker,setShowTrackPicker]=useState(false);
+  const [trendAiKey,setTrendAiKey]=useState(null);
+  const [labInfoKey,setLabInfoKey]=useState(null);
+  const [kbNotes,setKbNotes]=useState(()=>{
+    try{const s=localStorage.getItem("hj_kb");return s?JSON.parse(s):[];}
+    catch(e){return[];}
+  });
+  const [kbForm,setKbForm]=useState({title:"",category:"飲食",content:"",photo:null});
+  const [kbAiLoading,setKbAiLoading]=useState(false);
+  const [showKbForm,setShowKbForm]=useState(false);
+  const kbPhotoRef=React.useRef();
+  const [trendAiResult,setTrendAiResult]=useState({});
+  const [trendAiLoading,setTrendAiLoading]=useState(false);
+  const [imagingForm,setImagingForm]=useState({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
+  const [editImaging,setEditImaging]=useState(null);
+  const [exerciseLog,setExerciseLog]=useState([]);
+  const [imagingPhotos,setImagingPhotos]=useState([]);
+  const imagingPhotoRef = React.useRef();
+  const editImagingPhotoRef = React.useRef(); // ★ v4.72 編輯Modal照片上傳
+  const [lightboxUrl,setLightboxUrl]=useState(null);
+  const [imagingHistory,setImagingHistory]=useState([]);
+  const [syncStatus,setSyncStatus]=useState("idle"); // idle|syncing|synced|error
+  const [lastSync,setLastSync]=useState(null);
+  const [submitting,setSubmitting]=useState(false); // 防重複提交
+
+  // 表單
+  const [glucoseForm,setGlucoseForm]=useState({value:"",unit:localStorage.getItem("hj_glucose_unit")||"mmol/L",timePoint:"空腹",source:"日常",note:""});
+  const [bpForm,setBpForm]=useState({sys:"",dia:"",pulse:"",source:"日常"});
+  const [editBPRecord,setEditBPRecord]=useState(null);
+  const [weightForm,setWeightForm]=useState({value:""});
+
+  // 抽血報告解析
+  const [labStep,setLabStep]=useState("input"); // input | parsing | confirm | saving
+  const [labInputText,setLabInputText]=useState("");
+  const [labPhotos,setLabPhotos]=useState([]); // [{dataUrl,file}]
+  const [labParsed,setLabParsed]=useState({});
+  const [labForm,setLabForm]=useState({date:"",hospital:"",country:"台灣",fasting:"空腹"});
+  const [showPhotoWarning,setShowPhotoWarning]=useState(false);
+  const [pendingPhotos,setPendingPhotos]=useState(null);
+  // ── 每日AI顧問問候 ──────────────────────────────────
+  const [dailyGreeting,setDailyGreeting]=useState(()=>{
+    try{
+      const cache=JSON.parse(localStorage.getItem("hj_daily_greeting")||"null");
+      if(cache&&cache.date===new Date().toISOString().split("T")[0])return cache.greeting;
+    }catch(e){}
+    return null;
+  });
+  const [greetingLoading,setGreetingLoading]=useState(false);
+
+  const generateDailyGreeting=async(force=false)=>{
+    const key=localStorage.getItem("hj_apikey")||"";
+    if(!key||greetingLoading)return;
+    const todayStr=new Date().toISOString().split("T")[0];
+    // 建立「資料摘要key」— 有新記錄就重新產生
+    const lastSleep=[...sleepLog].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+    const lastBP=[...bpHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+    const lastGluc=[...glucoseHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+    const dataKey=`${todayStr}|${lastSleep?.date||""}|${lastSleep?.score||""}|${lastBP?.date||""}|${lastGluc?.date||""}`;
+    const cache=JSON.parse(localStorage.getItem("hj_daily_greeting")||"null");
+    // 條件：同dataKey且未超過3天 → 直接用快取
+    const cacheAge=cache?.date?Math.floor((new Date()-new Date(cache.date))/(1000*60*60*24)):999;
+    if(!force&&cache&&cache.dataKey===dataKey&&cacheAge<3)return;
+    setGreetingLoading(true);
+    try{
+      const hour=new Date().getHours();
+      const weekday=["日","一","二","三","四","五","六"][new Date().getDay()];
+      const isWeekend=new Date().getDay()===0||new Date().getDay()===6;
+      const timeStr=hour<6?"凌晨":hour<12?"早上":hour<14?"中午":hour<18?"下午":hour<22?"晚上":"深夜";
+      // 睡眠詳情
+      const sleepNote=lastSleep?(()=>{
+        const h=Math.floor((lastSleep.total_min||0)/60);
+        const m=(lastSleep.total_min||0)%60;
+        const deepPct=Math.round((lastSleep.deep_min||0)/(lastSleep.total_min||1)*100);
+        const spo2=lastSleep.spo2_avg||0;
+        const score=lastSleep.score||0;
+        const daysDiff=Math.floor((new Date()-new Date(lastSleep.date))/(1000*60*60*24));
+        return `${daysDiff===0?"昨晚":daysDiff===1?"前晚":`${daysDiff}天前`}睡眠：${h}小時${m}分，深層${deepPct}%${deepPct>=18?"✓":"（偏低）"}，評分${score||"—"}${spo2>0?`，血氧${spo2}%${spo2<90?"⚠️低氧":""}`:""}`+
+          (lastSleep.spo2_below90_min>10?`，低於90%達${lastSleep.spo2_below90_min}分鐘`:"");
+      })():"無近期睡眠記錄";
+      // 血壓詳情
+      const bpNote=lastBP?(()=>{
+        const daysDiff=Math.floor((new Date()-new Date(lastBP.date))/(1000*60*60*24));
+        const status=lastBP.systolic>=140?"偏高":lastBP.systolic>=130?"需注意":"正常";
+        return `血壓${lastBP.systolic}/${lastBP.diastolic}（${daysDiff===0?"今天":daysDiff+"天前"}，${status}）`;
+      })():"無血壓記錄";
+      // 血糖詳情
+      const glucNote=lastGluc?(()=>{
+        const daysDiff=Math.floor((new Date()-new Date(lastGluc.date))/(1000*60*60*24));
+        const status=lastGluc.value_mgdl>=126?"偏高":lastGluc.value_mgdl>=100?"需注意":"正常";
+        return `血糖${lastGluc.value_mgdl}mg/dL（${daysDiff===0?"今天":daysDiff+"天前"}，${status}）`;
+      })():"無血糖記錄";
+      // 到期追蹤（依嚴重度排序）
+      const overdues=reminders.filter(r=>new Date(r.nextDate)<=new Date())
+        .sort((a,b)=>new Date(a.nextDate)-new Date(b.nextDate))
+        .slice(0,3).map(r=>`${r.title}（已逾期${Math.floor((new Date()-new Date(r.nextDate))/(1000*60*60*24))}天）`);
+      // 近3天運動
+      const recentEx=[...exerciseLog].filter(r=>{
+        const d=new Date(r.date);return(new Date()-d)/(1000*60*60*24)<=3;
+      });
+      const prompt=`你是Steven的私人健康顧問。根據今天的實際數據，用自然、有溫度的方式說話，不要重複昨天說過的話。
+
+【今天】${todayStr} 週${weekday} ${timeStr}${hour}點${isWeekend?" 週末":""}
+
+【最新健康數據】
+・${sleepNote}
+・${bpNote}
+・${glucNote}
+・近3天運動：${recentEx.length>0?recentEx.length+"次":"無記錄"}
+${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
+
+【Steven背景】55歲台灣男性，越南海防獨自工作，七項並發診斷（高血壓、動脈瘤、冠狀動脈狹窄、脂肪肝G2、高尿酸、肝酶偏高、糖尿病前期）。
+
+請根據上面的「今天實際數據」，用2-3句話直接跟Steven說話：
+・第一句：針對最新睡眠或數據給具體評語（數字要說出來，例如「深層21%達標」或「血氧低於90%達33分要注意」）
+・第二句：今天一個最重要的複合提醒（至少連結兩個健康面向）
+・第三句：簡短鼓勵或今日具體行動建議
+注意：語氣像關心的朋友，不像醫療報告，繁體中文，不用標題和條列。`;
+      const result=await callAI([{role:"user",content:prompt}],350);
+      if(result&&!result.startsWith("❌")){
+        setDailyGreeting(result);
+        localStorage.setItem("hj_daily_greeting",JSON.stringify({date:todayStr,dataKey,greeting:result}));
+      }
+    }catch(e){console.log("greeting error",e);}
+    setGreetingLoading(false);
+  };
+
+  const [aiReport,setAiReport]=useState(()=>{
+    try{
+      const cache=JSON.parse(localStorage.getItem("hj_weekly_cache")||"null");
+      if(cache&&cache.date===new Date().toISOString().split("T")[0])return cache.report;
+    }catch(e){}
+    return null;
+  });
+  const [aiReportDate,setAiReportDate]=useState(()=>{
+    try{
+      const cache=JSON.parse(localStorage.getItem("hj_weekly_cache")||"null");
+      if(cache&&cache.date===new Date().toISOString().split("T")[0])return cache.date;
+    }catch(e){}
+    return null;
+  });
+  const [aiLoading,setAiLoading]=useState(false);
+  const [overallReport,setOverallReport]=useState(()=>{
+    try{
+      const cache=JSON.parse(localStorage.getItem("hj_overall_cache")||"null");
+      if(cache)return cache.report;
+    }catch(e){}
+    return null;
+  });
+  const [overallDate,setOverallDate]=useState(()=>{
+    try{
+      const cache=JSON.parse(localStorage.getItem("hj_overall_cache")||"null");
+      if(cache)return cache.date;
+    }catch(e){}
+    return null;
+  });
+  const [overallLoading,setOverallLoading]=useState(false);
+  const [showApiInput,setShowApiInput]=useState(false);
+  const photoInputRef=useRef();
+
+  const showToast=(msg)=>{setToast(msg);setTimeout(()=>setToast(""),2800);};
+
+  const saveHospital=(name)=>{
+    if(!name||hospitalList.includes(name))return;
+    const updated=[name,...hospitalList].slice(0,10);
+    setHospitalList(updated);
+    localStorage.setItem("hj_hospitals",JSON.stringify(updated));
+    api.saveSetting("hospitals", updated); // 同步到Sheets
+  };
+
+  // ★ v4.71 上次成功載入時間（online防抖用）
+  const lastLoadRef=useRef(0);
+  const loadData=useCallback(async()=>{
+    // ★ v4.71 快取優先秒開：先用本地快取渲染，再背景更新
+    try{
+      const cached=JSON.parse(localStorage.getItem("hj_data_cache")||"null");
+      if(cached){
+        if(cached.lab)setLabHistory(cached.lab);
+        if(cached.glu)setGlucoseHistory(cached.glu);
+        if(cached.bp)setBpHistory(cached.bp);
+        if(cached.wt)setWeightHistory(cached.wt);
+        if(cached.sleep)setSleepLog(cached.sleep);
+        if(cached.imaging)setImagingHistory(cached.imaging);
+        if(cached.ex)setExerciseLog(cached.ex);
+      }
+    }catch(e){}
+    setLoading(true);
+    setSyncStatus("syncing");
+    try{
+      const cacheObj={};
+      const [lab,glu,bp,wt,settings,imaging,exLog,slp]=await Promise.all([
+        api.get("getLabHistory"),
+        api.get("getAll",{sheet:"daily_glucose"}),
+        api.get("getAll",{sheet:"daily_bp"}),
+        api.get("getAll",{sheet:"daily_weight"}),
+        api.loadSettings(),
+        api.get("getAll",{sheet:"imaging"}),
+        api.get("getAll",{sheet:"exercise_log"}),
+        api.get("getAll",{sheet:"sleep_log"}),
+      ]);
+      if(lab?.data){setLabHistory(lab.data);cacheObj.lab=lab.data;}
+      if(glu?.data){setGlucoseHistory(glu.data);cacheObj.glu=glu.data;}
+      if(bp?.data){setBpHistory(bp.data);cacheObj.bp=bp.data;}
+      if(wt?.data){setWeightHistory(wt.data);cacheObj.wt=wt.data;}
+      if(exLog?.data){const v=exLog.data.filter(r=>r.date&&String(r.date).trim());setExerciseLog(v);cacheObj.ex=v;}
+      if(slp?.data){const v=slp.data.filter(r=>r.date&&String(r.date).trim());setSleepLog(v);cacheObj.sleep=v;}
+      if(imaging?.data){
+        // 過濾空白列（id或date或type為空/空白的）
+        const validImaging = imaging.data.filter(r =>
+          r.id && String(r.id).trim() &&
+          r.date && String(r.date).trim() &&
+          r.type && String(r.type).trim()
+        );
+        setImagingHistory(validImaging);
+        cacheObj.imaging=validImaging;
+      }
+      // ★ v4.71 寫入本地快取（下次開App秒開）
+      // ★ v4.72 容量保護：日常記錄只快取近90天（秒開夠用，完整歷史由背景同步補齊）；lab與imaging全存
+      try{
+        const cutoff=new Date(Date.now()-90*86400*1000).toISOString().split("T")[0];
+        const recent=(arr)=>Array.isArray(arr)?arr.filter(r=>String(r.date||"")>=cutoff):arr;
+        localStorage.setItem("hj_data_cache",JSON.stringify({
+          ...cacheObj,
+          glu:recent(cacheObj.glu),bp:recent(cacheObj.bp),wt:recent(cacheObj.wt),
+          sleep:recent(cacheObj.sleep),ex:recent(cacheObj.ex),
+        }));
+      }catch(e){console.log("快取寫入失敗(可能超過容量):",e);}
+      lastLoadRef.current=Date.now();
+      setSyncStatus("synced");
+      setLastSync(new Date());
+      // 從 Sheets 恢復設定
+      if(settings?.data){
+        const s=settings.data;
+        if(s.hospitals){
+          const h=JSON.parse(s.hospitals);
+          setHospitalList(h);
+          localStorage.setItem("hj_hospitals",JSON.stringify(h));
+        }
+        if(s.reminders){
+          const r=JSON.parse(s.reminders);
+          setReminders(r);
+          localStorage.setItem("hj_reminders",JSON.stringify(r));
+        }
+        if(s.trackItems){
+          const t=JSON.parse(s.trackItems);
+          setTrackItems(t);
+          localStorage.setItem("hj_track",JSON.stringify(t));
+        }
+      }
+    }catch(e){console.log("載入失敗:",e);setSyncStatus("error");}
+    setLoading(false);
+  },[]);
+
+  useEffect(()=>{loadData();},[loadData]);
+
+  // ★ v4.70 開App檢查到期項目並發通知（每天最多一次）
+  useEffect(()=>{
+    if(!localStorage.getItem("hj_notify"))return;
+    if(!("Notification" in window)||Notification.permission!=="granted")return;
+    const lastNotify=localStorage.getItem("hj_last_notify_date");
+    const todayStr=today();
+    if(lastNotify===todayStr)return;
+    const overdue=reminders.filter(r=>new Date(r.nextDate)<=new Date());
+    if(overdue.length>0){
+      new Notification("健康日誌提醒",{
+        body:`有 ${overdue.length} 項追蹤到期：${overdue.slice(0,3).map(r=>r.title).join("、")}`,
+        icon:"/health-journal/icon-192.png"
+      });
+      localStorage.setItem("hj_last_notify_date",todayStr);
+    }
+  },[reminders]);
+
+  // 儲存血糖
+  const saveGlucose=async()=>{
+    if(submitting){return;}
+    if(!glucoseForm.value){showToast("⚠️ 請輸入血糖值");return;}
+    setSubmitting(true);
+    const mgdl=toMgdl(glucoseForm.value,glucoseForm.unit);
+    const now=new Date();
+    const r=await api.post("append","daily_glucose",{
+      date:now.toISOString().split("T")[0],time:now.toTimeString().slice(0,5),
+      timePoint:glucoseForm.timePoint,value_mgdl:mgdl,
+      value_original:glucoseForm.value,unit_original:glucoseForm.unit,
+      source:glucoseForm.source,note:glucoseForm.note,
+    });
+    if(r?.success){
+      showToast(`✅ 血糖 ${mgdl} mg/dL 已儲存`);
+      // ★ v4.70 異常值即時提醒
+      if(mgdl>=126)setTimeout(()=>window.alert(`⚠️ 血糖 ${mgdl} mg/dL 已達糖尿病標準（≥126）\n建議：確認是否空腹量測，若持續偏高請就醫`),300);
+      else if(mgdl>=100)setTimeout(()=>window.alert(`⚠️ 血糖 ${mgdl} mg/dL 偏高（正常<100）\n建議：注意飲食，持續追蹤`),300);
+      setGlucoseForm({value:"",unit:localStorage.getItem("hj_glucose_unit")||"mmol/L",timePoint:"空腹",source:"日常",note:""});
+      loadData();
+    }
+    else showToast("❌ 血糖儲存失敗：" + (r?.error || "請檢查網路連線"));
+    setSubmitting(false);
+  };
+
+  const updateBP=async(record)=>{
+    const r=await api.post("update","daily_bp",record);
+    if(r?.success){
+      setBpHistory(prev=>prev.map(b=>b.id===record.id?record:b));
+      setEditBPRecord(null);
+      showToast("✅ 血壓記錄已更新");
+    }else showToast("❌ 更新失敗");
+  };
+  const deleteBP=async(id)=>{
+    if(!window.confirm("確定刪除這筆血壓記錄？"))return;
+    const r=await api.deleteRow("daily_bp",id);
+    if(r?.success){
+      setBpHistory(prev=>prev.filter(b=>b.id!==id));
+      showToast("✅ 已刪除");
+    }else showToast("❌ 刪除失敗");
+  };
+  const saveBP=async()=>{
+    if(submitting){return;}
+    if(!bpForm.sys||!bpForm.dia){showToast("⚠️ 請輸入血壓值");return;}
+    setSubmitting(true);
+    const now=new Date();
+    const r=await api.post("append","daily_bp",{
+      date:now.toISOString().split("T")[0],time:now.toTimeString().slice(0,5),
+      systolic:parseInt(bpForm.sys),diastolic:parseInt(bpForm.dia),
+      pulse:parseInt(bpForm.pulse)||"",source:bpForm.source,
+    });
+    if(r?.success){
+      showToast("✅ 血壓已儲存");
+      // ★ v4.70 異常值即時提醒
+      const s=parseInt(bpForm.sys),d=parseInt(bpForm.dia);
+      if(s>=160||d>=100)setTimeout(()=>window.alert(`🚨 血壓 ${s}/${d} mmHg 顯著偏高！\n建議：休息15分鐘後再量一次，若仍≥160/100請盡快就醫`),300);
+      else if(s>=140||d>=90)setTimeout(()=>window.alert(`⚠️ 血壓 ${s}/${d} mmHg 偏高（≥140/90）\n建議：確認服藥狀況，連續3天偏高請回診`),300);
+      setBpForm({sys:"",dia:"",pulse:"",source:"日常"});
+      loadData();
+    }
+    else showToast("❌ 儲存失敗");
+    setSubmitting(false);
+  };
+
+  const saveWeight=async()=>{
+    if(submitting){return;}
+    if(!weightForm.value){showToast("⚠️ 請輸入體重");return;}
+    setSubmitting(true);
+    const r=await api.post("append","daily_weight",{date:today(),value_kg:parseFloat(weightForm.value)});
+    if(r?.success){showToast("✅ 體重已儲存");setWeightForm({value:""});loadData();}
+    else showToast("❌ 儲存失敗");
+    setSubmitting(false);
+  };
+
+  // 照片處理
+  const handlePhotoChange=async(files)=>{
+    if(!files||files.length===0)return;
+    const newPhotos=[];
+    for(const file of Array.from(files).slice(0,5)){
+      const dataUrl=await new Promise(res=>{
+        const reader=new FileReader();
+        reader.onload=e=>res(e.target.result);
+        reader.readAsDataURL(file);
+      });
+      newPhotos.push({dataUrl,file});
+    }
+    setLabPhotos(prev=>[...prev,...newPhotos].slice(0,5));
+  };
+
+  const labPhotoInputRef2 = React.useRef();
+  const confirmPhotos=()=>{
+    setShowPhotoWarning(false);
+    setPendingPhotos(null);
+    setTimeout(()=>{ photoInputRef.current?.click(); }, 100);
+  };
+
+  // AI 解析報告（文字）
+  const parseLabText=async()=>{
+    const key=localStorage.getItem("hj_apikey")||apiKey||"";
+    if(!key){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");return;}
+    if(!labInputText.trim()&&labPhotos.length===0){showToast("⚠️ 請先貼上報告文字或上傳照片");return;}
+    setLabStep("parsing");
+
+    try{
+      let content=[];
+      // 加入照片
+      labPhotos.forEach(p=>{
+        const b64=p.dataUrl.split(",")[1];
+        const mime=p.dataUrl.split(";")[0].split(":")[1];
+        content.push({type:"image",source:{type:"base64",media_type:mime,data:b64}});
+      });
+      // 加入文字
+      const textPart=labInputText.trim()||"（請從圖片中辨識所有檢驗數值）";
+      content.push({type:"text",text:`你是醫療報告解析助手。任務：從以下報告提取所有數值，回傳純JSON，禁止任何說明文字。
+
+重要規則：
+1. 抓取報告中出現的所有數值，不要遺漏
+2. key名稱用以下對應（小寫英文）：
+   hba1c=HbA1c/糖化血色素
+   glucose_ac=Glucose AC/空腹血糖/GLU（空腹）
+   alt=ALT/SGPT
+   ast=AST/SGOT
+   alp=ALP/鹼性磷酸酶
+   ggt=GGT/麩胺轉移酶
+   ldh=LDH
+   tbil=Total Bilirubin/總膽紅素/TBILC
+   dbil=Direct Bilirubin/直接膽紅素/DBILC
+   tp=Total Protein/總蛋白/TP
+   alb=Albumin/白蛋白/ALB
+   glob=Globulin/球蛋白/GLO
+   ag_ratio=A/G Ratio
+   hdl=HDL-C/HDL/高密度脂蛋白
+   ldl=LDL-C/LDL/低密度脂蛋白
+   tg=TG/Triglyceride/三酸甘油酯
+   cholesterol=Total Cholesterol/總膽固醇/CHOL
+   chol_hdl=CHOL/HDL-C比值/膽固醇HDL比值
+   uric_acid=Uric Acid/尿酸/UA
+   creatinine=Creatinine/肌酸酐/CRE（血清，非尿液）
+   gfr=GFR（取第一個數值，通常是CKD-EPI公式）
+   gfr2=eGFR(MDRD)/第二個eGFR數值
+   bun=BUN/血中尿素氮
+   upcr=UPCR/Protein Creatinine Ratio
+   urine_creatinine=Urine Creatinine/尿液肌酸酐/CREA(Random Urine)
+   urine_protein=Urine Protein/尿液蛋白/Micro-Total Protein/Total Protein(Urine)
+   tsh=TSH/甲狀腺促素
+   ft3=Free T3
+   ft4=Free T4
+   na=Sodium/鈉/Na
+   k=Potassium/鉀/K
+   cl=Chloride/氯/Cl
+   ca=Calcium/鈣/Ca
+   mg=Magnesium/鎂/MG
+   phos=Phosphorus/磷/PHOS
+   crp=CRP/C反應蛋白
+   amy=Amylase/澱粉酶/AMY
+   lip=Lipase/脂肪酶/LIP
+   ck=CK/肌酸激酶
+   fe=Iron/鐵/FE
+   uibc=UIBC
+   tibc=TIBC
+   fe_sat=Iron Saturation/鐵飽和度/FE_sat
+   hb=Hb/Hemoglobin/血紅素
+   wbc=WBC/白血球
+   rbc=RBC/紅血球
+   hct=Hct/血球容積
+   mcv=MCV（平均紅血球容積）
+   mch=MCH（平均紅血球血色素）
+   mchc=MCHC（平均紅血球血色素濃度）
+   rdw_cv=RDW-CV（紅血球分布寬度CV）
+   rdw_sd=RDW-SD（紅血球分布寬度SD）
+   platelet=Platelet/PLT/血小板
+   mpv=MPV（平均血小板容積）
+3. 數值只填數字，不要單位
+4. 找不到的欄位填null
+5. 單位換算規則（非常重要，必須正確換算）：
+
+   血糖/葡萄糖 mmol/L → mg/dL：×18.016
+   膽固醇/HDL/LDL/TG mmol/L → mg/dL：×38.67
+   肌酸酐 μmol/L或umol/L → mg/dL：÷88.4
+   尿酸 μmol/L或umol/L → mg/dL：÷59.48
+   尿素/BUN mmol/L → mg/dL：×2.8（注意：越南報告的Urea mmol/L換算BUN）
+   鈣 mmol/L → mg/dL：×4.008
+   磷 mmol/L → mg/dL：×3.097
+   鎂 mmol/L → mg/dL：×2.431
+   血紅素/Hb g/L → g/dL：÷10
+   MCHC g/L → g/dL：÷10
+   總膽紅素 μmol/L → mg/dL：÷17.1
+   直接膽紅素 μmol/L → mg/dL：÷17.1
+   白蛋白 g/L → g/dL：÷10
+   總蛋白 g/L → g/dL：÷10
+   電解質 Na/K/Cl mmol/L = mEq/L（不需換算）
+   HCT：若為小數（0.453）請×100轉成百分比（45.3）
+   WBC/RBC/PLT：G/L = 10³/μL（不需換算數值）
+
+6. 支援多種報告格式：
+   台灣格式：「ALT: 45 U/L」
+   越南格式：「ALT(GPT): 54 U/L」「Creatinine: 69.5 μmol/L」
+   DxC 700 AU：「ALT 43」「CRE 0.82」
+
+7. 欄位對應（補充）：
+   amy=AMY/Amylase
+   ck=CK
+   ggt=GGT/Gamma-GT
+   fe=FE/Iron/Sắt
+   lip=LIP/Lipase
+   tp=TP/Total Protein/Protein toàn phần（若g/L請÷10）
+   ldh=LDH
+   k=K/Potassium/Kali
+   ag_ratio=A/G Ratio
+   alb=ALB/Albumin（若g/L請÷10）
+   crp=CRP
+   mg=MG/Magnesium（若mmol/L請×2.431）
+   uibc=UIBC
+   na=Na/Sodium/Natri
+   tibc=TIBC
+   alp=ALP
+   dbil=DBILC/Direct Bilirubin（若μmol/L請÷17.1）
+   phos=PHOS/Phosphorus（若mmol/L請×3.097）
+   tbil=TBILC/Total Bilirubin（若μmol/L請÷17.1）
+   bun=BUN/Urea（Urea mmol/L請×2.8換算BUN mg/dL）
+   ca=CA/Calcium（若mmol/L請×4.008）
+   cl=Cl/Chloride
+   glob=GLO/Globulin（若g/L請÷10）
+   fe_sat=FE_sat/Iron Saturation
+   creatinine=CRE/Creatinine（若μmol/L請÷88.4）
+   uric_acid=UA/Uric Acid（若μmol/L請÷59.48）
+   glucose_ac=GLU/Glucose/HbA1c旁的血糖（若mmol/L請×18.016）
+   cholesterol=CHOL/Total Cholesterol（若mmol/L請×38.67）
+   hb=HGB/Hemoglobin（若g/L請÷10）
+   mchc=MCHC（若g/L請÷10）
+   ne_pct=NE%/Neutrophil%/嗜中性球%（百分比）
+   ly_pct=LY%/Lymphocyte%/淋巴球%（百分比）
+   mo_pct=MO%/Monocyte%/單核球%（百分比）
+   eo_pct=EO%/Eosinophil%/嗜酸性球%（百分比）
+   ba_pct=BA%/Basophil%/嗜鹼性球%（百分比）
+   ne_abs=NE#/Neutrophil#/嗜中性球絕對值（G/L或10^3/uL）
+   ly_abs=LY#/Lymphocyte#/淋巴球絕對值
+   mo_abs=MO#/Monocyte#/單核球絕對值
+   eo_abs=EO#/Eosinophil#/嗜酸性球絕對值
+   ba_abs=BA#/Basophil#/嗜鹼性球絕對值
+   hbsag=HBsAg（陰性填0，陽性填1）
+   anti_hcv=Anti-HCV（陰性填0，陽性填1）
+   anti_hbs=Anti-HBs（陰性填0，陽性填1）
+   cea=CEA/癌胚抗原
+   afp=AFP/甲胎蛋白
+   psa=PSA/攝護腺特異抗原
+   asto=ASTO/抗鏈球菌溶血素O（陰性填0，陽性填1）
+   rf=RF/類風濕因子（陰性填0，陽性填1）
+   urine_glucose=尿糖/Glucose(Urine)（negative填0，positive填1）
+   urine_bilirubin=尿膽紅素/Bilirubin(Urine)（negative填0，positive填1）
+   urine_ketone=尿酮體/Ketone(Urine)（negative填0，positive填1）
+   urine_sg=尿比重/Specific Gravity（填數值如1.010）
+   urine_ph=尿液pH（填數值如6.0）
+   urine_nitrite=亞硝酸鹽/Nitrite（negative填0，positive填1）
+   urine_urobilinogen=尿膽素原/Urobilinogen（negative填0，positive填1）
+   urine_blood=尿潛血/Blood(Urine)（negative填0，positive填1）
+   urine_leukocyte=尿白血球/Leukocyte(Urine)（negative填0，positive填1）
+   insulin=胰島素/Insulin（μIU/mL 或 mIU/L）
+   vitamin_d3=維生素D3/Vitamin D3/25(OH)D（ng/mL 或 nmol/L÷2.496換算）
+   ferritin=鐵蛋白/Ferritin（ng/mL 或 μg/L）
+   hs_crp=高敏CRP/hsCRP/hs-CRP（mg/L）
+   insulin_resistance=胰島素阻抗指數/HOMA-IR（計算值）
+
+報告內容：
+${textPart}
+
+只回傳JSON格式，包含所有找到的欄位（有值的填數值，沒有的填null）：
+{"date":null,"hospital":null,"hba1c":null,"glucose_ac":null,"alt":null,"ast":null,"alp":null,"ggt":null,"ldh":null,"tbil":null,"dbil":null,"tp":null,"alb":null,"glob":null,"ag_ratio":null,"hdl":null,"ldl":null,"tg":null,"cholesterol":null,"chol_hdl":null,"uric_acid":null,"creatinine":null,"gfr":null,"gfr2":null,"bun":null,"upcr":null,"urine_creatinine":null,"urine_protein":null,"tsh":null,"ft3":null,"ft4":null,"na":null,"k":null,"cl":null,"ca":null,"mg":null,"phos":null,"crp":null,"amy":null,"lip":null,"ck":null,"ck_mb":null,"fe":null,"uibc":null,"tibc":null,"fe_sat":null,"hb":null,"wbc":null,"rbc":null,"hct":null,"mcv":null,"mch":null,"mchc":null,"rdw_cv":null,"rdw_sd":null,"platelet":null,"mpv":null,"ne_pct":null,"ly_pct":null,"mo_pct":null,"eo_pct":null,"ba_pct":null,"ne_abs":null,"ly_abs":null,"mo_abs":null,"eo_abs":null,"ba_abs":null,"hbsag":null,"anti_hcv":null,"anti_hbs":null,"cea":null,"afp":null,"psa":null,"asto":null,"rf":null,"urine_glucose":null,"urine_bilirubin":null,"urine_ketone":null,"urine_sg":null,"urine_ph":null,"urine_nitrite":null,"urine_urobilinogen":null,"urine_blood":null,"urine_leukocyte":null,"insulin":null,"vitamin_d3":null,"ferritin":null,"hs_crp":null,"insulin_resistance":null,"note":null}`});
+
+      const rawText = await callAI([{role:"user",content}], 1200);
+      console.log("Raw text:",rawText.slice(0,500));
+      // 清理並解析JSON - 多重嘗試
+      let parsed={};
+      try{
+        const clean=rawText.replace(/```json|```|\n/g,"").trim();
+        parsed=JSON.parse(clean);
+      }catch(e1){
+        try{
+          const start=rawText.indexOf("{");
+          const end=rawText.lastIndexOf("}");
+          if(start>=0&&end>start){
+            parsed=JSON.parse(rawText.slice(start,end+1));
+          }
+        }catch(e2){
+          console.log("JSON parse failed:",rawText);
+          // 嘗試手動提取數值
+          const extract=(pattern)=>{
+            const m=rawText.match(pattern);
+            return m?parseFloat(m[1]):null;
+          };
+          parsed={
+            hba1c:extract(/hba1c["\s:]+([0-9.]+)/i),
+            glucose_ac:extract(/glucose[_\s]?ac["\s:]+([0-9.]+)/i)||extract(/glucose["\s:]+([0-9.]+)/i),
+            alt:extract(/alt["\s:]+([0-9.]+)/i)||extract(/sgpt["\s:]+([0-9.]+)/i),
+            hdl:extract(/hdl["\s:]+([0-9.]+)/i),
+            ldl:extract(/ldl["\s:]+([0-9.]+)/i),
+            tg:extract(/tg["\s:]+([0-9.]+)/i)||extract(/triglyceride["\s:]+([0-9.]+)/i),
+            cholesterol:extract(/cholesterol["\s:]+([0-9.]+)/i),
+            uric_acid:extract(/uric[_\s]?acid["\s:]+([0-9.]+)/i),
+            creatinine:extract(/creatinine["\s:]+([0-9.]+)/i),
+            tsh:extract(/tsh["\s:]+([0-9.]+)/i),
+            hb:extract(/hb["\s:]+([0-9.]+)/i)||extract(/hemoglobin["\s:]+([0-9.]+)/i),
+            wbc:extract(/wbc["\s:]+([0-9.]+)/i),
+            platelet:extract(/platelet["\s:]+([0-9.]+)/i),
+          };
+        }
+      }
+      // 過濾null值
+      Object.keys(parsed).forEach(k=>{
+        if(parsed[k]===null||parsed[k]===undefined||parsed[k]==="null"||parsed[k]==="")delete parsed[k];
+      });
+
+      // ── Batch2：extra_data 兜底 ─────────────────────────
+      // 已知欄位白名單（所有有定義的欄位）
+      const KNOWN_KEYS = new Set([
+        "date","hospital","country","fasting","doctor","note",
+        "hba1c","glucose_ac","glucose_pc","glucose_random",
+        "alt","ast","alp","ggt","ldh","tbil","dbil","tp","alb","glob","ag_ratio",
+        "hdl","ldl","tg","cholesterol","chol_hdl",
+        "uric_acid","creatinine","gfr","gfr2","bun","upcr","urine_creatinine","urine_protein","urine_protein2",
+        "tsh","ft3","ft4",
+        "na","k","cl","ca","mg","phos",
+        "crp","amy","lip","ck","ck_mb",
+        "fe","uibc","tibc","fe_sat",
+        "hb","wbc","rbc","hct","mcv","mch","mchc","rdw_cv","rdw_sd","platelet","mpv",
+        "ne_pct","ly_pct","mo_pct","eo_pct","ba_pct",
+        "ne_abs","ly_abs","mo_abs","eo_abs","ba_abs",
+        "hbsag","anti_hcv","anti_hbs",
+        "cea","afp","psa","asto","rf",
+        "urine_glucose","urine_bilirubin","urine_ketone","urine_sg","urine_ph",
+        "urine_nitrite","urine_urobilinogen","urine_blood","urine_leukocyte",
+        "extra_data","source_country","createdAt","id","insulin","vitamin_d3","ferritin","hs_crp","insulin_resistance",
+      ]);
+      // 找出不在白名單的欄位
+      const extraObj = {};
+      Object.keys(parsed).forEach(k=>{
+        if(!KNOWN_KEYS.has(k)) extraObj[k] = parsed[k];
+      });
+      if(Object.keys(extraObj).length > 0){
+        parsed._extraData = extraObj; // 暫存，saveLabReport時合併
+      }
+      // ───────────────────────────────────────────────────
+
+      console.log("Parsed:",JSON.stringify(parsed));
+
+      // 合併到表單
+      setLabParsed(parsed);
+      setLabForm(prev=>({
+        ...prev,
+        date:parsed.date||prev.date,
+        hospital:parsed.hospital||prev.hospital,
+      }));
+      setLabStep("confirm");
+    }catch(e){
+      if(e.message==="NO_API_KEY"){
+        showToast("⚠️ 請先在設定Tab輸入API金鑰");
+        setTab("setting");
+      }else if(e.message.includes("401")){
+        showToast("❌ API金鑰無效，請至設定Tab重新輸入");
+        setTab("setting");
+      }else if(e.message.includes("429")){
+        showToast("❌ API使用量超限，請稍後再試");
+      }else{
+        showToast("❌ 解析失敗："+e.message);
+      }
+      setLabStep("input");
+    }
+  };
+
+    // 確認儲存抽血報告
+  const saveLabReport=async()=>{
+    if(!labForm.hospital){showToast("⚠️ 請輸入醫院名稱");return;}
+    setLabStep("saving");
+    // 合併所有資料：labParsed（AI解析）+ labForm（使用者輸入）
+    // labForm 優先覆蓋
+    const {_extraData, ...parsedClean} = labParsed;
+    const data={...parsedClean,...labForm};
+    // 合併 extra_data（保留舊值，追加新值）
+    let existingExtra = {};
+    try { existingExtra = data.extra_data ? JSON.parse(data.extra_data) : {}; } catch(e){}
+    const mergedExtra = {...existingExtra, ...(_extraData||{})};
+    if(Object.keys(mergedExtra).length > 0){
+      data.extra_data = JSON.stringify(mergedExtra);
+    }
+    // 確保基本欄位都有
+    if(!data.createdAt) data.createdAt=new Date().toISOString();
+    if(!data.id) data.id="LAB"+Date.now();
+
+    // 先更新 Sheets 欄位（確保新欄位存在）
+    await api.get("updateLabColumns");
+
+    const r=await api.post("append","lab_reports",data);
+    if(r?.success){
+      saveHospital(labForm.hospital);
+      const SKIP_COUNT_KEYS = new Set(['id','date','hospital','country','doctor','fasting','note','extra_data','source_country','createdAt','_extraData','_type','_icon','_label','_summary']);
+      const dataCount = Object.keys(data).filter(k=>
+        !SKIP_COUNT_KEYS.has(k) &&
+        data[k]!==null && data[k]!==undefined && data[k]!==""
+      ).length;
+      showToast(`✅ 抽血報告已儲存（${dataCount}筆數據）`);
+      // 自動更新抽血相關追蹤提醒
+      await autoUpdateReminder("lab", labForm.date||data.date||today());
+      setLabStep("input");
+      setLabInputText("");setLabPhotos([]);
+      setLabParsed({});setLabForm({date:"",hospital:"",country:"台灣",fasting:"空腹"});
+      loadData();
+    }else{
+      showToast("❌ 儲存失敗：" + (r?.error || "請確認網路連線和Apps Script部署"));
+      setLabStep("confirm");
+    }
+  };
+
+  const toggleTrack = (key) => {
+    setTrackItems(prev => {
+      const updated = prev.includes(key) ? prev.filter(k=>k!==key) : [...prev, key];
+      localStorage.setItem("hj_track", JSON.stringify(updated));
+      api.saveSetting("trackItems", updated); // 同步到Sheets
+      return updated;
+    });
+  };
+
+  // ── 自動更新追蹤提醒（存入記錄時觸發）────────────────
+  const autoUpdateReminder=async(recordType,recordDate)=>{
+    if(!reminders||reminders.length===0)return;
+    // 配對規則：記錄類型關鍵字 → 提醒關鍵字 + 間隔月數
+    const RULES=[
+      {recKeys:["腹部超音波","腹部CT","腹部MRI","腹超"],reminderKeys:["腹","超音波","肝臟"],months:12},
+      {recKeys:["心臟超音波","心臟CT","心臟MRI","心電圖"],reminderKeys:["心臟","心血管","心電","LAD","冠狀"],months:12},
+      {recKeys:["頸動脈超音波"],reminderKeys:["頸動脈"],months:12},
+      {recKeys:["視野檢查","右眼視野"],reminderKeys:["視野"],months:12},
+      {recKeys:["眼底攝影","眼科綜合","眼底","OCT"],reminderKeys:["眼底","眼科","視網膜","OCT"],months:12},
+      {recKeys:["大腸鏡"],reminderKeys:["大腸"],months:60},
+      {recKeys:["胃鏡"],reminderKeys:["胃鏡"],months:24},
+      {recKeys:["腦部MRI","頭部CT"],reminderKeys:["腦部","神經"],months:12},
+      {recKeys:["骨密度"],reminderKeys:["骨密度"],months:24},
+      // 抽血 → 對應多種血液相關提醒（3個月）
+      {recKeys:["lab","抽血","血液"],reminderKeys:["血液","抽血","血常規","血液常規","CBC"],months:3},
+      {recKeys:["lab","抽血","肝功能"],reminderKeys:["肝功能","肝","ALT","AST","GGT","尿酸"],months:3},
+      {recKeys:["lab","抽血","腎功能"],reminderKeys:["腎功能","腎","肌酸酐","eGFR"],months:6},
+      {recKeys:["住院摘要"],reminderKeys:["心臟科","心血管"],months:6},
+    ];
+    // 找所有符合的規則（一筆抽血可能對應多項提醒）
+    const matchedRules=RULES.filter(r=>r.recKeys.some(k=>recordType.includes(k)||recordType===k));
+    if(matchedRules.length===0)return;
+    // 收集所有符合的提醒（去重）
+    const base0=new Date(recordDate);
+    if(isNaN(base0.getTime()))return;
+    let updated=0;
+    const updatedIds=new Set();
+    const localUpdates=[];
+    for(const rule of matchedRules){
+      const matched=reminders.filter(rem=>rule.reminderKeys.some(k=>(rem.title||"").includes(k)));
+      for(const rem of matched){
+        if(updatedIds.has(rem.id))continue;
+        updatedIds.add(rem.id);
+        const base=new Date(recordDate);
+        base.setMonth(base.getMonth()+rule.months);
+        const newNextDate=`${base.getFullYear()}-${String(base.getMonth()+1).padStart(2,"0")}-${String(base.getDate()).padStart(2,"0")}`;
+        const r=await api.post("updateReminder","reminders",
+          {id:rem.id,lastDate:recordDate,nextDate:newNextDate});
+        if(r?.success){updated++;localUpdates.push({id:rem.id,lastDate:recordDate,nextDate:newNextDate});}
+      }
+    }
+    if(updated>0){
+      // 立即更新本地state（靜默，不顯示Toast）
+      setReminders(prev=>prev.map(rem=>{
+        const u=localUpdates.find(x=>x.id===rem.id);
+        return u?{...rem,lastDate:u.lastDate,nextDate:u.nextDate}:rem;
+      }));
+    }
+    return;
+  };
+
+  const saveImaging = async () => {
+    if (!imagingForm.hospital) { showToast("⚠️ 請輸入醫院名稱"); return; }
+    if (!imagingForm.finding) { showToast("⚠️ 請輸入報告結論"); return; }
+    const r = await api.post("append", "imaging", {
+      date: imagingForm.date,
+      type: imagingForm.type,
+      hospital: imagingForm.hospital,
+      country: imagingForm.country,
+      finding: imagingForm.finding,
+      recommendation: imagingForm.recommendation,
+      nextDate: imagingForm.nextDate,
+      driveUrl: imagingPhotos.join(","),
+      note: imagingForm.note,
+    });
+    if (r?.success) {
+      showToast("✅ 影像檢查記錄已儲存");
+      saveHospital(imagingForm.hospital);
+      // 自動更新追蹤提醒
+      await autoUpdateReminder(imagingForm.type, imagingForm.date);
+      setImagingForm({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
+      setImagingPhotos([]);
+      loadData();
+    } else showToast("❌ 儲存失敗");
+  };
+
+  const updateImaging = async () => {
+    if (!editImaging) return;
+    if (!editImaging.hospital) { showToast("⚠️ 請輸入醫院名稱"); return; }
+    if (!editImaging.finding) { showToast("⚠️ 請輸入報告結論"); return; }
+    const r = await api.post("update", "imaging", {
+      id: editImaging.id,
+      date: editImaging.date,
+      type: editImaging.type,
+      hospital: editImaging.hospital,
+      country: editImaging.country,
+      finding: editImaging.finding,
+      recommendation: editImaging.recommendation,
+      nextDate: editImaging.nextDate,
+      driveUrl: editImaging.driveUrl||"",
+      note: editImaging.note||"",
+    });
+    if (r?.success) {
+      showToast("✅ 記錄已更新");
+      setEditImaging(null);
+      loadData();
+    } else showToast("❌ 更新失敗，請確認GAS有update功能");
+  };
+
+  const updateReminderDate=(id,lastDate)=>{
+    setReminders(prev=>{
+      const updated=prev.map(r=>{
+        if(r.id!==id)return r;
+        const next=new Date(lastDate);
+        next.setDate(next.getDate()+r.intervalDays);
+        return{...r,lastDate,nextDate:next.toISOString().split("T")[0]};
+      });
+      localStorage.setItem("hj_reminders",JSON.stringify(updated));
+      api.saveSetting("reminders", updated); // 同步到Sheets
+      return updated;
+    });
+    showToast("✅ 提醒已更新並同步到雲端");setEditReminder(null);
+  };
+
+  // 2025/03住院追蹤套組（一鍵建立）
+  const addHospitalFollowups=()=>{
+    const PACK=[
+      {id:"HF01",title:"心臟科追蹤（髂動脈瘤+LAD1狹窄）",icon:"🫀",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-09-19"},
+      {id:"HF02",title:"右眼視野複查",icon:"👁️",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-07-19"},
+      {id:"HF03",title:"眼底追蹤+OCT（視網膜退化）",icon:"👁️",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-09-19"},
+      {id:"HF04",title:"腹部超音波（脂肪肝G2+腎囊腫）",icon:"🔬",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-09-19"},
+      {id:"HF05",title:"血液常規（WBC+血小板追蹤）",icon:"🩸",intervalDays:90,lastDate:"2025-03-19",nextDate:"2025-06-19"},
+      {id:"HF06",title:"肝功能ALT+尿酸追蹤",icon:"🫁",intervalDays:90,lastDate:"2025-03-19",nextDate:"2025-06-19"},
+    ];
+    setReminders(prev=>{
+      const existIds=new Set(prev.map(r=>r.id));
+      const toAdd=PACK.filter(p=>!existIds.has(p.id));
+      if(toAdd.length===0){showToast("✅ 追蹤套組已存在，無需重複建立");return prev;}
+      const updated=[...prev,...toAdd];
+      localStorage.setItem("hj_reminders",JSON.stringify(updated));
+      api.saveSetting("reminders",updated);
+      showToast(`✅ 已建立 ${toAdd.length} 項住院追蹤提醒`);
+      return updated;
+    });
+  };
+
+  const latestGlucose=glucoseHistory.length>0?glucoseHistory[glucoseHistory.length-1]:null;
+  const latestBP=bpHistory.length>0?bpHistory[bpHistory.length-1]:null;
+  const latestWeight=weightHistory.length>0?weightHistory[weightHistory.length-1]:null;
+  const latestLab=labHistory.length>0?labHistory[labHistory.length-1]:null;
+  const overdueReminders=reminders.filter(r=>new Date(r.nextDate)<=new Date());
+
+
+
+// ── 檢驗項目說明資料庫 ────────────────────────────────
+const LAB_INFO = {
+  hba1c: {
+    name:"HbA1c（糖化血色素）",
+    desc:"反映過去2-3個月的平均血糖水平，是糖尿病診斷和控制的重要指標。",
+    range:"正常 <5.7%　糖尿病前期 5.7-6.4%　糖尿病 ≥6.5%",
+    meaning:"數值越高代表長期血糖控制越差，與心血管、腎臟、視網膜等併發症風險相關。",
+    improve:"減少精緻澱粉和甜食、規律運動、維持體重、睡眠充足",
+    related:"與空腹血糖、體重、三酸甘油酯密切相關",
+  },
+  glucose_ac: {
+    name:"空腹血糖（Fasting Glucose）",
+    desc:"禁食8小時後測量的血糖值，反映身體基礎血糖調節能力。",
+    range:"正常 70-99 mg/dL　前期 100-125　糖尿病 ≥126",
+    meaning:"空腹血糖偏高代表胰島素阻抗或胰臟功能下降，是T2D最早期指標之一。",
+    improve:"規律運動、減重、低GI飲食、避免睡前進食",
+    related:"與HbA1c、體重、三酸甘油酯、HDL相關",
+  },
+  alt: {
+    name:"ALT（丙胺酸轉胺酶）",
+    desc:"主要存在於肝細胞中，肝細胞受損時釋放入血液，是最敏感的肝功能指標。",
+    range:"正常 男性 <44 U/L　女性 <32 U/L",
+    meaning:"升高常見於脂肪肝、病毒性肝炎、藥物影響、過度飲酒。輕度升高（1-3倍）需追蹤。",
+    improve:"減重（尤其腹部脂肪）、戒酒、避免不必要藥物、規律運動",
+    related:"與體重、血脂、GGT密切相關",
+  },
+  ast: {
+    name:"AST（天門冬胺酸轉胺酶）",
+    desc:"存在於肝臟、心臟、肌肉中，比ALT更廣泛，特異性較低。",
+    range:"正常 <40 U/L",
+    meaning:"AST/ALT比值>2可能提示酒精性肝病。運動後AST也可能上升。",
+    improve:"同ALT改善方法",
+    related:"與ALT、CK、LDH相關",
+  },
+  hdl: {
+    name:"HDL-C（高密度脂蛋白）",
+    desc:"俗稱「好的膽固醇」，負責將血管中多餘膽固醇運回肝臟代謝清除。",
+    range:"正常 男性 >40 mg/dL　女性 >50 mg/dL",
+    meaning:"HDL越高越好，偏低代表心血管保護力不足，與T2D、代謝症候群相關。",
+    improve:"有氧運動（最有效）、戒菸、減少反式脂肪、適量飲酒（若無禁忌）",
+    related:"與三酸甘油酯呈反比，與體重、運動量相關",
+  },
+  ldl: {
+    name:"LDL-C（低密度脂蛋白）",
+    desc:"俗稱「壞的膽固醇」，過多時會沉積在血管壁形成動脈硬化斑塊。",
+    range:"正常 <130 mg/dL　T2D患者建議 <100 mg/dL",
+    meaning:"LDL偏高是心肌梗塞、腦中風的主要危險因子，T2D患者需嚴格控制。",
+    improve:"減少飽和脂肪和膽固醇、增加纖維攝取、規律運動",
+    related:"與總膽固醇、飲食脂肪攝取相關",
+  },
+  tg: {
+    name:"三酸甘油酯（Triglyceride）",
+    desc:"血液中最主要的脂肪形式，由飲食攝取或肝臟合成，儲存在脂肪細胞中。",
+    range:"正常 <150 mg/dL　邊緣 150-199　偏高 200-499",
+    meaning:"偏高與精緻糖、酒精攝取過多、肥胖、T2D密切相關，增加心血管風險。",
+    improve:"減少精緻糖和酒精、減重、增加omega-3攝取（魚油）",
+    related:"與HDL呈反比，與血糖、體重密切相關",
+  },
+  cholesterol: {
+    name:"總膽固醇（Total Cholesterol）",
+    desc:"血液中所有膽固醇的總和，包含HDL、LDL和其他成分。",
+    range:"正常 <200 mg/dL　邊緣 200-239　偏高 ≥240",
+    meaning:"需配合HDL/LDL比例分析，單純總膽固醇高不一定危險。",
+    improve:"均衡飲食、規律運動",
+    related:"HDL+LDL+其他脂蛋白的總和",
+  },
+  uric_acid: {
+    name:"尿酸（Uric Acid）",
+    desc:"嘌呤代謝的最終產物，由腎臟排出，過高會沉積在關節形成痛風。",
+    range:"正常 男性 3.4-7.6 mg/dL　女性 2.3-6.6",
+    meaning:"偏高與痛風、腎結石、代謝症候群、心血管疾病風險相關。",
+    improve:"多喝水（每天2L以上）、減少紅肉/海鮮/啤酒、減重",
+    related:"與腎功能、體重、飲食習慣相關",
+  },
+  creatinine: {
+    name:"肌酸酐（Creatinine）",
+    desc:"肌肉代謝產物，幾乎完全由腎臟過濾排出，是腎功能的重要指標。",
+    range:"正常 男性 0.7-1.3 mg/dL　女性 0.6-1.1",
+    meaning:"升高代表腎臟過濾功能下降，需配合eGFR一起判斷。",
+    improve:"多喝水、控制血糖血壓（T2D腎臟保護最重要）、避免腎毒性藥物",
+    related:"與eGFR、BUN、UPCR共同評估腎功能",
+  },
+  gfr: {
+    name:"eGFR（估算腎絲球過濾率）",
+    desc:"估算腎臟每分鐘能過濾多少血液，是腎功能最直接的評估指標。",
+    range:"正常 ≥60 mL/min/1.73m²　CKD分期依數值而定",
+    meaning:"數值越低代表腎功能越差，<60持續3個月以上為慢性腎臟病。",
+    improve:"控制血糖、血壓、體重，避免NSAID類止痛藥",
+    related:"與肌酸酐、UPCR、血壓、血糖密切相關",
+  },
+  upcr: {
+    name:"UPCR（尿液蛋白/肌酸酐比值）",
+    desc:"偵測尿液中是否有異常蛋白質，是糖尿病腎病變最早期的敏感指標。",
+    range:"正常 <30 mg/g　微量蛋白尿 30-300　顯性蛋白尿 >300",
+    meaning:"T2D患者UPCR偏高是腎臟早期損傷的警訊，需積極控制血糖血壓。",
+    improve:"嚴格控制血糖（HbA1c<7%）、血壓（<130/80）、ACEI/ARB藥物",
+    related:"與HbA1c、血壓、eGFR密切相關",
+  },
+  tsh: {
+    name:"TSH（甲狀腺促素）",
+    desc:"腦下垂體分泌的激素，調控甲狀腺功能，是甲狀腺疾病的第一線篩檢。",
+    range:"正常 0.34-5.60 uIU/mL",
+    meaning:"偏高=甲狀腺功能低下（疲倦、體重增加）；偏低=甲亢（心跳快、消瘦）。",
+    improve:"甲狀腺疾病需醫師治療，不能自行處理",
+    related:"T2D患者甲狀腺疾病風險較高，建議每年追蹤",
+  },
+  crp: {
+    name:"CRP（C反應蛋白）",
+    desc:"肝臟在急性發炎、感染、組織損傷時大量分泌的蛋白質，是發炎指標。",
+    range:"正常 <1.0 mg/L　輕度發炎 1-3　中度 3-10",
+    meaning:"慢性低度發炎（CRP 1-3）與T2D、心血管疾病、代謝症候群密切相關。",
+    improve:"規律運動、減重、地中海飲食、充足睡眠、戒菸",
+    related:"與血糖、血脂、體重、生活習慣相關",
+  },
+  ggt: {
+    name:"GGT（麩胺轉移酶）",
+    desc:"存在於肝臟、膽管、腎臟中，對脂肪肝和酒精性肝病特別敏感。",
+    range:"正常 男性 <60 U/L　女性 <45 U/L",
+    meaning:"GGT是脂肪肝最敏感的指標之一，飲酒後特別顯著升高。",
+    improve:"戒酒、減重（減少腹部脂肪）、規律運動",
+    related:"與ALT、體重、脂肪肝、飲酒習慣相關",
+  },
+  bun: {
+    name:"BUN（血中尿素氮）",
+    desc:"蛋白質代謝產物，由腎臟排出，反映腎功能和蛋白質攝取量。",
+    range:"正常 7-23 mg/dL",
+    meaning:"偏高可能是腎功能下降或高蛋白飲食；偏低可能是蛋白質攝取不足。",
+    improve:"適量蛋白質攝取、多喝水、控制血糖血壓",
+    related:"與肌酸酐、eGFR共同評估腎功能",
+  },
+  hb: {
+    name:"血紅素 Hb（Hemoglobin）",
+    desc:"紅血球中攜帶氧氣的蛋白質，反映貧血狀態。",
+    range:"正常 男性 13.7-17.0 g/dL",
+    meaning:"偏低代表貧血，可能影響疲勞感和運動能力；與T2D腎臟病變相關。",
+    improve:"補充鐵質、維生素B12、葉酸，治療潛在疾病",
+    related:"與RBC、HCT、MCV相關",
+  },
+  wbc: {
+    name:"WBC（白血球）",
+    desc:"免疫系統的主要細胞，負責對抗感染和異物。",
+    range:"正常 3.6-11.2 x10³/uL",
+    meaning:"偏高可能是感染、發炎、壓力；偏低可能是免疫抑制或骨髓問題。",
+    improve:"維持規律作息、均衡飲食、避免過度疲勞",
+    related:"與CRP、感染狀態相關",
+  },
+  platelet: {
+    name:"血小板（Platelet）",
+    desc:"負責血液凝固和止血的小細胞片段。",
+    range:"正常 130-400 x10³/uL",
+    meaning:"偏低增加出血風險；偏高增加血栓風險。T2D患者血小板功能常有異常。",
+    improve:"均衡飲食、避免NSAID類藥物（影響血小板功能）",
+    related:"與凝血功能、肝功能相關",
+  },
+};
+
+// ── 趨勢分析函數 ──────────────────────────────────────
+const analyzeTrend = (key, data) => {
+  if (!data || data.length < 2) return null;
+  const s = LAB_STATUS[key];
+  if (!s) return null;
+  const last = data[data.length-1]?.v;
+  const prev = data[data.length-2]?.v;
+  const first = data[0]?.v;
+  if (last===undefined || prev===undefined) return null;
+  const lastStatus = getStatus(key, last);
+  const prevStatus = getStatus(key, prev);
+  const diff = last - prev;
+  const diffPct = prev !== 0 ? ((diff/prev)*100).toFixed(1) : 0;
+  const isReverse = s.reverse; // HDL/eGFR 等越高越好
+
+  // 趨勢方向（以狀態變化為主，不只看數值方向）
+  let direction, color, icon, message;
+
+  if (Math.abs(diffPct) < 3) {
+    // 變化 < 3% 視為持平
+    direction = "stable";
+    icon = "→";
+    color = C.textMuted;
+    message = "穩定";
+  } else if (lastStatus === "ok" && prevStatus === "ok") {
+    // 兩次都正常：正常波動，不算惡化也不算改善
+    direction = "stable";
+    icon = "→";
+    color = C.textMuted;
+    message = "正常範圍內波動";
+  } else if (
+    (lastStatus === "warn" || lastStatus === "alert") &&
+    (prevStatus === "ok" || (prevStatus === "warn" && lastStatus === "alert"))
+  ) {
+    // 狀態變差：ok→warn 或 warn→alert
+    direction = "worse";
+    icon = lastStatus === "alert" ? "🔴" : "⚠️";
+    color = lastStatus === "alert" ? C.red : C.amber;
+    message = `偏高 ${Math.abs(diffPct)}%`;
+  } else if (
+    lastStatus === "ok" &&
+    (prevStatus === "warn" || prevStatus === "alert")
+  ) {
+    // 狀態改善：warn/alert→ok
+    direction = "better";
+    icon = "✅";
+    color = C.green;
+    message = `回到正常範圍`;
+  } else if ((!isReverse && diff > 0) || (isReverse && diff < 0)) {
+    // 同狀態內數值惡化方向（如 warn 內繼續升高）
+    direction = "worse";
+    icon = "▲";
+    color = lastStatus === "alert" ? C.red : C.amber;
+    message = `持續上升 ${Math.abs(diffPct)}%`;
+  } else {
+    // 同狀態內數值改善方向
+    direction = "better";
+    icon = lastStatus === "ok" ? "✅" : "▼";
+    color = lastStatus === "ok" ? C.green : C.amber;
+    message = `下降 ${Math.abs(diffPct)}%`;
+  }
+
+  // 建議文字
+  const suggestions = {
+    hba1c: {worse:"減少精緻澱粉、增加運動", better:"繼續維持良好飲食習慣", stable:"維持目前生活方式"},
+    glucose_ac: {worse:"注意睡前飲食、減少甜食", better:"血糖控制改善中", stable:"維持空腹規律"},
+    alt: {worse:"注意飲酒、避免油膩食物", better:"肝功能改善中", stable:"定期追蹤"},
+    hdl: {worse:"增加有氧運動、減少反式脂肪", better:"好膽固醇上升中", stable:"持續運動維持"},
+    ldl: {worse:"減少飽和脂肪、增加纖維攝取", better:"壞膽固醇下降中", stable:"定期追蹤"},
+    tg: {worse:"減少精緻糖和酒精", better:"三酸甘油酯改善中", stable:"定期追蹤"},
+    uric_acid: {worse:"多喝水、減少紅肉和海鮮", better:"尿酸下降中", stable:"定期追蹤"},
+    creatinine: {worse:"注意腎臟健康、多補充水分", better:"腎功能指標改善", stable:"定期追蹤"},
+    upcr: {worse:"注意腎臟早期病變", better:"蛋白尿指標改善", stable:"定期追蹤"},
+    crp: {worse:"注意發炎來源、改善生活習慣", better:"發炎指標下降", stable:"定期追蹤"},
+    ggt: {worse:"注意脂肪肝或飲酒影響", better:"肝膽指標改善", stable:"定期追蹤"},
+    ck: {worse:"避免過度激烈運動", better:"肌肉壓力減少", stable:"定期追蹤"},
+    bun: {worse:"注意腎功能或蛋白質攝取", better:"腎功能指標改善", stable:"定期追蹤"},
+    na: {worse:"注意電解質平衡", better:"鈉值趨於正常", stable:"維持均衡飲食"},
+    k: {worse:"注意電解質平衡", better:"鉀值趨於正常", stable:"維持均衡飲食"},
+    mg: {worse:"考慮補充鎂", better:"鎂值改善", stable:"維持均衡飲食"},
+    ca: {worse:"注意鈣質攝取", better:"鈣值改善", stable:"維持均衡飲食"},
+  };
+
+  const suggest = suggestions[key]?.[direction] || "定期追蹤";
+
+  // 近幾次數值
+  const recent = data.slice(-3).map(d => d.v);
+
+  return { direction, icon, color, message, suggest, recent, last, lastStatus, diffPct };
+};
+
+  // ── 折線圖 ─────────────────────────────────────────────
+  // 顏色規則：綠色=正常 紅色=超標 黃色=規格線
+    // ── 抽血報告輸入 Tab ──────────────────────────────────
+    // ── 首頁 ───────────────────────────────────────────────
+    // ── 趨勢 ───────────────────────────────────────────────
+    // ── 歷史記錄 Tab ──────────────────────────────────────
+    // ── 飲食記錄 Tab ──────────────────────────────────────
+    // ── 記錄 ───────────────────────────────────────────────
+    // ── AI分析 ─────────────────────────────────────────────
+  const generateAIReport=async()=>{
+    const key=localStorage.getItem("hj_apikey")||apiKey||"";
+    if(!key){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");return;}
+    setAiLoading(true);
+    try{
+      showToast("⏳ 連接中，約20秒...");
+      // 近7日血壓均值
+      const recentBP7=[...bpHistory].slice(-7);
+      const avgSys7=recentBP7.length>0?Math.round(recentBP7.reduce((s,r)=>s+parseInt(r.systolic||0),0)/recentBP7.length):null;
+      const avgDia7=recentBP7.length>0?Math.round(recentBP7.reduce((s,r)=>s+parseInt(r.diastolic||0),0)/recentBP7.length):null;
+      // 打卡率
+      const exHit7=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}).filter(ds=>exerciseLog.some(r=>normalizeDate(r.date)===ds)).length;
+      // 雷達分數
+      const radar=computeRadarScores(latestLab,bpHistory);
+      const radarStr=radar?radar.filter(d=>d.score!=null).map(d=>`${d.label.split("\n")[0]}:${d.score}`).join("、"):"無資料";
+      // 最近體重
+      const latestWt=weightHistory.length>0?weightHistory[weightHistory.length-1]:null;
+      // 前次抽血對比
+      const prevLab=labHistory.length>1?labHistory[labHistory.length-2]:null;
+      const hba1cTrend=prevLab&&latestLab?`${prevLab.hba1c}%→${latestLab.hba1c}%`:`${latestLab?.hba1c||"—"}%`;
+      const hdlTrend=prevLab&&latestLab?`${prevLab.hdl}→${latestLab.hdl}`:`${latestLab?.hdl||"—"}`;
+      const prompt=`你是私人健康顧問，請用繁體中文產生本週健康週報，格式如下：
+
+【本週健康週報】
+
+一、本週總評（2-3句，依數據給出整體評價）
+
+二、數據重點
+・血糖控制：HbA1c ${hba1cTrend}，空腹血糖 ${latestGlucose?.value_mgdl||"—"} mg/dL
+・血壓均值（近7筆）：${avgSys7?`${avgSys7}/${avgDia7} mmHg`:"尚無數據"}
+・血脂 HDL：${hdlTrend} mg/dL（目標>40）
+・肝功能：ALT ${latestLab?.alt||"—"} / GGT ${latestLab?.ggt||"—"}
+・體重：${latestWt?latestWt.value_kg+" kg":"尚無記錄"}
+
+三、健康雷達本週分數
+${radarStr}
+（指出最弱面向並給1句改善建議）
+
+四、本週行為達成
+・運動打卡：${exHit7}/7天
+（依達成率給予鼓勵或提醒）
+
+五、本週三大行動建議（具體可執行，針對你的弱項）
+
+六、一句鼓勵（有溫度，結合55歲在越南工作的背景）
+
+病患背景：55歲台灣男性，越南工作，父親T2D家族史
+已確診問題（2025/03/19海防國際醫院住院確診）：
+- 糖尿病前期：HbA1c ${latestLab?.hba1c||5.7}%
+- 脂肪肝 Grade II：ALT ${latestLab?.alt||63}偏高
+- HDL偏低：${latestLab?.hdl||35} mg/dL
+- 高尿酸血症：尿酸 ${latestLab?.uric_acid||7.95} mg/dL
+- 高血壓：血壓130/90，服用舒脈康5/40
+- 雙側髂總動脈瘤（Bilateral common iliac artery aneurysm）
+- 左前降支LAD1冠狀動脈35%狹窄（輕度）
+- 頸動脈輕度動脈粥樣硬化
+- 右眼視野輕度異常（需追蹤）
+- 視網膜退行性變化+黃斑部亮度差（需補充葉黃素）
+- 左側眼瞼反射R1傳導異常（眼皮已不跳）
+- WBC 3.9/PLT 145偏低
+目前用藥：舒脈康5/40（2天1次晚上）、平脂4mg（每天晚上）、保栓通75mg（每天晚上）、DHA+EPA 6粒（晚餐後）、EX NEO維他命2錠（早餐後）、強力若元9粒（早上）
+保健品：橄欖油5ml+堅果奶昔（含核桃/杏仁/南瓜子/奇亞籽/亞麻籽/燕麥/薑黃+胡椒/甜菜根粉/無糖可可）、午後黑咖啡300cc+黑巧克力85%、晚上希臘酸奶200g+奇異果（含皮）
+不要用markdown符號或*號`;
+      const result=await callAI([{role:"user",content:prompt}]);
+      setAiReport(result||"分析失敗");
+      const todayStr=new Date().toISOString().split("T")[0];
+      setAiReportDate(todayStr);
+      localStorage.setItem("hj_weekly_cache",JSON.stringify({date:todayStr,report:result}));
+    }catch(e){
+      if(e.message==="NO_API_KEY"){
+        showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");
+      }else if(e.message.includes("401")){
+        showToast("❌ API金鑰無效");setAiReport("❌ API金鑰無效");setTab("setting");
+      }else if(e.message.includes("429")){
+        showToast("❌ API使用量超限，請稍後再試");setAiReport("❌ API使用量超限");
+      }else{
+        setAiReport("❌ 分析失敗："+e.message);showToast("❌ AI分析失敗："+e.message);
+      }
+    }
+    setAiLoading(false);
+  };
+
+  // ── 階段四：異常/矛盾自動標記引擎 ───────────────────
+  const detectHealthAlerts=()=>{
+    const alerts=[];
+    const sorted=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    // 規則1：指標連續惡化（最近3次同方向）
+    const checkTrend=(key,label,dir,unit="")=>{
+      const series=sorted.filter(r=>r[key]!==null&&r[key]!==undefined&&r[key]!=="")
+        .map(r=>({date:r.date,v:parseFloat(r[key])})).filter(s=>!isNaN(s.v));
+      if(series.length<3)return;
+      const last3=series.slice(-3);
+      const worsening=dir==="low"
+        ?last3[0].v<last3[1].v&&last3[1].v<last3[2].v
+        :last3[0].v>last3[1].v&&last3[1].v>last3[2].v;
+      if(worsening){
+        alerts.push({level:"warn",icon:"📈",
+          title:`${label}連續${dir==="low"?"上升":"下降"}`,
+          desc:`近3次 ${last3.map(s=>s.v).join("→")}${unit}，持續惡化，建議追蹤原因`});
+      }
+    };
+    checkTrend("alt","ALT肝指數","low");
+    checkTrend("ast","AST肝指數","low");
+    checkTrend("uric_acid","尿酸","low");
+    checkTrend("ldl","LDL膽固醇","low");
+    checkTrend("creatinine","肌酸酐","low");
+    checkTrend("hdl","HDL好膽固醇","high");
+    checkTrend("platelet","血小板","high");
+    // 規則2：最新值超過警戒線
+    const latest=sorted[sorted.length-1];
+    if(latest){
+      const checkThreshold=(key,label,bad,dir="high")=>{
+        const v=parseFloat(latest[key]);
+        if(isNaN(v))return;
+        if((dir==="high"&&v>=bad)||(dir==="low"&&v<=bad)){
+          alerts.push({level:"warn",icon:"⚠️",title:`${label}偏${dir==="high"?"高":"低"}`,
+            desc:`最新 ${v}，已${dir==="high"?"超過":"低於"}警戒值 ${bad}`});
+        }
+      };
+      checkThreshold("alt","ALT",80,"high");
+      checkThreshold("uric_acid","尿酸",8.5,"high");
+      checkThreshold("wbc","白血球",4,"low");
+      checkThreshold("platelet","血小板",150,"low");
+      checkThreshold("hba1c","HbA1c",6.5,"high");
+    }
+    // 規則3：跨指標關聯（ALT高+脂肪肝）
+    const latestAlt=latest?parseFloat(latest.alt):NaN;
+    const hasFattyLiver=imagingHistory.some(r=>(r.finding||"").includes("脂肪肝")&&(r.finding||"").includes("II"));
+    if(!isNaN(latestAlt)&&latestAlt>50&&hasFattyLiver){
+      alerts.push({level:"alert",icon:"🔴",title:"肝臟需重點關注",
+        desc:`ALT ${latestAlt}偏高 + 脂肪肝Grade II，兩者互相印證，建議控制體重+減少精緻碳水，3個月複查肝功能`});
+    }
+    // 規則4：尿酸+ALT同時偏高
+    const latestUric=latest?parseFloat(latest.uric_acid):NaN;
+    if(!isNaN(latestAlt)&&!isNaN(latestUric)&&latestAlt>50&&latestUric>7.5){
+      alerts.push({level:"warn",icon:"🔗",title:"代謝負擔警訊",
+        desc:`ALT與尿酸同時偏高，常見於代謝症候群，注意飲食控制與水分攝取`});
+    }
+    // 規則5：結構性問題矛盾標記
+    const hasLVPW=imagingHistory.some(r=>(r.finding||"").includes("LVPWd")&&(r.finding||"").includes("18"));
+    if(hasLVPW){
+      alerts.push({level:"info",icon:"📋",title:"待複評：左心室後壁",
+        desc:"LVPWd影像值18.3mm偏高但報告判正常，建議回台灣時請心臟科複評確認"});
+    }
+    return alerts;
+  };
+
+  // ── 整體健康評估（複合視角，含睡眠/行為/結構性問題）──
+  const generateOverallReport=async(silent=false)=>{
+    const key=localStorage.getItem("hj_apikey")||apiKey||"";
+    if(!key){if(!silent){showToast("⚠️ 請先在設定Tab輸入API金鑰");setTab("setting");}return;}
+    if(labHistory.length===0){if(!silent)showToast("⚠️ 尚無抽血資料可分析");return;}
+    setOverallLoading(true);
+    try{
+      if(!silent)showToast("⏳ 讀取全部歷史分析中，約30秒...");
+      // 抽血趨勢
+      const sorted=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+      const trackKeys=[
+        {k:"hba1c",label:"HbA1c(%)"},{k:"glucose_ac",label:"空腹血糖"},
+        {k:"alt",label:"ALT"},{k:"ast",label:"AST"},{k:"ggt",label:"GGT"},
+        {k:"hdl",label:"HDL"},{k:"ldl",label:"LDL"},{k:"tg",label:"TG"},
+        {k:"uric_acid",label:"尿酸"},{k:"creatinine",label:"肌酸酐"},
+        {k:"wbc",label:"WBC"},{k:"platelet",label:"血小板"},{k:"crp",label:"CRP"},
+      ];
+      const trendLines=trackKeys.map(t=>{
+        const series=sorted.filter(r=>r[t.k]!==null&&r[t.k]!==undefined&&r[t.k]!=="")
+          .map(r=>`${String(r.date).slice(5)}:${r[t.k]}`);
+        return series.length>0?`${t.label}: ${series.join(" → ")}`:null;
+      }).filter(Boolean).join("\n");
+      // 血壓趨勢
+      const bpSorted=[...bpHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+      const bpLine=bpSorted.length>0
+        ?`血壓: ${bpSorted.slice(-10).map(r=>`${String(r.date).slice(5)}:${r.systolic}/${r.diastolic}`).join(" → ")}`
+        :"血壓: 尚無記錄";
+      // 影像診斷摘要
+      const imgSummary=imagingHistory.length>0
+        ?imagingHistory.map(r=>`・${r.date} ${r.type}: ${(r.finding||"").slice(0,80)}`).join("\n")
+        :"無影像記錄";
+      // 睡眠近4週摘要
+      const sleepSorted=[...sleepLog].filter(r=>r.date).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+      const sleepRecent=sleepSorted.slice(0,28);
+      const avgTotalMin=sleepRecent.length>0?Math.round(sleepRecent.reduce((s,r)=>s+(parseInt(r.total_min)||0),0)/sleepRecent.length):null;
+      const avgDeepPct=sleepRecent.length>0?Math.round(sleepRecent.reduce((s,r)=>s+(parseInt(r.deep_min)||0),0)/sleepRecent.reduce((s,r)=>s+(parseInt(r.total_min)||1),0)*100):null;
+      const avgScore=sleepRecent.length>0?Math.round(sleepRecent.reduce((s,r)=>s+(parseInt(r.score)||0),0)/sleepRecent.length):null;
+      const avgSpo2=sleepRecent.filter(r=>r.spo2_avg>0).length>0
+        ?Math.round(sleepRecent.filter(r=>r.spo2_avg>0).reduce((s,r)=>s+(parseInt(r.spo2_avg)||0),0)/sleepRecent.filter(r=>r.spo2_avg>0).length):null;
+      const spo2Below90Days=sleepRecent.filter(r=>parseFloat(r.spo2_below90_min)>10).length;
+      const sleepSummary=sleepRecent.length>0
+        ?`近${sleepRecent.length}天睡眠：平均${avgTotalMin}分鐘/晚，深層${avgDeepPct}%，評分${avgScore||"—"}，血氧平均${avgSpo2||"—"}%，血氧低於90%超過10分鐘共${spo2Below90Days}天`
+        :"無睡眠記錄";
+      // 運動近4週
+      const exSorted=[...exerciseLog].filter(r=>r.date).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+      const exDays28=exSorted.filter(r=>{const d=new Date(r.date);return(new Date()-d)/(1000*60*60*24)<=28;}).length;
+      const exSummary=exerciseLog.length>0?`近28天運動${exDays28}天`:"無運動記錄";
+      const prompt=`你是一位資深內科主治醫師兼複合健康顧問，正在為長期追蹤的病患做整體健康評估。請從複合視角分析，不要單點看待個別指標，要找出各維度之間的因果關聯。用繁體中文，不要用markdown符號或*號。
+
+【病患基本資料】
+55歲台灣男性，越南海防工作，與家人分隔兩地，父親T2D家族史。
+
+【2025/03/19住院確診七項並發診斷】
+①高血壓（血壓130/90）
+②雙側髂總動脈瘤（結構性，需定期追蹤）
+③左前降支LAD1冠狀動脈35%狹窄（輕度）
+④肝酶升高（ALT 63.54）
+⑤高尿酸血症（7.95 mg/dL）
+⑥脂肪肝 Grade II（從G1惡化）
+⑦眼瞼肌束顫動左側（已緩解）
+附加：右眼視野輕度異常、視網膜退化+黃斑部亮度差、頸動脈輕度粥樣硬化、LVPWd 18.3mm待複評、WBC/PLT偏低
+
+【目前用藥】
+舒脈康5/40（2天1次晚）、平脂4mg（每天晚）、保栓通Plavix 75mg（每天晚）、悠樂丁2mg（偶爾睡前）
+
+【保健品與飲食習慣】
+早餐（每天固定）：堅果奶昔（核桃/杏仁/南瓜子/奇亞籽/亞麻籽/黑芝麻粉/燕麥/薑黃/甜菜根粉/無糖可可）+雞蛋2-3顆+酪梨180g+蘋果200g+香蕉1根
+午晚：公司自助餐只吃菜+蛋白質，不吃白飯；週末麵食為主（最大血糖風險）
+晚上固定：橄欖油5ml、希臘酸奶150g+藍莓50g、奇異果1顆
+DHA+EPA 6粒晚餐後、EX NEO 2錠早、強力若元9粒早
+
+【抽血核心指標歷次趨勢】
+${trendLines}
+${bpLine}
+
+【影像與結構診斷記錄】
+${imgSummary}
+
+【睡眠數據（Samsung Watch 7）】
+${sleepSummary}
+注意：悠樂丁（BZD）會抑制深層睡眠，睡眠不足直接影響血糖、血壓、HDL、荷爾蒙。
+
+【行為數據】
+${exSummary}
+
+請依以下結構分析：
+
+【整體健康評估報告】
+
+一、健康全貌
+（從複合視角總結：這7項診斷之間的核心連結是什麼？最根本的健康主軸是什麼？2-3句）
+
+二、各維度趨勢（改善↑/持平→/惡化↓）
+（抽血指標、血壓、睡眠、體重各自方向，用箭頭標示）
+
+三、複合因果關聯
+（重點找出：哪些問題互相加重？例如睡眠差→血糖控制差→脂肪肝惡化→尿酸升高的連鎖；血壓未達標→動脈瘤風險加大的關係）
+
+四、結構性問題追蹤
+（動脈瘤、LAD1狹窄、視網膜退化等不出現在抽血的問題，目前狀態與追蹤重點）
+
+五、本週需要注意的紅旗
+（2-4項最需要立即關注的複合發現，每項標明涉及哪些維度）
+
+六、下次看診/抽血重點
+（具體建議追蹤哪些指標，與哪個科別）
+
+七、一句話總結`;
+      const result=await callAI([{role:"user",content:prompt}],2500);
+      setOverallReport(result||"分析失敗");
+      const stamp=new Date().toISOString().split("T")[0];
+      setOverallDate(stamp);
+      localStorage.setItem("hj_overall_cache",JSON.stringify({date:stamp,report:result}));
+    }catch(e){
+      if(e.message==="NO_API_KEY"){if(!silent){showToast("⚠️ 請先設定API金鑰");setTab("setting");}}
+      else if(e.message.includes("401")){if(!silent){showToast("❌ API金鑰無效");setTab("setting");}}
+      else if(e.message.includes("429")){if(!silent)showToast("❌ API使用量超限");}
+      else{setOverallReport("❌ 分析失敗："+e.message);if(!silent)showToast("❌ "+e.message);}
+    }
+    setOverallLoading(false);
+  };
+
+  // ★ v4.71 移除每週評估/每日問候自動API呼叫（v4.69規格）：改為UI內「⏰該更新了」提示+手動按鈕
+
+  // ── 載入後自動同步所有追蹤提醒日期（session只跑一次）──
+  const reminderSyncDone=React.useRef(false);
+  React.useEffect(()=>{
+    if(loading)return;
+    if(!reminders||reminders.length===0)return;
+    if(labHistory.length===0&&imagingHistory.length===0)return;
+    if(reminderSyncDone.current)return; // session內只跑一次
+    // 每天只跑一次（跨session保護）
+    const todayStr=new Date().toISOString().split("T")[0];
+    if(localStorage.getItem("hj_reminder_sync_date")===todayStr){
+      reminderSyncDone.current=true;return;
+    }
+    reminderSyncDone.current=true; // 先鎖定，防止重複
+    const SYNC=[
+      {remKeys:["肝功能","ALT","尿酸"],src:"lab",months:3},
+      {remKeys:["血液常規","血常規","WBC","血小板"],src:"lab",months:3},
+      {remKeys:["腎功能","肌酸酐","eGFR"],src:"lab",months:6},
+      {remKeys:["眼底","視網膜","OCT"],src:"img",imgKey:"眼",months:12},
+      {remKeys:["視野"],src:"img",imgKey:"視野",months:12},
+      {remKeys:["心臟科","心電圖","心血管","LAD","冠狀"],src:"img",imgKey:"心",months:12},
+      {remKeys:["腹部","超音波","脂肪肝","肝囊","腎囊"],src:"img",imgKey:"腹",months:6},
+      {remKeys:["頸動脈"],src:"img",imgKey:"頸",months:12},
+    ];
+    const latestLabDate=labHistory.length>0
+      ?[...labHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0].date:null;
+    const getLatestImgDate=(kw)=>{
+      const m=[...imagingHistory].filter(r=>(r.type||"").includes(kw)||(r.finding||"").includes(kw))
+        .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+      return m.length>0?m[0].date:null;
+    };
+    const addMonths=(dateStr,months)=>{
+      const d=new Date(dateStr);if(isNaN(d.getTime()))return null;
+      d.setMonth(d.getMonth()+months);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    };
+    const updates=[];
+    for(const rem of reminders){
+      const title=rem.title||"";
+      const rule=SYNC.find(s=>s.remKeys.some(k=>title.includes(k)));
+      if(!rule)continue;
+      const srcDate=rule.src==="lab"?latestLabDate:getLatestImgDate(rule.imgKey);
+      if(!srcDate)continue;
+      if(rem.lastDate&&String(srcDate)<=String(rem.lastDate))continue;
+      const newNext=addMonths(srcDate,rule.months);
+      if(!newNext)continue;
+      updates.push({id:rem.id,lastDate:srcDate,nextDate:newNext});
+    }
+    if(updates.length===0){
+      localStorage.setItem("hj_reminder_sync_date",todayStr);
+      return;
+    }
+    (async()=>{
+      // 直接更新本地state
+      const newReminders=reminders.map(rem=>{
+        const u=updates.find(x=>x.id===rem.id);
+        return u?{...rem,lastDate:u.lastDate,nextDate:u.nextDate}:rem;
+      });
+      setReminders(newReminders);
+      // 同步寫回 user_settings（App讀取來源，直接傳陣列不需stringify）
+      try{
+        await api.saveSetting("reminders", newReminders);
+        localStorage.setItem("hj_reminders",JSON.stringify(newReminders));
+      }catch(e){console.log("reminder sync error",e);}
+      localStorage.setItem("hj_reminder_sync_date",todayStr);
+    })();
+  },[loading]);
+
+    // ── 知識庫 ─────────────────────────────────────────────
+      // 健康知識文章卡片
+    // ── 設定 ───────────────────────────────────────────────
+    const TABS=[
     {key:"home",label:"首頁",icon:<HomeIcon/>},
     {key:"trend",label:"趨勢",icon:<TrendIcon/>},
     {key:"record",label:"記錄",icon:<RecordIcon/>},
@@ -7362,6 +7447,8 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
     {key:"setting",label:"設定",icon:<SettingIcon/>},
   ];
 
+  // ★ v4.74 元件context：集中傳遞父層state/函數給模組層元件
+  const hj={addHospitalFollowups,aiLoading,aiReport,aiReportDate,analyzeTrend,apiKey,bpForm,bpHistory,customArticles,dailyGreeting,deleteBP,detectHealthAlerts,editBPRecord,editReminder,editSleepRecord,emptySleepForm,exerciseLog,generateAIReport,generateDailyGreeting,generateOverallReport,glucoseForm,glucoseHistory,greetingLoading,handlePhotoChange,hospitalList,imagingForm,imagingHistory,imagingPhotoRef,imagingPhotos,isOnline,kbTab,labForm,labHistory,labInputText,labParsed,labPhotos,labStep,lastSync,latestLab,lightboxUrl,loadData,loading,overallDate,overallLoading,overallReport,overdueReminders,parseLabText,photoInputRef,recordTab,reminderSyncDone,reminders,saveBP,saveGlucose,saveImaging,saveLabReport,saveWeight,selectedArticle,selectedKnowledge,selectedMedicine,setAiReport,setAiReportDate,setApiKey,setBpForm,setCustomArticles,setDailyGreeting,setEditBPRecord,setEditImaging,setEditReminder,setEditSleepRecord,setExerciseLog,setGlucoseForm,setHospitalList,setImagingForm,setImagingPhotos,setKbTab,setLabForm,setLabInputText,setLabParsed,setLabPhotos,setLabStep,setLightboxUrl,setOverallDate,setOverallReport,setRecordTab,setReminders,setSelectedArticle,setSelectedKnowledge,setSelectedMedicine,setShowAddArticle,setShowOverdue,setShowPhotoWarning,setShowSleepPaste,setShowTrackPicker,setSleepAnalysis,setSleepAnalyzing,setSleepForm,setSleepLog,setSleepPasteText,setTab,setTrackItems,setTrendAiKey,setTrendAiLoading,setTrendAiResult,setTrendItem,setWeightForm,showAddArticle,showOverdue,showSleepPaste,showToast,showTrackPicker,sleepAnalysis,sleepAnalyzing,sleepForm,sleepLog,sleepPasteText,syncStatus,toggleTrack,trackItems,trendAiKey,trendAiLoading,trendAiResult,trendItem,updateBP,updateReminderDate,weightForm,weightHistory};
   return(
     <>
       <style>{styles}</style>
@@ -7495,12 +7582,12 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
         </div>
       )}
       <div style={{maxWidth:480,margin:"0 auto",minHeight:"100vh",background:C.bg}}>
-        {tab==="home"&&<HomeTab/>}
-        {tab==="trend"&&<TrendTab/>}
-        {tab==="record"&&<RecordTab/>}
-        {tab==="ai"&&<AITab/>}
-        {tab==="knowledge"&&<KnowledgeTab/>}
-        {tab==="setting"&&<SettingTab/>}
+        {tab==="home"&&<HomeTab hj={hj}/>}
+        {tab==="trend"&&<TrendTab hj={hj}/>}
+        {tab==="record"&&<RecordTab hj={hj}/>}
+        {tab==="ai"&&<AITab hj={hj}/>}
+        {tab==="knowledge"&&<KnowledgeTab hj={hj}/>}
+        {tab==="setting"&&<SettingTab hj={hj}/>}
         <div className="tab-bar">
           {TABS.map(t=>(
             <button key={t.key} className={`tab-btn ${tab===t.key?"active":""}`}
