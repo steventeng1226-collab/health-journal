@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.72"; // v4.72: GAS請求15秒timeout+快取限90天日常記錄防爆量+影像編輯Modal照片直接上傳
+const VERSION = "v4.73"; // v4.73: 取消早餐打卡(固定早餐無需打卡)+早餐/晚上固定清單更新(香蕉/藍莓新增,橄欖油移晚上,份量校正)
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // Claude API 直接呼叫
 const callClaude = async (messages, maxTokens=1000) => {
@@ -1247,7 +1247,6 @@ export default function HealthJournal(){
   const [trendAiLoading,setTrendAiLoading]=useState(false);
   const [imagingForm,setImagingForm]=useState({date:today(),type:"腹部超音波",hospital:"",country:"台灣",finding:"",recommendation:"",nextDate:"",note:""});
   const [editImaging,setEditImaging]=useState(null);
-  const [breakfastLog,setBreakfastLog]=useState([]);
   const [exerciseLog,setExerciseLog]=useState([]);
   const [imagingPhotos,setImagingPhotos]=useState([]);
   const imagingPhotoRef = React.useRef();
@@ -1415,7 +1414,6 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
         if(cached.wt)setWeightHistory(cached.wt);
         if(cached.sleep)setSleepLog(cached.sleep);
         if(cached.imaging)setImagingHistory(cached.imaging);
-        if(cached.bkf)setBreakfastLog(cached.bkf);
         if(cached.ex)setExerciseLog(cached.ex);
       }
     }catch(e){}
@@ -1423,14 +1421,13 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
     setSyncStatus("syncing");
     try{
       const cacheObj={};
-      const [lab,glu,bp,wt,settings,imaging,bkf,exLog,slp]=await Promise.all([
+      const [lab,glu,bp,wt,settings,imaging,exLog,slp]=await Promise.all([
         api.get("getLabHistory"),
         api.get("getAll",{sheet:"daily_glucose"}),
         api.get("getAll",{sheet:"daily_bp"}),
         api.get("getAll",{sheet:"daily_weight"}),
         api.loadSettings(),
         api.get("getAll",{sheet:"imaging"}),
-        api.get("getAll",{sheet:"breakfast_log"}),
         api.get("getAll",{sheet:"exercise_log"}),
         api.get("getAll",{sheet:"sleep_log"}),
       ]);
@@ -1438,7 +1435,6 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
       if(glu?.data){setGlucoseHistory(glu.data);cacheObj.glu=glu.data;}
       if(bp?.data){setBpHistory(bp.data);cacheObj.bp=bp.data;}
       if(wt?.data){setWeightHistory(wt.data);cacheObj.wt=wt.data;}
-      if(bkf?.data){const v=bkf.data.filter(r=>r.date&&String(r.date).trim());setBreakfastLog(v);cacheObj.bkf=v;}
       if(exLog?.data){const v=exLog.data.filter(r=>r.date&&String(r.date).trim());setExerciseLog(v);cacheObj.ex=v;}
       if(slp?.data){const v=slp.data.filter(r=>r.date&&String(r.date).trim());setSleepLog(v);cacheObj.sleep=v;}
       if(imaging?.data){
@@ -1459,7 +1455,7 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
         localStorage.setItem("hj_data_cache",JSON.stringify({
           ...cacheObj,
           glu:recent(cacheObj.glu),bp:recent(cacheObj.bp),wt:recent(cacheObj.wt),
-          sleep:recent(cacheObj.sleep),bkf:recent(cacheObj.bkf),ex:recent(cacheObj.ex),
+          sleep:recent(cacheObj.sleep),ex:recent(cacheObj.ex),
         }));
       }catch(e){console.log("快取寫入失敗(可能超過容量):",e);}
       lastLoadRef.current=Date.now();
@@ -2724,14 +2720,8 @@ const analyzeTrend = (key, data) => {
         const prevTotal=prevValid.length>0?Math.round(prevValid.reduce((s,d)=>s+d.score,0)/prevValid.length*10):null;
         const diff=prevTotal!=null&&total!=null?total-prevTotal:null;
         const scoreColor=total==null?C.textMuted:total>=75?C.green:total>=60?C.amber:C.red;
-        // 早餐打卡
-        const bkfDates=new Set(breakfastLog.map(r=>normalizeDate(r.date)));
+        // ★ v4.73 取消早餐打卡（固定早餐無需打卡）
         const todayStr=today();
-        const bkfToday=bkfDates.has(todayStr);
-        let bkfStreak=0;
-        const bd=new Date();
-        if(!bkfToday)bd.setDate(bd.getDate()-1);
-        while(true){const ds=`${bd.getFullYear()}-${String(bd.getMonth()+1).padStart(2,"0")}-${String(bd.getDate()).padStart(2,"0")}`;if(bkfDates.has(ds)){bkfStreak++;bd.setDate(bd.getDate()-1);}else break;}
         // 運動打卡
         const exDates=new Set(exerciseLog.map(r=>normalizeDate(r.date)));
         const todayEx=exerciseLog.find(r=>normalizeDate(r.date)===todayStr);
@@ -2766,25 +2756,6 @@ const analyzeTrend = (key, data) => {
             )}
             {/* 中部：打卡狀態橫排 */}
             <div style={{display:"flex",gap:8,marginBottom:exToday?0:10}}>
-              {/* 早餐 */}
-              <div style={{flex:1,textAlign:"center"}}>
-                <div style={{fontSize:18,marginBottom:2}}>{bkfToday?"✅":"🍳"}</div>
-                <div style={{fontSize:11,fontWeight:600,color:bkfToday?C.green:C.text}}>早餐</div>
-                <div style={{fontSize:10,color:C.textMuted}}>🔥{bkfStreak}天</div>
-                {!bkfToday&&(
-                  <button onClick={async()=>{
-                    const r=await api.post("append","breakfast_log",{id:Date.now(),date:todayStr,checked:1});
-                    if(r&&!r.error){setBreakfastLog(prev=>[...prev,{date:todayStr,checked:1}]);showToast("✅ 早餐打卡！");}
-                    else showToast("❌ 打卡失敗");
-                  }}
-                    style={{marginTop:4,padding:"4px 8px",borderRadius:8,fontSize:11,cursor:"pointer",
-                      background:C.green,border:"none",color:"#0a0a0a",fontFamily:"'Noto Sans TC',sans-serif",fontWeight:700}}>
-                    打卡
-                  </button>
-                )}
-              </div>
-              {/* 分隔線 */}
-              <div style={{width:1,background:C.border}}/>
               {/* 運動 */}
               <div style={{flex:1,textAlign:"center"}}>
                 <div style={{fontSize:18,marginBottom:2}}>{exToday?"✅":"🏃"}</div>
@@ -3154,7 +3125,6 @@ const analyzeTrend = (key, data) => {
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {(()=>{
             const todayStr=today();
-            const bkfDone=breakfastLog.some(r=>normalizeDate(r.date)===todayStr);
             const exDone=exerciseLog.some(r=>normalizeDate(r.date)===todayStr);
             const bpDone=bpHistory.some(r=>normalizeDate(r.date)===todayStr);
             const gluDone=glucoseHistory.some(r=>normalizeDate(r.date)===todayStr);
@@ -5451,7 +5421,6 @@ REM（分鐘）：
       const avgSys7=recentBP7.length>0?Math.round(recentBP7.reduce((s,r)=>s+parseInt(r.systolic||0),0)/recentBP7.length):null;
       const avgDia7=recentBP7.length>0?Math.round(recentBP7.reduce((s,r)=>s+parseInt(r.diastolic||0),0)/recentBP7.length):null;
       // 打卡率
-      const bkfHit7=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}).filter(ds=>breakfastLog.some(r=>normalizeDate(r.date)===ds)).length;
       const exHit7=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}).filter(ds=>exerciseLog.some(r=>normalizeDate(r.date)===ds)).length;
       // 雷達分數
       const radar=computeRadarScores(latestLab,bpHistory);
@@ -5480,7 +5449,6 @@ ${radarStr}
 （指出最弱面向並給1句改善建議）
 
 四、本週行為達成
-・早餐打卡：${bkfHit7}/7天
 ・運動打卡：${exHit7}/7天
 （依達成率給予鼓勵或提醒）
 
@@ -5655,8 +5623,9 @@ ${radarStr}
 舒脈康5/40（2天1次晚）、平脂4mg（每天晚）、保栓通Plavix 75mg（每天晚）、悠樂丁2mg（偶爾睡前）
 
 【保健品與飲食習慣】
-早餐：堅果奶昔（核桃/杏仁/南瓜子/奇亞籽/亞麻籽/燕麥/薑黃/甜菜根粉/無糖可可）+雞蛋2-3顆+酪梨+橄欖油5ml
+早餐（每天固定）：堅果奶昔（核桃/杏仁/南瓜子/奇亞籽/亞麻籽/黑芝麻粉/燕麥/薑黃/甜菜根粉/無糖可可）+雞蛋2-3顆+酪梨180g+蘋果200g+香蕉1根
 午晚：公司自助餐只吃菜+蛋白質，不吃白飯；週末麵食為主（最大血糖風險）
+晚上固定：橄欖油5ml、希臘酸奶150g+藍莓50g、奇異果1顆
 DHA+EPA 6粒晚餐後、EX NEO 2錠早、強力若元9粒早
 
 【抽血核心指標歷次趨勢】
@@ -6608,11 +6577,10 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
           const MEALS=[
             {order:1,label:"蛋白質＋蔬菜",items:[
               {name:"雞蛋",qty:"2-3顆",benefits:["優質蛋白飽腹延緩血糖上升","卵磷脂護大腦和肝臟","維生素D+B12"],organs:["血糖","大腦","肝臟"]},
-              {name:"青菜",qty:"有就吃",benefits:["膳食纖維穩血糖","葉酸護心血管","低卡飽腹"],organs:["血糖","心血管"]},
+              {name:"青菜",qty:"有就吃（每天中、晚一定會吃）",benefits:["膳食纖維穩血糖","葉酸護心血管","低卡飽腹"],organs:["血糖","心血管"]},
             ]},
             {order:2,label:"好油",items:[
               {name:"酪梨",qty:"180g",benefits:["單元不飽和脂肪直接升HDL","鉀降血壓","葉黃素護眼"],organs:["血脂HDL","心血管"]},
-              {name:"橄欖油",qty:"5ml 直接喝",benefits:["多酚Oleocanthal抗發炎護肝","升HDL","改善脂肪肝有實證"],organs:["肝臟","血脂HDL","發炎/其他"]},
             ]},
             {order:3,label:"🥤 堅果奶昔（果汁機攪拌）",isShake:true,items:[
               {name:"核桃",qty:"20g",benefits:["ALA Omega-3護大腦和血管","降LDL","多酚抗氧化"],organs:["大腦","血脂HDL"]},
@@ -6622,33 +6590,26 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
               {name:"亞麻籽",qty:"15g",benefits:["木酚素抗發炎降雌激素","Omega-3降TG","纖維護腸道"],organs:["血脂HDL","發炎/其他"]},
               {name:"黑芝麻粉",qty:"10g",benefits:["芝麻素護肝抗氧化","鈣強骨","芝麻素輕微降血壓"],organs:["肝臟","心血管"]},
               {name:"燕麥",qty:"20g",benefits:["β-葡聚醣降LDL有強力實證","穩血糖減峰值","腸道益生元"],organs:["血糖","血脂HDL"]},
-              {name:"無糖可可",qty:"3g",benefits:["黃烷醇擴張血管降血壓","護大腦認知","抗氧化"],organs:["心血管","大腦"]},
-              {name:"薑黃",qty:"1.5g＋少量胡椒",benefits:["薑黃素強效抗發炎，胡椒增吸收20倍","護肝減脂肪肝","可能改善胰島素敏感性"],organs:["發炎/其他","肝臟","血糖"]},
+              {name:"無糖可可",qty:"3–5g",benefits:["黃烷醇擴張血管降血壓","護大腦認知","抗氧化"],organs:["心血管","大腦"]},
+              {name:"薑黃",qty:"1.5–2g＋少量黑胡椒粉",benefits:["薑黃素強效抗發炎，胡椒增吸收20倍","護肝減脂肪肝","可能改善胰島素敏感性"],organs:["發炎/其他","肝臟","血糖"]},
               {name:"甜菜根粉",qty:"3g（Datino）",benefits:["硝酸鹽→一氧化氮→擴張血管降血壓","改善全身血液循環","運動耐力+性功能血流相關"],organs:["心血管","血脂HDL"]},
             ]},
             {order:4,label:"水果",items:[
-              {name:"蘋果",qty:"180g",benefits:["果膠降膽固醇護腸道","槲皮素抗發炎","低GI穩血糖"],organs:["血脂HDL","血糖"]},
+              {name:"蘋果",qty:"200g",benefits:["果膠降膽固醇護腸道","槲皮素抗發炎","低GI穩血糖"],organs:["血脂HDL","血糖"]},
+              {name:"香蕉",qty:"1根",benefits:["鉀422mg降血壓（與酪梨加成）","維生素B6護神經","中GI水果：與堅果蛋白同餐可延緩血糖上升"],organs:["心血管","血糖"]},
             ]},
             {order:5,label:"補充品",items:[
-              {name:"EX NEO 力卡維他命",qty:"2錠",benefits:["B1預防神經病變（糖尿病前期必備）","B12 1,500μg超高劑量護周邊神經","B6+E抗氧化，緩解眼疲勞肩頸腰痛"],organs:["血糖","大腦"]},
+              {name:"EX NEO 力卡維他命",qty:"2錠（每日早上）",benefits:["B1預防神經病變（糖尿病前期必備）","B12 1,500μg超高劑量護周邊神經","B6+E抗氧化，緩解眼疲勞肩頸腰痛"],organs:["血糖","大腦"]},
               {name:"強力若元 Wakamoto",qty:"9粒",benefits:["釀酒酵母+乳酸菌整腸","澱粉酶幫助消化","與晚上希臘酸奶益生菌加成護腸道"],organs:["腸道","血糖"]},
             ]},
           ];
           const DINNER=[
-            {name:"希臘酸奶",qty:"200g（Farmers Union）",benefits:["高蛋白16g助肌肉修復","益生菌改善腸道","鈣538mg強骨，No Sugar Added血糖友善","酪蛋白慢消化穩定夜間血糖"],organs:["血糖","腸道","骨骼"],meds:"💊 同時服藥：平脂 Zulitor、保栓通 Plavix（每天）；舒脈康 Sevikar（2天1次）"},
+            {name:"橄欖油",qty:"5ml 直接喝",benefits:["多酚Oleocanthal抗發炎護肝","升HDL","改善脂肪肝有實證"],organs:["肝臟","血脂HDL","發炎/其他"]},
+            {name:"希臘酸奶",qty:"150g（Farmers Union）",benefits:["高蛋白16g助肌肉修復","益生菌改善腸道","鈣538mg強骨，No Sugar Added血糖友善","酪蛋白慢消化穩定夜間血糖"],organs:["血糖","腸道","骨骼"],meds:"💊 同時服藥：平脂 Zulitor、保栓通 Plavix（每天）；舒脈康 Sevikar（2天1次）"},
             {name:"ORIHIRO DHA+EPA",qty:"6粒",benefits:["DHA 780mg降中性脂肪、護大腦記憶","EPA 80mg抗發炎保護心血管","Omega-3組合對你的HDL偏低有幫助"],organs:["血脂HDL","大腦","心血管"],meds:"⚠️ 注意：你同時服用保栓通Plavix（抗血小板），高劑量Omega-3也有抗凝血效果，出血風險疊加。建議告知開立Plavix的醫師確認此劑量安全性，並注意瘀青/出血徵兆"},
+            {name:"藍莓",qty:"50g（配希臘酸奶）",benefits:["花青素抗氧化護血管與視網膜（對你的視網膜退化有幫助）","改善胰島素敏感性","低GI莓果，配酸奶血糖友善"],organs:["心血管","血糖","發炎/其他"]},
             {name:"奇異果",qty:"1顆",benefits:["維生素C超高（每顆約100mg）抗氧化","鉀降血壓","纖維改善腸道","血清素前驅物助睡眠"],organs:["心血管","腸道","血液"]},
           ];
-          const dates=new Set(breakfastLog.map(r=>normalizeDate(r.date)));
-          const todayStr=today();
-          const checkedToday=dates.has(todayStr);
-          let streak=0;
-          const d=new Date();
-          if(!checkedToday)d.setDate(d.getDate()-1);
-          while(true){
-            const ds=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-            if(dates.has(ds)){streak++;d.setDate(d.getDate()-1);}else break;
-          }
           const ItemCard=({item,dinnerMode})=>(
             <div style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px",marginBottom:6}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
@@ -6672,24 +6633,10 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
           );
           return(
             <>
-              {/* 打卡 */}
-              <div className="card" style={{padding:"12px",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-                <div>
-                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>🍳 今日早餐</div>
-                  <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>🔥 連續 {streak} 天 · 共 {breakfastLog.length} 次</div>
-                </div>
-                <button disabled={checkedToday}
-                  onClick={async()=>{
-                    const r=await api.post("append","breakfast_log",{id:Date.now(),date:todayStr,checked:1});
-                    if(r&&!r.error){setBreakfastLog(prev=>[...prev,{date:todayStr,checked:1}]);showToast("✅ 早餐打卡成功！");}
-                    else showToast("❌ 打卡失敗");
-                  }}
-                  style={{padding:"10px 18px",borderRadius:12,fontSize:13,fontWeight:700,cursor:checkedToday?"default":"pointer",
-                    background:checkedToday?"rgba(46,204,138,0.12)":C.green,
-                    border:"none",color:checkedToday?C.green:"#0a0a0a",
-                    fontFamily:"'Noto Sans TC',sans-serif"}}>
-                  {checkedToday?"✅ 已打卡":"打卡"}
-                </button>
+              {/* ★ v4.73 固定早餐標題（取消打卡）*/}
+              <div className="card" style={{padding:"12px",marginBottom:4}}>
+                <div style={{fontSize:13,fontWeight:700,color:C.text}}>🍳 固定早餐清單</div>
+                <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>每天固定執行 · 定期抽血驗證效果</div>
               </div>
               {/* 早餐整體策略摘要 */}
               <div className="card" style={{marginBottom:12,background:"rgba(46,204,138,0.04)",border:`1px solid ${C.green}44`}}>
@@ -7143,7 +7090,6 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
             // 用藥清單（取我的用藥及保健清單）
             const medList=myMeds.length>0?myMeds.map(m=>`${m.name}　${m.dose||""}　${m.freq||""}　${m.timing||""}`).join("<br/>"):"（請至知識庫→藥物→我的用藥及保健清單填寫）";
             // 打卡統計
-            const bkfHit30=Array.from({length:30},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}).filter(ds=>breakfastLog.some(r=>normalizeDate(r.date)===ds)).length;
             const exHit7=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}).filter(ds=>exerciseLog.some(r=>normalizeDate(r.date)===ds)).length;
             const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>健康摘要報告</title>
 <style>body{font-family:'Microsoft JhengHei',sans-serif;max-width:720px;margin:0 auto;padding:30px;color:#222;font-size:14px}
@@ -7167,7 +7113,7 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
 <h2>目前用藥及保健清單</h2>
 <div class="box">${medList}</div>
 <h2>生活習慣達成率</h2>
-<div class="box">早餐打卡近30天：${bkfHit30}/30 天（${Math.round(bkfHit30/30*100)}%）<br/>運動打卡本週：${exHit7}/7 天</div>
+<div class="box">運動打卡本週：${exHit7}/7 天</div>
 <div class="meta" style="margin-top:24px;padding-top:12px;border-top:1px solid #ddd">本報告由健康日誌App v${VERSION}自動產生，僅供醫師參考，實際診斷以醫師判斷為準。</div>
 </body></html>`;
             const win=window.open("","_blank");
@@ -7194,7 +7140,6 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
                   bp:bpHistory.length,
                   glucose:glucoseHistory.length,
                   weight:weightHistory.length,
-                  breakfast:breakfastLog.length,
                   exercise:exerciseLog.length,
                   lastSync:lastSync?lastSync.toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit"}):"—",
                 });
@@ -7221,7 +7166,7 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
                     <span style={{fontSize:11,color:C.textMuted}}>上次同步 {connInfo.lastSync}</span>
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-                    {[{label:"抽血",n:connInfo.lab},{label:"血壓",n:connInfo.bp},{label:"血糖",n:connInfo.glucose},{label:"體重",n:connInfo.weight},{label:"早餐",n:connInfo.breakfast},{label:"運動",n:connInfo.exercise}].map(s=>(
+                    {[{label:"抽血",n:connInfo.lab},{label:"血壓",n:connInfo.bp},{label:"血糖",n:connInfo.glucose},{label:"體重",n:connInfo.weight},{label:"運動",n:connInfo.exercise}].map(s=>(
                       <div key={s.label} style={{background:C.bg,borderRadius:8,padding:"6px 8px",textAlign:"center"}}>
                         <div style={{fontSize:14,fontWeight:700,color:s.n>0?C.green:C.amber}}>{s.n}</div>
                         <div style={{fontSize:10,color:C.textMuted}}>{s.label}筆</div>
@@ -7266,7 +7211,6 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
               csv+=toCSV(weightHistory,"體重 daily_weight");
               csv+=toCSV(sleepLog,"睡眠 sleep_log");
               csv+=toCSV(imagingHistory,"影像 imaging");
-              csv+=toCSV(breakfastLog,"早餐 breakfast_log");
               csv+=toCSV(exerciseLog,"運動 exercise_log");
               const meds=JSON.parse(localStorage.getItem("hj_mymeds")||"[]");
               csv+=toCSV(meds,"用藥清單 my_meds");
