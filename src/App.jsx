@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.77"; // v4.77: 星等一覽表新增午後區（黑咖啡+黑巧克力85%）
+const VERSION = "v4.78"; // v4.78: 錯誤攔截層（白畫面改為顯示錯誤訊息+診斷資訊+清快取按鈕）
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
 const GEMINI_MODEL = "gemini-3.5-flash";
@@ -5941,7 +5941,99 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
     );
   };
 
-export default function HealthJournal(){
+// ★ v4.78 錯誤攔截層：任何渲染錯誤不再變白畫面，直接把原因顯示在螢幕上
+class ErrorCatcher extends React.Component{
+  constructor(p){super(p);this.state={err:null,info:null,globalErr:null};}
+  static getDerivedStateFromError(err){return{err};}
+  componentDidCatch(err,info){
+    this.setState({info});
+    try{localStorage.setItem("hj_last_error",JSON.stringify({
+      v:VERSION,time:new Date().toISOString(),
+      msg:String(err&&err.message||err),
+      stack:String(err&&err.stack||"").split("\n").slice(0,8).join("\n"),
+      comp:String(info&&info.componentStack||"").split("\n").slice(0,8).join("\n"),
+    }));}catch(e){}
+  }
+  componentDidMount(){
+    // 攔截非渲染期的錯誤（事件、Promise），避免靜默失敗
+    this._onErr=(e)=>{this.setState(s=>s.globalErr?s:{globalErr:String(e.message||e.reason||e)});};
+    window.addEventListener("error",this._onErr);
+    window.addEventListener("unhandledrejection",this._onErr);
+  }
+  componentWillUnmount(){
+    window.removeEventListener("error",this._onErr);
+    window.removeEventListener("unhandledrejection",this._onErr);
+  }
+  render(){
+    if(!this.state.err){
+      return(<>
+        {this.props.children}
+        {this.state.globalErr&&(
+          <div style={{position:"fixed",bottom:70,left:8,right:8,zIndex:9999,background:"rgba(180,50,50,0.95)",color:"#fff",
+            padding:"8px 12px",borderRadius:10,fontSize:11,lineHeight:1.6}}
+            onClick={()=>this.setState({globalErr:null})}>
+            ⚠️ 背景錯誤（點此關閉）：{this.state.globalErr}
+          </div>
+        )}
+      </>);
+    }
+    const e=this.state.err;
+    const box={background:"#151515",border:"1px solid #444",borderRadius:10,padding:"10px 12px",marginBottom:10,
+      fontSize:11,lineHeight:1.7,color:"#ccc",whiteSpace:"pre-wrap",wordBreak:"break-all",fontFamily:"monospace"};
+    const btn={padding:"10px 14px",borderRadius:10,border:"none",fontSize:13,fontWeight:700,
+      fontFamily:"'Noto Sans TC',sans-serif",cursor:"pointer",marginRight:8,marginBottom:8};
+    let cacheInfo="—";
+    try{
+      const raw=localStorage.getItem("hj_data_cache");
+      cacheInfo=raw?`${Math.round(raw.length/1024)} KB`:"（無）";
+    }catch(x){cacheInfo="讀取失敗";}
+    return(
+      <div style={{minHeight:"100vh",background:"#0a0a0a",color:"#eee",padding:"20px 16px",
+        fontFamily:"'Noto Sans TC',sans-serif",maxWidth:480,margin:"0 auto"}}>
+        <div style={{fontSize:18,fontWeight:700,color:"#ff6b6b",marginBottom:4}}>⚠️ App 發生錯誤</div>
+        <div style={{fontSize:12,color:"#888",marginBottom:14}}>
+          版本 {VERSION} · 畫面沒有變白，錯誤原因如下（可截圖回報）
+        </div>
+
+        <div style={{fontSize:12,fontWeight:700,color:"#ffb347",marginBottom:4}}>錯誤訊息</div>
+        <div style={box}>{String(e&&e.message||e)}</div>
+
+        <div style={{fontSize:12,fontWeight:700,color:"#ffb347",marginBottom:4}}>發生位置（元件）</div>
+        <div style={box}>{String(this.state.info&&this.state.info.componentStack||"—").split("\n").slice(0,6).join("\n").trim()||"—"}</div>
+
+        <div style={{fontSize:12,fontWeight:700,color:"#ffb347",marginBottom:4}}>技術細節</div>
+        <div style={box}>{String(e&&e.stack||"—").split("\n").slice(0,5).join("\n")}</div>
+
+        <div style={{fontSize:12,fontWeight:700,color:"#ffb347",marginBottom:4}}>環境</div>
+        <div style={box}>{`快取大小：${cacheInfo}\n網路：${(typeof navigator!=="undefined"&&navigator.onLine)?"連線中":"離線"}\n時間：${new Date().toLocaleString("zh-TW")}`}</div>
+
+        <div style={{marginTop:6}}>
+          <button style={{...btn,background:"#2ecc8a",color:"#0a0a0a"}}
+            onClick={()=>window.location.reload()}>🔄 重新載入</button>
+          <button style={{...btn,background:"#e67e22",color:"#0a0a0a"}}
+            onClick={()=>{try{localStorage.removeItem("hj_data_cache");}catch(x){}window.location.reload();}}>
+            🧹 清除資料快取後重載</button>
+          <button style={{...btn,background:"#444",color:"#fff"}}
+            onClick={()=>{
+              try{
+                const keep=["hj_apikey","hj_mymeds","hj_reminders","hj_track","hj_height","hj_hospitals","hj_glucose_unit","hj_notify"];
+                const saved={};keep.forEach(k=>{const v=localStorage.getItem(k);if(v!=null)saved[k]=v;});
+                localStorage.clear();
+                Object.keys(saved).forEach(k=>localStorage.setItem(k,saved[k]));
+              }catch(x){}
+              window.location.reload();
+            }}>♻️ 清除全部本機暫存（保留金鑰與設定）</button>
+        </div>
+        <div style={{fontSize:11,color:"#777",marginTop:10,lineHeight:1.7}}>
+          Google Sheets 上的資料完全不受影響，清除的只是手機本機暫存。<br/>
+          若三個按鈕都無效，請截圖上方錯誤訊息。
+        </div>
+      </div>
+    );
+  }
+}
+
+function HealthJournalInner(){
   const [tab,setTab]=useState("home");
   const [recordTab,setRecordTab]=useState("glucose");
   const [selectedKnowledge,setSelectedKnowledge]=useState(null);
@@ -7603,5 +7695,14 @@ ${exSummary}
         </div>
       </div>
     </>
+  );
+}
+
+// ★ v4.78 對外匯出：以錯誤攔截層包住整個App
+export default function HealthJournal(){
+  return(
+    <ErrorCatcher>
+      <HealthJournalInner/>
+    </ErrorCatcher>
   );
 }
