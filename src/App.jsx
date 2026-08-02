@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.78"; // v4.78: 錯誤攔截層（白畫面改為顯示錯誤訊息+診斷資訊+清快取按鈕）
+const VERSION = "v4.79"; // v4.79: 修正React #310——9個JSX內IIFE含hooks抽為獨立元件（v4.74元件穩定後暴露的既有問題）
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
 const GEMINI_MODEL = "gemini-3.5-flash";
@@ -1160,6 +1160,648 @@ const computeRadarScores=(lab,bpHistory)=>{
   ].map(d=>({...d,score:d.score==null?null:Math.round(d.score*10)/10}));
 };
 
+// ★ v4.79 由JSX內IIFE抽出為獨立元件（IIFE內的hooks會導致React #310 hooks數量不一致）
+const AIReportSection=({generateOverallReport,overallDate,overallLoading,overallReport,setTab})=>{
+        const report=overallReport||"";
+        const reportDate=overallDate||"";
+        const daysSinceReport=reportDate?Math.floor((new Date()-new Date(reportDate))/(1000*60*60*24)):999;
+        if(overallLoading)return(
+          <div style={{background:C.blue+"15",border:`1px solid ${C.blue}44`,borderRadius:10,
+            padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:20}}>⏳</span>
+            <div style={{fontSize:12,color:C.blue}}>正在產生本週整體健康評估...</div>
+          </div>
+        );
+        if(!report||report.startsWith("❌"))return(
+          <div style={{background:C.blue+"15",border:`1px solid ${C.blue}44`,borderRadius:10,
+            padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:20}}>🏥</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.blue,marginBottom:2}}>整體健康評估</div>
+              <div style={{fontSize:11,color:C.textMuted}}>尚未產生評估報告</div>
+            </div>
+            <button onClick={()=>generateOverallReport(false)}
+              style={{fontSize:11,padding:"5px 10px",background:C.blue,border:"none",
+                borderRadius:6,color:"#fff",fontWeight:700,cursor:"pointer",flexShrink:0}}>
+              立即產生
+            </button>
+          </div>
+        );
+        // 萃取「五、紅旗」和「三、複合因果」段落
+        const lines=report.split("\n").map(l=>l.trim()).filter(Boolean);
+        const extractSection=(startPat,endPat)=>{
+          let capturing=false;
+          const result=[];
+          for(const line of lines){
+            if(startPat.test(line)){capturing=true;continue;}
+            if(capturing&&endPat.test(line))break;
+            if(capturing&&line.length>8)result.push(line);
+          }
+          return result;
+        };
+        const redFlags=extractSection(/五、|紅旗|立即注意/,/六、|七、|下次看診/).slice(0,3);
+        const causal=extractSection(/三、|複合因果|互相加重/,/四、|五、|結構性/).slice(0,2);
+        const summary=lines.find(l=>/七、|一句話/.test(l))||"";
+        const [expanded,setExpanded]=React.useState(false);
+        return(
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.blue,letterSpacing:1,marginBottom:6,
+              display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span>🏥 整體健康評估
+                <span style={{fontSize:9,color:C.textMuted,fontWeight:400,marginLeft:6}}>
+                  {reportDate} {daysSinceReport<=1?"（今日）":daysSinceReport<=7?`（${daysSinceReport}天前）`:"⏰ 已超過7天，建議重新產生"}
+                </span>
+              </span>
+              <button onClick={()=>generateOverallReport(false)}
+                style={{fontSize:9,color:C.textMuted,background:"none",border:`1px solid ${C.border}`,
+                  borderRadius:4,padding:"2px 6px",cursor:"pointer"}}>
+                重新產生
+              </button>
+            </div>
+            <div style={{background:C.blue+"12",border:`1px solid ${C.blue}44`,borderRadius:10,padding:"10px 12px"}}>
+              {/* 紅旗 */}
+              {redFlags.length>0&&(
+                <div style={{marginBottom:causal.length>0?8:0}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.red,marginBottom:5,letterSpacing:0.5}}>🚩 需要注意</div>
+                  {redFlags.slice(0,expanded?redFlags.length:2).map((line,i)=>(
+                    <div key={i} style={{display:"flex",gap:6,marginBottom:4}}>
+                      <span style={{color:C.red,flexShrink:0,fontSize:11}}>▸</span>
+                      <div style={{fontSize:11,color:C.text,lineHeight:1.6}}>{line}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* 複合因果（展開後顯示）*/}
+              {expanded&&causal.length>0&&(
+                <div style={{marginBottom:8,paddingTop:8,borderTop:`1px solid ${C.blue}22`}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.amber,marginBottom:5}}>🔗 複合關聯</div>
+                  {causal.map((line,i)=>(
+                    <div key={i} style={{display:"flex",gap:6,marginBottom:4}}>
+                      <span style={{color:C.amber,flexShrink:0,fontSize:11}}>▸</span>
+                      <div style={{fontSize:11,color:C.text,lineHeight:1.6}}>{line}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* 總結句 */}
+              {expanded&&summary&&(
+                <div style={{paddingTop:8,borderTop:`1px solid ${C.blue}22`,
+                  fontSize:11,color:C.green,lineHeight:1.6,fontStyle:"italic"}}>
+                  💬 {summary.replace(/七、一句話總結[：:]/,"").trim()}
+                </div>
+              )}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+                <button onClick={()=>setExpanded(v=>!v)}
+                  style={{fontSize:10,color:C.blue,background:"none",border:"none",cursor:"pointer",padding:0}}>
+                  {expanded?"▲ 收起":"▼ 展開複合關聯"}
+                </button>
+                <button onClick={()=>setTab("ai")}
+                  style={{fontSize:10,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
+                  查看完整報告 →
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+// ★ v4.79 由JSX內IIFE抽出為獨立元件（IIFE內的hooks會導致React #310 hooks數量不一致）
+const WeeklyReportSection=({aiReport,aiReportDate,setTab})=>{
+        const report=aiReport||"";
+        if(!report||report.startsWith("❌"))return(
+          <div style={{background:C.amber+"18",border:`1px solid ${C.amber}44`,borderRadius:10,
+            padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:20}}>🔗</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.amber,marginBottom:2}}>複合健康提醒</div>
+              <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>尚未產生本週分析，無法顯示跨維度警示</div>
+            </div>
+            <button onClick={()=>{setTab("ai");}}
+              style={{fontSize:11,padding:"5px 10px",background:C.amber,border:"none",
+                borderRadius:6,color:"#000",fontWeight:700,cursor:"pointer",flexShrink:0}}>
+              產生週報
+            </button>
+          </div>
+        );
+        // 從週報文字萃取複合警示關鍵句
+        const lines=report.split("\n").map(l=>l.trim()).filter(l=>l.length>10);
+        // 找含複合關鍵字的句子（同時提到兩個以上維度）
+        const DIMS=[
+          {key:"睡眠",pat:/睡眠|深層|入睡|失眠/},
+          {key:"血糖",pat:/血糖|HbA1c|胰島素|糖化/},
+          {key:"血壓",pat:/血壓|收縮壓|舒張壓|高血壓/},
+          {key:"肝",pat:/肝|ALT|脂肪肝|肝酶/},
+          {key:"尿酸",pat:/尿酸|痛風/},
+          {key:"心血管",pat:/動脈|冠狀|心臟|血脂|HDL|LDL/},
+          {key:"飲食",pat:/飲食|碳水|澱粉|麵食|熱量/},
+          {key:"運動",pat:/運動|步行|活動量/},
+        ];
+        const composite=lines.filter(line=>{
+          const matchedDims=DIMS.filter(d=>d.pat.test(line));
+          return matchedDims.length>=2;
+        }).slice(0,3);
+        // 找「需要注意」「建議」「風險」等行動句
+        const actionLines=lines.filter(l=>
+          /需要|建議|注意|警示|風險|影響|關聯|互相|加重|惡化|因此|所以/.test(l)&&
+          DIMS.filter(d=>d.pat.test(l)).length>=1
+        ).slice(0,2);
+        const toShow=[...new Set([...composite,...actionLines])].slice(0,3);
+        if(toShow.length===0)return null;
+        const [expanded,setExpanded]=React.useState(false);
+        return(
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.amber,letterSpacing:1,marginBottom:6,
+              display:"flex",alignItems:"center",gap:6}}>
+              🔗 複合健康提醒
+              <span style={{fontSize:9,color:C.textMuted,fontWeight:400}}>來自本週AI分析 · {aiReportDate||""}</span>
+            </div>
+            <div style={{background:C.amber+"15",border:`1px solid ${C.amber}55`,borderRadius:10,padding:"10px 12px"}}>
+              {toShow.slice(0,expanded?toShow.length:1).map((line,i)=>(
+                <div key={i} style={{display:"flex",gap:8,marginBottom:i<toShow.length-1?8:0,
+                  paddingBottom:i<toShow.length-1?8:0,
+                  borderBottom:i<toShow.length-1?`1px solid ${C.amber}22`:"none"}}>
+                  <span style={{fontSize:14,flexShrink:0}}>{"⚠️🔗💡".split("")[i]||"💡"}</span>
+                  <div style={{fontSize:11,color:C.text,lineHeight:1.7}}>{line}</div>
+                </div>
+              ))}
+              {toShow.length>1&&(
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+                  <button onClick={()=>setExpanded(v=>!v)}
+                    style={{fontSize:10,color:C.amber,background:"none",border:"none",cursor:"pointer",padding:0}}>
+                    {expanded?"▲ 收起":"▼ 還有"+(toShow.length-1)+"項"}
+                  </button>
+                  <button onClick={()=>setTab("ai")}
+                    style={{fontSize:10,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
+                    查看完整週報 →
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      };
+
+// ★ v4.79 由JSX內IIFE抽出為獨立元件（IIFE內的hooks會導致React #310 hooks數量不一致）
+const SleepAdviceSection=({detectHealthAlerts})=>{
+        const alerts=detectHealthAlerts();
+        if(alerts.length===0)return null;
+        const colorMap={alert:C.red,warn:C.amber,info:C.blue};
+        const ALERT_DETAILS={
+          "肝臟需重點關注":{
+            impact:"脂肪肝若持續惡化可能進展到肝纖維化→肝硬化→肝癌。ALT持續偏高表示肝細胞正在受損。",
+            improve:"①每天快走30分鐘（最有效）②減少精緻碳水（麵食/白飯）③你的堅果奶昔+橄欖油方向正確④3個月複查ALT，目標降到40以下⑤咖啡每天1杯護肝有實證",
+          },
+          "血小板偏低":{
+            impact:"血小板負責止血。你的145偏低（正常150-450），加上服用Plavix抗血小板藥，出血風險疊加。輕微的影響：瘀青容易出現、傷口較難止血。嚴重情況（<50才要擔心）：自發性出血。",
+            improve:"①145屬於輕度偏低，無需特別緊張②告知醫師你的血小板數值，評估Plavix劑量是否需調整③避免劇烈碰撞運動④每次抽血追蹤，若持續下降再積極處理⑤增加深色蔬菜（菠菜、花椰菜）補充維生素K",
+          },
+          "代謝負擔警訊":{
+            impact:"ALT與尿酸同時偏高是代謝症候群的典型表現。肝臟同時處理脂肪代謝和嘌呤代謝的負擔，兩者超標代表代謝系統整體超負荷。",
+            improve:"①最重要：減重（體重每降1kg，尿酸降約0.3mg/dL）②大量飲水（每天>2000ml，幫助尿酸排出）③減少高嘌呤食物（內臟、海鮮、啤酒）④你的低碳飲食方向正確",
+          },
+          "待複評：左心室後壁":{
+            impact:"LVPWd影像值18.3mm超過正常12mm，但醫師報告判正常，可能是測量角度問題或確實有高血壓性心臟病早期表現。目前不確定，需要第二意見。",
+            improve:"①回台灣安排心臟科複查心臟超音波②告知醫師這個數值和你的血壓130/90③繼續服用舒脈康控制血壓，這是最重要的預防",
+          },
+        };
+        const [expandedAlert,setExpandedAlert]=React.useState(null);
+        return(
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.amber,letterSpacing:1,marginBottom:6,
+              display:"flex",alignItems:"center",gap:6}}>
+              🚨 健康警報（{alerts.length}）
+              <span style={{fontSize:9,color:C.textMuted,fontWeight:400}}>點選了解影響與改善</span>
+            </div>
+            {alerts.map((a,i)=>{
+              const detail=ALERT_DETAILS[a.title];
+              const isOpen=expandedAlert===i;
+              return(
+                <div key={i} style={{background:`${colorMap[a.level]}11`,border:`1px solid ${colorMap[a.level]}44`,
+                  borderRadius:10,padding:"9px 11px",marginBottom:6}}>
+                  <div style={{display:"flex",alignItems:"flex-start",gap:8,cursor:detail?"pointer":"default"}}
+                    onClick={()=>detail&&setExpandedAlert(isOpen?null:i)}>
+                    <span style={{fontSize:16,flexShrink:0}}>{a.icon}</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:12,fontWeight:700,color:colorMap[a.level],marginBottom:2}}>{a.title}</div>
+                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{a.desc}</div>
+                    </div>
+                    {detail&&<span style={{fontSize:11,color:colorMap[a.level],flexShrink:0}}>{isOpen?"▲":"▼"}</span>}
+                  </div>
+                  {isOpen&&detail&&(
+                    <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${colorMap[a.level]}33`}}>
+                      <div style={{fontSize:11,fontWeight:700,color:C.red,marginBottom:4}}>⚠️ 對身體的影響</div>
+                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.7,marginBottom:8}}>{detail.impact}</div>
+                      <div style={{fontSize:11,fontWeight:700,color:C.green,marginBottom:4}}>✅ 改善方法</div>
+                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.7}}>{detail.improve}</div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      };
+
+// ★ v4.79 由JSX內IIFE抽出為獨立元件（IIFE內的hooks會導致React #310 hooks數量不一致）
+const ReminderEditModal=({editReminder,imagingHistory,labHistory,setEditReminder,updateReminderDate})=>{
+        const title=editReminder.title||"";
+        const isLab=/血液常規|HbA1c|肝功能|腎功能|尿酸|ALT|抽血/.test(title);
+        const isEye=/眼底|視野|OCT|視網膜/.test(title);
+        const isHeart=/心臟科|心電圖/.test(title);
+        const isAbdomen=/腹部超音波|腹超/.test(title);
+        let autoDate=null,autoSource=null;
+        if(isLab&&labHistory.length>0){
+          const sorted=[...labHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+          autoDate=sorted[0].date;
+          autoSource="抽血記錄（"+(sorted[0].hospital||"")+"）";
+        }else if((isEye||isHeart||isAbdomen)&&imagingHistory.length>0){
+          const keyword=isEye?"眼":isHeart?"心":"腹";
+          const matched=[...imagingHistory]
+            .filter(r=>(r.type||"").includes(keyword)||(r.finding||"").includes(keyword))
+            .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+          if(matched.length>0){autoDate=matched[0].date;autoSource="影像記錄（"+(matched[0].type||"")+"）";}
+        }
+        const [reminderDate,setReminderDate]=React.useState(autoDate||editReminder.lastDate);
+        return(
+          <div className="overlay">
+            <div className="overlay-sheet">
+              <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>{editReminder.icon} {editReminder.title}</div>
+              <div style={{fontSize:12,color:C.textMuted,marginBottom:12}}>輸入最近一次檢查日期（每{editReminder.intervalDays>=365?`${Math.round(editReminder.intervalDays/365)}年`:editReminder.intervalDays>=30?`${Math.round(editReminder.intervalDays/30)}個月`:`${editReminder.intervalDays}天`}追蹤一次）</div>
+              {autoDate&&autoDate!==editReminder.lastDate&&(
+                <div style={{background:C.green+"22",border:"1px solid "+C.green,borderRadius:8,
+                  padding:"8px 12px",marginBottom:12,fontSize:11,color:C.green,lineHeight:1.6}}>
+                  ✅ 自動抓取：{autoSource}<br/>
+                  <span style={{fontWeight:700}}>{autoDate}</span>
+                  <span style={{color:C.textMuted}}> （已自動填入）</span>
+                </div>
+              )}
+              {autoDate&&autoDate===editReminder.lastDate&&(
+                <div style={{background:C.bg,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:11,color:C.textMuted}}>
+                  📋 {autoSource} 與現有日期相同：{autoDate}
+                </div>
+              )}
+              <div className="field-label">最近一次檢查日期</div>
+              <input className="input-field" type="date" value={reminderDate}
+                onChange={e=>setReminderDate(e.target.value)} style={{marginBottom:16}}/>
+              <div style={{display:"flex",gap:10}}>
+                <button className="btn-secondary" style={{flex:1}} onClick={()=>setEditReminder(null)}>取消</button>
+                <button className="btn-primary" style={{flex:2}} onClick={()=>{if(reminderDate)updateReminderDate(editReminder.id,reminderDate);}}>確認更新</button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+// ★ v4.79 由JSX內IIFE抽出為獨立元件（IIFE內的hooks會導致React #310 hooks數量不一致）
+const RadarSection=({bpHistory,labHistory})=>{
+          const sortedLabs=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+          const [compareIdx,setCompareIdx]=React.useState(sortedLabs.length>1?sortedLabs.length-2:-1);
+          const curLab=sortedLabs.length>0?sortedLabs[sortedLabs.length-1]:null;
+          const compLab=compareIdx>=0&&compareIdx<sortedLabs.length-1?sortedLabs[compareIdx]:null;
+          const cur=computeRadarScores(curLab,bpHistory);
+          const prev=compLab?computeRadarScores(compLab,[]):null;
+          if(!cur)return<div className="card"><div className="empty-state">尚無抽血資料</div></div>;
+          const N=cur.length, CX=170, CY=160, R=110;
+          const pt=(i,score)=>{
+            const ang=-Math.PI/2+i*2*Math.PI/N;
+            const r=R*(score==null?0:score)/10;
+            return[CX+r*Math.cos(ang),CY+r*Math.sin(ang)];
+          };
+          const poly=(scores)=>scores.map((d,i)=>pt(i,d.score).join(",")).join(" ");
+          const weak=cur.filter(d=>d.score!=null&&d.score<6.5).sort((a,b)=>a.score-b.score);
+          return(
+            <div className="card">
+              <div className="card-title">健康雷達（依抽血+血壓計分）</div>
+              {/* 對比選擇器 */}
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>本次 {fmtDate(curLab.date)}</span></div>
+                {sortedLabs.length>1&&(
+                  <div style={{display:"flex",alignItems:"center",gap:5}}>
+                    <div style={{width:12,height:0,borderTop:`2px dashed ${C.blue}`}}/>
+                    <span style={{fontSize:11,color:C.textMuted}}>對比</span>
+                    <select value={compareIdx} onChange={e=>setCompareIdx(parseInt(e.target.value))}
+                      style={{fontSize:11,background:C.bgCard2,border:`1px solid ${C.border}`,borderRadius:6,color:C.textMuted,padding:"2px 4px"}}>
+                      <option value={-1}>不對比</option>
+                      {sortedLabs.slice(0,-1).map((lab,i)=>(
+                        <option key={i} value={i}>{fmtDate(lab.date)} ({lab.hospital||"—"})</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+              <svg viewBox="0 0 340 320" style={{width:"100%"}}>
+                {[2,4,6,8,10].map(lv=>(
+                  <polygon key={lv} points={Array.from({length:N},(_,i)=>{
+                    const ang=-Math.PI/2+i*2*Math.PI/N;
+                    return[CX+R*lv/10*Math.cos(ang),CY+R*lv/10*Math.sin(ang)].join(",");
+                  }).join(" ")} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
+                ))}
+                {cur.map((d,i)=>{
+                  const ang=-Math.PI/2+i*2*Math.PI/N;
+                  const lx=CX+(R+24)*Math.cos(ang), ly=CY+(R+24)*Math.sin(ang);
+                  return(
+                    <g key={i}>
+                      <line x1={CX} y1={CY} x2={CX+R*Math.cos(ang)} y2={CY+R*Math.sin(ang)} stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
+                      <text x={lx} y={ly} textAnchor="middle" fontSize="11" fill={d.score!=null&&d.score<6.5?C.amber:C.textMuted}>{d.label}</text>
+                      <text x={lx} y={ly+13} textAnchor="middle" fontSize="11" fontWeight="700" fill={d.score==null?C.textMuted:d.score<5?C.red:d.score<6.5?C.amber:C.green}>{d.score==null?"–":d.score}</text>
+                    </g>
+                  );
+                })}
+                {prev&&<polygon points={poly(prev)} fill="rgba(90,180,255,0.08)" stroke={C.blue} strokeWidth="1.5" strokeDasharray="5,4"/>}
+                <polygon points={poly(cur)} fill="rgba(46,204,138,0.15)" stroke={C.green} strokeWidth="2"/>
+                {cur.map((d,i)=>{const[x,y]=pt(i,d.score);return<circle key={i} cx={x} cy={y} r="3" fill={C.green}/>;})}
+              </svg>
+              {weak.length>0&&(
+                <div style={{background:"rgba(255,179,71,0.08)",border:"1px solid rgba(255,179,71,0.25)",borderRadius:10,padding:10,marginTop:8}}>
+                  <div style={{fontSize:12,fontWeight:700,color:C.amber,marginBottom:4}}>⚠️ 待加強面向</div>
+                  <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>
+                    {weak.map(d=>`${d.label}（${d.score}分）`).join("、")}
+                    <br/>你的修復早餐正是針對血脂與肝臟設計，持續執行+下次抽血驗證！
+                  </div>
+                </div>
+              )}
+              {(()=>{
+                const cvDim=cur.find(d=>d.label.startsWith("心血管"));
+                return cvDim?.cvAvg?(
+                  <div style={{background:"rgba(90,180,255,0.08)",border:"1px solid rgba(90,180,255,0.2)",borderRadius:10,padding:"8px 12px",marginBottom:8,fontSize:11,color:C.blue,lineHeight:1.6}}>
+                    💓 心血管：近{Math.min(bpHistory.length,7)}筆血壓均值 {cvDim.cvAvg} mmHg（單次波動已平滑）
+                  </div>
+                ):bpHistory.length===0?(
+                  <div style={{background:"rgba(255,179,71,0.08)",border:"1px solid rgba(255,179,71,0.2)",borderRadius:10,padding:"8px 12px",marginBottom:8,fontSize:11,color:C.amber,lineHeight:1.6}}>
+                    💓 心血管：尚無血壓記錄，請先記錄幾筆血壓（建議7筆以上取均值）
+                  </div>
+                ):null;
+              })()}
+              <div style={{fontSize:10,color:C.textMuted,marginTop:8,lineHeight:1.6}}>
+                計分方式：各指標與理想值比較換算0-10分（10=理想、5=異常臨界），面向內多指標取平均。心血管取近7筆血壓均值。
+              </div>
+            </div>
+          );
+        };
+
+// ★ v4.79 由JSX內IIFE抽出為獨立元件（IIFE內的hooks會導致React #310 hooks數量不一致）
+const BPRecordSection=({bpForm,bpHistory,deleteBP,editBPRecord,saveBP,setBpForm,setEditBPRecord,updateBP})=>{
+          // refs避免輸入焦點跳離
+          const sysRef=React.useRef(null);
+          const diaRef=React.useRef(null);
+          const pulseRef=React.useRef(null);
+          const recentBPList=[...bpHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,10);
+          return(
+            <div>
+              <div className="card" style={{marginBottom:12}}>
+                <div className="card-title">記錄血壓</div>
+                <div style={{marginBottom:12}}>
+                  <div className="field-label">來源</div>
+                  <div className="grid-2">
+                    {["日常","醫院"].map(s=>(
+                      <div key={s} className={`time-btn ${bpForm.source===s?"selected":""}`} onClick={()=>setBpForm(f=>({...f,source:s}))}>
+                        {s==="日常"?"🏠 OMRON（在家）":"🏥 醫院量測"}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid-3" style={{marginBottom:12}}>
+                  {[
+                    {label:"收縮壓",ph:"SYS",ref:sysRef,key:"sys"},
+                    {label:"舒張壓",ph:"DIA",ref:diaRef,key:"dia"},
+                    {label:"心率",ph:"PR",ref:pulseRef,key:"pulse"},
+                  ].map(f=>(
+                    <div key={f.key}>
+                      <div className="field-label">{f.label}</div>
+                      <input className="input-field" type="number" placeholder={f.ph}
+                        ref={f.ref}
+                        defaultValue={bpForm[f.key]}
+                        onBlur={e=>setBpForm(v=>({...v,[f.key]:e.target.value}))}/>
+                    </div>
+                  ))}
+                </div>
+                <div style={{background:C.bg,borderRadius:10,padding:10,marginBottom:14,fontSize:12,color:C.textMuted}}>💡 OMRON顯示HIGH表示舒張壓≥90</div>
+                <button className="btn-primary" onClick={()=>{
+                  // 儲存前先從ref取最新值
+                  setBpForm(f=>({...f,
+                    sys:sysRef.current?.value||f.sys,
+                    dia:diaRef.current?.value||f.dia,
+                    pulse:pulseRef.current?.value||f.pulse,
+                  }));
+                  setTimeout(saveBP,50);
+                }}>儲存</button>
+              </div>
+
+              {/* 近期血壓記錄 */}
+              {recentBPList.length>0&&(
+                <div className="card">
+                  <div className="card-title">近期血壓記錄 <span style={{fontSize:10,color:C.textMuted,fontWeight:400}}>點擊編輯</span></div>
+                  {recentBPList.map((r,i)=>{
+                    const sys=parseInt(r.systolic);
+                    const statusColor=sys>=140?C.red:sys>=130?C.amber:C.green;
+                    return(
+                      <div key={r.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                        padding:"8px 0",borderBottom:i<recentBPList.length-1?`1px solid ${C.border}`:"none"}}>
+                        <div onClick={()=>setEditBPRecord({...r})} style={{flex:1,cursor:"pointer"}}>
+                          <div style={{fontSize:12,fontWeight:600,color:C.text}}>{fmtDateFull(r.date)}</div>
+                          <div style={{fontSize:10,color:C.textMuted}}>{r.source==="醫院"?"🏥":"🏠"} {r.source}</div>
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          <div style={{textAlign:"right"}} onClick={()=>setEditBPRecord({...r})} >
+                            <div style={{fontSize:16,fontWeight:700,color:statusColor}}>{r.systolic}/{r.diastolic}</div>
+                            {r.pulse&&<div style={{fontSize:10,color:C.textMuted}}>心率 {r.pulse}</div>}
+                          </div>
+                          <button onClick={()=>deleteBP(r.id)}
+                            style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:6,
+                              color:C.red,fontSize:11,padding:"4px 8px",cursor:"pointer"}}>
+                            刪除
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* 編輯Modal */}
+              {editBPRecord&&(
+                <div className="overlay">
+                  <div className="overlay-sheet">
+                    <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>✏️ 編輯血壓記錄</div>
+                    <div style={{fontSize:12,color:C.textMuted,marginBottom:12}}>{fmtDateFull(editBPRecord.date)}</div>
+                    <div className="grid-3" style={{marginBottom:12}}>
+                      {[
+                        {label:"收縮壓",key:"systolic"},
+                        {label:"舒張壓",key:"diastolic"},
+                        {label:"心率",key:"pulse"},
+                      ].map(f=>(
+                        <div key={f.key}>
+                          <div className="field-label">{f.label}</div>
+                          <input className="input-field" type="number"
+                            defaultValue={editBPRecord[f.key]}
+                            onBlur={e=>setEditBPRecord(v=>({...v,[f.key]:e.target.value}))}/>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="grid-2" style={{marginBottom:12}}>
+                      {["日常","醫院"].map(s=>(
+                        <div key={s} className={`time-btn ${editBPRecord.source===s?"selected":""}`}
+                          onClick={()=>setEditBPRecord(v=>({...v,source:s}))}>
+                          {s==="日常"?"🏠 日常":"🏥 醫院"}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{display:"flex",gap:10}}>
+                      <button className="btn-secondary" style={{flex:1}} onClick={()=>setEditBPRecord(null)}>取消</button>
+                      <button className="btn-primary" style={{flex:2}} onClick={()=>updateBP(editBPRecord)}>💾 儲存更新</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        };
+
+// ★ v4.79 由JSX內IIFE抽出為獨立元件（IIFE內的hooks會導致React #310 hooks數量不一致）
+const MealRecordSection=({showToast})=>{
+                  const [copied,setCopied]=React.useState(false);
+                  const GPT_CMD=`請從這些 Samsung Health 睡眠截圖中擷取數據，輸出以下固定格式（純文字，不要多餘說明，時間一律用24小時制）：
+
+日期：
+上床時間：
+起床時間：
+總時間（分鐘）：
+實際睡眠（分鐘）：
+睡眠評分：
+深層睡眠（分鐘）：
+淺層睡眠（分鐘）：
+REM（分鐘）：
+清醒（分鐘）：
+血氧平均（%）：
+血氧最低值（%）：
+血氧低於90%（分鐘）：
+平均心跳（次/分）：
+心率最低值（次/分）：
+呼吸速率（次/分）：
+備註：`;
+                  return(
+                    <div style={{marginBottom:10}}>
+                      <div style={{fontSize:11,color:C.textMuted,marginBottom:6,lineHeight:1.6}}>
+                        步驟①：複製指令 → 開ChatGPT → 上傳截圖 + 貼上指令<br/>
+                        步驟②：複製ChatGPT輸出 → 貼到下方「自動填入」
+                      </div>
+                      <button onClick={()=>{
+                        navigator.clipboard?.writeText(GPT_CMD).then(()=>{
+                          setCopied(true);setTimeout(()=>setCopied(false),3000);
+                          showToast("✅ 已複製！去ChatGPT貼上");
+                        });
+                      }} style={{width:"100%",padding:"10px",marginBottom:6,
+                        background:copied?C.green+"33":C.amber+"22",
+                        border:`1px solid ${copied?C.green:C.amber}`,
+                        borderRadius:8,color:copied?C.green:C.amber,
+                        fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                        {copied?"✅ 已複製！去 ChatGPT 貼上":"📤 複製 ChatGPT 擷取指令"}
+                      </button>
+                    </div>
+                  );
+                };
+
+// ★ v4.79 由JSX內IIFE抽出為獨立元件（IIFE內的hooks會導致React #310 hooks數量不一致）
+const KBGroupSection=()=>{
+          const [showDx,setShowDx]=React.useState(false);
+          const DX=[
+            {n:"①",name:"眼瞼肌束顫動（左側）",status:"✅已緩解",color:C.green,note:"與睡眠不足壓力相關，神經傳導左側R1延長"},
+            {n:"②",name:"高血壓",status:"💊用藥中",color:C.amber,note:"舒脈康5/40，目標<125/80"},
+            {n:"③",name:"雙側髂總動脈瘤",status:"⚠️追蹤",color:C.red,note:"CTA確診，每6個月心臟科追蹤大小"},
+            {n:"④",name:"LAD1冠狀動脈35%狹窄",status:"⚠️追蹤",color:C.red,note:"輕度<50%無需介入，保栓通+定期追蹤"},
+            {n:"⑤",name:"肝酶升高",status:"📈監測",color:C.amber,note:"ALT 63.54，與脂肪肝相關，3個月追蹤"},
+            {n:"⑥",name:"高尿酸血症",status:"📈監測",color:C.amber,note:"7.95 mg/dL，多喝水少紅肉"},
+            {n:"⑦",name:"脂肪肝 Grade II",status:"⚠️惡化",color:C.red,note:"從G1進展，飲食+運動+咖啡是核心對策"},
+          ];
+          return(
+            <div className="card" style={{marginBottom:12,cursor:"pointer"}} onClick={()=>setShowDx(v=>!v)}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>📋 我的診斷（7項）</div>
+                  <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>2025/03/19 海防國際醫院住院確診 · 點擊{showDx?"收合":"展開"}</div>
+                </div>
+                <span style={{color:C.textMuted}}>{showDx?"▲":"▼"}</span>
+              </div>
+              {showDx&&(
+                <div style={{marginTop:10}} onClick={e=>e.stopPropagation()}>
+                  {DX.map(d=>(
+                    <div key={d.n} style={{padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:2}}>
+                        <span style={{fontSize:12,fontWeight:600,color:C.text}}>{d.n} {d.name}</span>
+                        <span style={{fontSize:10,color:d.color,fontWeight:700}}>{d.status}</span>
+                      </div>
+                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.5}}>{d.note}</div>
+                    </div>
+                  ))}
+                  <div style={{fontSize:10,color:C.textMuted,marginTop:8,lineHeight:1.6}}>
+                    💡 看診時可直接展示此卡片給醫師。完整報告在記錄→影像。
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        };
+
+// ★ v4.79 由JSX內IIFE抽出為獨立元件（IIFE內的hooks會導致React #310 hooks數量不一致）
+const HealthSummarySection=({bpHistory,exerciseLog,glucoseHistory,labHistory,lastSync,weightHistory})=>{
+          const [connStatus,setConnStatus]=React.useState("idle");
+          const [connInfo,setConnInfo]=React.useState(null);
+          const checkConn=async()=>{
+            setConnStatus("checking");
+            try{
+              const r=await api.get("ping");
+              if(r&&!r.error){
+                setConnStatus("ok");
+                setConnInfo({
+                  lab:labHistory.length,
+                  bp:bpHistory.length,
+                  glucose:glucoseHistory.length,
+                  weight:weightHistory.length,
+                  exercise:exerciseLog.length,
+                  lastSync:lastSync?lastSync.toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit"}):"—",
+                });
+              }else{setConnStatus("error");setConnInfo(null);}
+            }catch(e){setConnStatus("error");setConnInfo(null);}
+          };
+          return(
+            <div className="card">
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <div className="card-title" style={{marginBottom:0}}>🔌 Sheets 連線狀態</div>
+                <button onClick={checkConn} disabled={connStatus==="checking"}
+                  style={{padding:"5px 12px",borderRadius:8,fontSize:11,cursor:"pointer",
+                    background:"transparent",border:`1px solid ${C.border}`,color:C.textMuted,
+                    fontFamily:"'Noto Sans TC',sans-serif"}}>
+                  {connStatus==="checking"?"檢查中...":"檢查連線"}
+                </button>
+              </div>
+              {connStatus==="idle"&&<div style={{fontSize:12,color:C.textMuted}}>點擊「檢查連線」確認 GAS 和 Sheets 狀態</div>}
+              {connStatus==="ok"&&connInfo&&(
+                <div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                    <div style={{width:8,height:8,borderRadius:"50%",background:C.green}}/>
+                    <span style={{fontSize:12,color:C.green,fontWeight:700}}>連線正常</span>
+                    <span style={{fontSize:11,color:C.textMuted}}>上次同步 {connInfo.lastSync}</span>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+                    {[{label:"抽血",n:connInfo.lab},{label:"血壓",n:connInfo.bp},{label:"血糖",n:connInfo.glucose},{label:"體重",n:connInfo.weight},{label:"運動",n:connInfo.exercise}].map(s=>(
+                      <div key={s.label} style={{background:C.bg,borderRadius:8,padding:"6px 8px",textAlign:"center"}}>
+                        <div style={{fontSize:14,fontWeight:700,color:s.n>0?C.green:C.amber}}>{s.n}</div>
+                        <div style={{fontSize:10,color:C.textMuted}}>{s.label}筆</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {connStatus==="error"&&(
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <div style={{width:8,height:8,borderRadius:"50%",background:C.red}}/>
+                  <span style={{fontSize:12,color:C.red}}>連線失敗，請確認 GAS 已部署且網路正常</span>
+                </div>
+              )}
+            </div>
+          );
+        };
+
 // ═══ LineChart（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
 const LineChart=({datasets,min=0,max=200,refLines=[],height=120,statusKey=null})=>{
     const hasData=datasets&&datasets.some(d=>d.data.length>0);
@@ -1724,244 +2366,11 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
         );
       })()}
       {/* 整體健康評估摘要（每週自動，首頁顯眼位置）*/}
-      {(()=>{
-        const report=overallReport||"";
-        const reportDate=overallDate||"";
-        const daysSinceReport=reportDate?Math.floor((new Date()-new Date(reportDate))/(1000*60*60*24)):999;
-        if(overallLoading)return(
-          <div style={{background:C.blue+"15",border:`1px solid ${C.blue}44`,borderRadius:10,
-            padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:20}}>⏳</span>
-            <div style={{fontSize:12,color:C.blue}}>正在產生本週整體健康評估...</div>
-          </div>
-        );
-        if(!report||report.startsWith("❌"))return(
-          <div style={{background:C.blue+"15",border:`1px solid ${C.blue}44`,borderRadius:10,
-            padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:20}}>🏥</span>
-            <div style={{flex:1}}>
-              <div style={{fontSize:12,fontWeight:700,color:C.blue,marginBottom:2}}>整體健康評估</div>
-              <div style={{fontSize:11,color:C.textMuted}}>尚未產生評估報告</div>
-            </div>
-            <button onClick={()=>generateOverallReport(false)}
-              style={{fontSize:11,padding:"5px 10px",background:C.blue,border:"none",
-                borderRadius:6,color:"#fff",fontWeight:700,cursor:"pointer",flexShrink:0}}>
-              立即產生
-            </button>
-          </div>
-        );
-        // 萃取「五、紅旗」和「三、複合因果」段落
-        const lines=report.split("\n").map(l=>l.trim()).filter(Boolean);
-        const extractSection=(startPat,endPat)=>{
-          let capturing=false;
-          const result=[];
-          for(const line of lines){
-            if(startPat.test(line)){capturing=true;continue;}
-            if(capturing&&endPat.test(line))break;
-            if(capturing&&line.length>8)result.push(line);
-          }
-          return result;
-        };
-        const redFlags=extractSection(/五、|紅旗|立即注意/,/六、|七、|下次看診/).slice(0,3);
-        const causal=extractSection(/三、|複合因果|互相加重/,/四、|五、|結構性/).slice(0,2);
-        const summary=lines.find(l=>/七、|一句話/.test(l))||"";
-        const [expanded,setExpanded]=React.useState(false);
-        return(
-          <div style={{marginBottom:8}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.blue,letterSpacing:1,marginBottom:6,
-              display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <span>🏥 整體健康評估
-                <span style={{fontSize:9,color:C.textMuted,fontWeight:400,marginLeft:6}}>
-                  {reportDate} {daysSinceReport<=1?"（今日）":daysSinceReport<=7?`（${daysSinceReport}天前）`:"⏰ 已超過7天，建議重新產生"}
-                </span>
-              </span>
-              <button onClick={()=>generateOverallReport(false)}
-                style={{fontSize:9,color:C.textMuted,background:"none",border:`1px solid ${C.border}`,
-                  borderRadius:4,padding:"2px 6px",cursor:"pointer"}}>
-                重新產生
-              </button>
-            </div>
-            <div style={{background:C.blue+"12",border:`1px solid ${C.blue}44`,borderRadius:10,padding:"10px 12px"}}>
-              {/* 紅旗 */}
-              {redFlags.length>0&&(
-                <div style={{marginBottom:causal.length>0?8:0}}>
-                  <div style={{fontSize:10,fontWeight:700,color:C.red,marginBottom:5,letterSpacing:0.5}}>🚩 需要注意</div>
-                  {redFlags.slice(0,expanded?redFlags.length:2).map((line,i)=>(
-                    <div key={i} style={{display:"flex",gap:6,marginBottom:4}}>
-                      <span style={{color:C.red,flexShrink:0,fontSize:11}}>▸</span>
-                      <div style={{fontSize:11,color:C.text,lineHeight:1.6}}>{line}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* 複合因果（展開後顯示）*/}
-              {expanded&&causal.length>0&&(
-                <div style={{marginBottom:8,paddingTop:8,borderTop:`1px solid ${C.blue}22`}}>
-                  <div style={{fontSize:10,fontWeight:700,color:C.amber,marginBottom:5}}>🔗 複合關聯</div>
-                  {causal.map((line,i)=>(
-                    <div key={i} style={{display:"flex",gap:6,marginBottom:4}}>
-                      <span style={{color:C.amber,flexShrink:0,fontSize:11}}>▸</span>
-                      <div style={{fontSize:11,color:C.text,lineHeight:1.6}}>{line}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* 總結句 */}
-              {expanded&&summary&&(
-                <div style={{paddingTop:8,borderTop:`1px solid ${C.blue}22`,
-                  fontSize:11,color:C.green,lineHeight:1.6,fontStyle:"italic"}}>
-                  💬 {summary.replace(/七、一句話總結[：:]/,"").trim()}
-                </div>
-              )}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
-                <button onClick={()=>setExpanded(v=>!v)}
-                  style={{fontSize:10,color:C.blue,background:"none",border:"none",cursor:"pointer",padding:0}}>
-                  {expanded?"▲ 收起":"▼ 展開複合關聯"}
-                </button>
-                <button onClick={()=>setTab("ai")}
-                  style={{fontSize:10,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
-                  查看完整報告 →
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {<AIReportSection generateOverallReport={generateOverallReport} overallDate={overallDate} overallLoading={overallLoading} overallReport={overallReport} setTab={setTab}/>}
       {/* 複合健康提醒（從週報萃取跨維度警示）*/}
-      {(()=>{
-        const report=aiReport||"";
-        if(!report||report.startsWith("❌"))return(
-          <div style={{background:C.amber+"18",border:`1px solid ${C.amber}44`,borderRadius:10,
-            padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:20}}>🔗</span>
-            <div style={{flex:1}}>
-              <div style={{fontSize:12,fontWeight:700,color:C.amber,marginBottom:2}}>複合健康提醒</div>
-              <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>尚未產生本週分析，無法顯示跨維度警示</div>
-            </div>
-            <button onClick={()=>{setTab("ai");}}
-              style={{fontSize:11,padding:"5px 10px",background:C.amber,border:"none",
-                borderRadius:6,color:"#000",fontWeight:700,cursor:"pointer",flexShrink:0}}>
-              產生週報
-            </button>
-          </div>
-        );
-        // 從週報文字萃取複合警示關鍵句
-        const lines=report.split("\n").map(l=>l.trim()).filter(l=>l.length>10);
-        // 找含複合關鍵字的句子（同時提到兩個以上維度）
-        const DIMS=[
-          {key:"睡眠",pat:/睡眠|深層|入睡|失眠/},
-          {key:"血糖",pat:/血糖|HbA1c|胰島素|糖化/},
-          {key:"血壓",pat:/血壓|收縮壓|舒張壓|高血壓/},
-          {key:"肝",pat:/肝|ALT|脂肪肝|肝酶/},
-          {key:"尿酸",pat:/尿酸|痛風/},
-          {key:"心血管",pat:/動脈|冠狀|心臟|血脂|HDL|LDL/},
-          {key:"飲食",pat:/飲食|碳水|澱粉|麵食|熱量/},
-          {key:"運動",pat:/運動|步行|活動量/},
-        ];
-        const composite=lines.filter(line=>{
-          const matchedDims=DIMS.filter(d=>d.pat.test(line));
-          return matchedDims.length>=2;
-        }).slice(0,3);
-        // 找「需要注意」「建議」「風險」等行動句
-        const actionLines=lines.filter(l=>
-          /需要|建議|注意|警示|風險|影響|關聯|互相|加重|惡化|因此|所以/.test(l)&&
-          DIMS.filter(d=>d.pat.test(l)).length>=1
-        ).slice(0,2);
-        const toShow=[...new Set([...composite,...actionLines])].slice(0,3);
-        if(toShow.length===0)return null;
-        const [expanded,setExpanded]=React.useState(false);
-        return(
-          <div style={{marginBottom:8}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.amber,letterSpacing:1,marginBottom:6,
-              display:"flex",alignItems:"center",gap:6}}>
-              🔗 複合健康提醒
-              <span style={{fontSize:9,color:C.textMuted,fontWeight:400}}>來自本週AI分析 · {aiReportDate||""}</span>
-            </div>
-            <div style={{background:C.amber+"15",border:`1px solid ${C.amber}55`,borderRadius:10,padding:"10px 12px"}}>
-              {toShow.slice(0,expanded?toShow.length:1).map((line,i)=>(
-                <div key={i} style={{display:"flex",gap:8,marginBottom:i<toShow.length-1?8:0,
-                  paddingBottom:i<toShow.length-1?8:0,
-                  borderBottom:i<toShow.length-1?`1px solid ${C.amber}22`:"none"}}>
-                  <span style={{fontSize:14,flexShrink:0}}>{"⚠️🔗💡".split("")[i]||"💡"}</span>
-                  <div style={{fontSize:11,color:C.text,lineHeight:1.7}}>{line}</div>
-                </div>
-              ))}
-              {toShow.length>1&&(
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
-                  <button onClick={()=>setExpanded(v=>!v)}
-                    style={{fontSize:10,color:C.amber,background:"none",border:"none",cursor:"pointer",padding:0}}>
-                    {expanded?"▲ 收起":"▼ 還有"+(toShow.length-1)+"項"}
-                  </button>
-                  <button onClick={()=>setTab("ai")}
-                    style={{fontSize:10,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
-                    查看完整週報 →
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
+      {<WeeklyReportSection aiReport={aiReport} aiReportDate={aiReportDate} setTab={setTab}/>}
       {/* 健康警報（階段四自動標記）*/}
-      {(()=>{
-        const alerts=detectHealthAlerts();
-        if(alerts.length===0)return null;
-        const colorMap={alert:C.red,warn:C.amber,info:C.blue};
-        const ALERT_DETAILS={
-          "肝臟需重點關注":{
-            impact:"脂肪肝若持續惡化可能進展到肝纖維化→肝硬化→肝癌。ALT持續偏高表示肝細胞正在受損。",
-            improve:"①每天快走30分鐘（最有效）②減少精緻碳水（麵食/白飯）③你的堅果奶昔+橄欖油方向正確④3個月複查ALT，目標降到40以下⑤咖啡每天1杯護肝有實證",
-          },
-          "血小板偏低":{
-            impact:"血小板負責止血。你的145偏低（正常150-450），加上服用Plavix抗血小板藥，出血風險疊加。輕微的影響：瘀青容易出現、傷口較難止血。嚴重情況（<50才要擔心）：自發性出血。",
-            improve:"①145屬於輕度偏低，無需特別緊張②告知醫師你的血小板數值，評估Plavix劑量是否需調整③避免劇烈碰撞運動④每次抽血追蹤，若持續下降再積極處理⑤增加深色蔬菜（菠菜、花椰菜）補充維生素K",
-          },
-          "代謝負擔警訊":{
-            impact:"ALT與尿酸同時偏高是代謝症候群的典型表現。肝臟同時處理脂肪代謝和嘌呤代謝的負擔，兩者超標代表代謝系統整體超負荷。",
-            improve:"①最重要：減重（體重每降1kg，尿酸降約0.3mg/dL）②大量飲水（每天>2000ml，幫助尿酸排出）③減少高嘌呤食物（內臟、海鮮、啤酒）④你的低碳飲食方向正確",
-          },
-          "待複評：左心室後壁":{
-            impact:"LVPWd影像值18.3mm超過正常12mm，但醫師報告判正常，可能是測量角度問題或確實有高血壓性心臟病早期表現。目前不確定，需要第二意見。",
-            improve:"①回台灣安排心臟科複查心臟超音波②告知醫師這個數值和你的血壓130/90③繼續服用舒脈康控制血壓，這是最重要的預防",
-          },
-        };
-        const [expandedAlert,setExpandedAlert]=React.useState(null);
-        return(
-          <div style={{marginBottom:8}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.amber,letterSpacing:1,marginBottom:6,
-              display:"flex",alignItems:"center",gap:6}}>
-              🚨 健康警報（{alerts.length}）
-              <span style={{fontSize:9,color:C.textMuted,fontWeight:400}}>點選了解影響與改善</span>
-            </div>
-            {alerts.map((a,i)=>{
-              const detail=ALERT_DETAILS[a.title];
-              const isOpen=expandedAlert===i;
-              return(
-                <div key={i} style={{background:`${colorMap[a.level]}11`,border:`1px solid ${colorMap[a.level]}44`,
-                  borderRadius:10,padding:"9px 11px",marginBottom:6}}>
-                  <div style={{display:"flex",alignItems:"flex-start",gap:8,cursor:detail?"pointer":"default"}}
-                    onClick={()=>detail&&setExpandedAlert(isOpen?null:i)}>
-                    <span style={{fontSize:16,flexShrink:0}}>{a.icon}</span>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:12,fontWeight:700,color:colorMap[a.level],marginBottom:2}}>{a.title}</div>
-                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{a.desc}</div>
-                    </div>
-                    {detail&&<span style={{fontSize:11,color:colorMap[a.level],flexShrink:0}}>{isOpen?"▲":"▼"}</span>}
-                  </div>
-                  {isOpen&&detail&&(
-                    <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${colorMap[a.level]}33`}}>
-                      <div style={{fontSize:11,fontWeight:700,color:C.red,marginBottom:4}}>⚠️ 對身體的影響</div>
-                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.7,marginBottom:8}}>{detail.impact}</div>
-                      <div style={{fontSize:11,fontWeight:700,color:C.green,marginBottom:4}}>✅ 改善方法</div>
-                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.7}}>{detail.improve}</div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        );
-      })()}
+      {<SleepAdviceSection detectHealthAlerts={detectHealthAlerts}/>}
 
       <div className="card">
         <div className="card-title">快速記錄</div>
@@ -2119,54 +2528,7 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
           );
         })}
       </div>
-      {editReminder&&(()=>{
-        const title=editReminder.title||"";
-        const isLab=/血液常規|HbA1c|肝功能|腎功能|尿酸|ALT|抽血/.test(title);
-        const isEye=/眼底|視野|OCT|視網膜/.test(title);
-        const isHeart=/心臟科|心電圖/.test(title);
-        const isAbdomen=/腹部超音波|腹超/.test(title);
-        let autoDate=null,autoSource=null;
-        if(isLab&&labHistory.length>0){
-          const sorted=[...labHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)));
-          autoDate=sorted[0].date;
-          autoSource="抽血記錄（"+(sorted[0].hospital||"")+"）";
-        }else if((isEye||isHeart||isAbdomen)&&imagingHistory.length>0){
-          const keyword=isEye?"眼":isHeart?"心":"腹";
-          const matched=[...imagingHistory]
-            .filter(r=>(r.type||"").includes(keyword)||(r.finding||"").includes(keyword))
-            .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
-          if(matched.length>0){autoDate=matched[0].date;autoSource="影像記錄（"+(matched[0].type||"")+"）";}
-        }
-        const [reminderDate,setReminderDate]=React.useState(autoDate||editReminder.lastDate);
-        return(
-          <div className="overlay">
-            <div className="overlay-sheet">
-              <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>{editReminder.icon} {editReminder.title}</div>
-              <div style={{fontSize:12,color:C.textMuted,marginBottom:12}}>輸入最近一次檢查日期（每{editReminder.intervalDays>=365?`${Math.round(editReminder.intervalDays/365)}年`:editReminder.intervalDays>=30?`${Math.round(editReminder.intervalDays/30)}個月`:`${editReminder.intervalDays}天`}追蹤一次）</div>
-              {autoDate&&autoDate!==editReminder.lastDate&&(
-                <div style={{background:C.green+"22",border:"1px solid "+C.green,borderRadius:8,
-                  padding:"8px 12px",marginBottom:12,fontSize:11,color:C.green,lineHeight:1.6}}>
-                  ✅ 自動抓取：{autoSource}<br/>
-                  <span style={{fontWeight:700}}>{autoDate}</span>
-                  <span style={{color:C.textMuted}}> （已自動填入）</span>
-                </div>
-              )}
-              {autoDate&&autoDate===editReminder.lastDate&&(
-                <div style={{background:C.bg,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:11,color:C.textMuted}}>
-                  📋 {autoSource} 與現有日期相同：{autoDate}
-                </div>
-              )}
-              <div className="field-label">最近一次檢查日期</div>
-              <input className="input-field" type="date" value={reminderDate}
-                onChange={e=>setReminderDate(e.target.value)} style={{marginBottom:16}}/>
-              <div style={{display:"flex",gap:10}}>
-                <button className="btn-secondary" style={{flex:1}} onClick={()=>setEditReminder(null)}>取消</button>
-                <button className="btn-primary" style={{flex:2}} onClick={()=>{if(reminderDate)updateReminderDate(editReminder.id,reminderDate);}}>確認更新</button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {editReminder&&<ReminderEditModal editReminder={editReminder} imagingHistory={imagingHistory} labHistory={labHistory} setEditReminder={setEditReminder} updateReminderDate={updateReminderDate}/>}
     </div>
   );};
 
@@ -2298,91 +2660,7 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
             </div>
           );
         })()}
-        {trendItem==="radar"&&(()=>{
-          const sortedLabs=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
-          const [compareIdx,setCompareIdx]=React.useState(sortedLabs.length>1?sortedLabs.length-2:-1);
-          const curLab=sortedLabs.length>0?sortedLabs[sortedLabs.length-1]:null;
-          const compLab=compareIdx>=0&&compareIdx<sortedLabs.length-1?sortedLabs[compareIdx]:null;
-          const cur=computeRadarScores(curLab,bpHistory);
-          const prev=compLab?computeRadarScores(compLab,[]):null;
-          if(!cur)return<div className="card"><div className="empty-state">尚無抽血資料</div></div>;
-          const N=cur.length, CX=170, CY=160, R=110;
-          const pt=(i,score)=>{
-            const ang=-Math.PI/2+i*2*Math.PI/N;
-            const r=R*(score==null?0:score)/10;
-            return[CX+r*Math.cos(ang),CY+r*Math.sin(ang)];
-          };
-          const poly=(scores)=>scores.map((d,i)=>pt(i,d.score).join(",")).join(" ");
-          const weak=cur.filter(d=>d.score!=null&&d.score<6.5).sort((a,b)=>a.score-b.score);
-          return(
-            <div className="card">
-              <div className="card-title">健康雷達（依抽血+血壓計分）</div>
-              {/* 對比選擇器 */}
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
-                <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>本次 {fmtDate(curLab.date)}</span></div>
-                {sortedLabs.length>1&&(
-                  <div style={{display:"flex",alignItems:"center",gap:5}}>
-                    <div style={{width:12,height:0,borderTop:`2px dashed ${C.blue}`}}/>
-                    <span style={{fontSize:11,color:C.textMuted}}>對比</span>
-                    <select value={compareIdx} onChange={e=>setCompareIdx(parseInt(e.target.value))}
-                      style={{fontSize:11,background:C.bgCard2,border:`1px solid ${C.border}`,borderRadius:6,color:C.textMuted,padding:"2px 4px"}}>
-                      <option value={-1}>不對比</option>
-                      {sortedLabs.slice(0,-1).map((lab,i)=>(
-                        <option key={i} value={i}>{fmtDate(lab.date)} ({lab.hospital||"—"})</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-              </div>
-              <svg viewBox="0 0 340 320" style={{width:"100%"}}>
-                {[2,4,6,8,10].map(lv=>(
-                  <polygon key={lv} points={Array.from({length:N},(_,i)=>{
-                    const ang=-Math.PI/2+i*2*Math.PI/N;
-                    return[CX+R*lv/10*Math.cos(ang),CY+R*lv/10*Math.sin(ang)].join(",");
-                  }).join(" ")} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
-                ))}
-                {cur.map((d,i)=>{
-                  const ang=-Math.PI/2+i*2*Math.PI/N;
-                  const lx=CX+(R+24)*Math.cos(ang), ly=CY+(R+24)*Math.sin(ang);
-                  return(
-                    <g key={i}>
-                      <line x1={CX} y1={CY} x2={CX+R*Math.cos(ang)} y2={CY+R*Math.sin(ang)} stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
-                      <text x={lx} y={ly} textAnchor="middle" fontSize="11" fill={d.score!=null&&d.score<6.5?C.amber:C.textMuted}>{d.label}</text>
-                      <text x={lx} y={ly+13} textAnchor="middle" fontSize="11" fontWeight="700" fill={d.score==null?C.textMuted:d.score<5?C.red:d.score<6.5?C.amber:C.green}>{d.score==null?"–":d.score}</text>
-                    </g>
-                  );
-                })}
-                {prev&&<polygon points={poly(prev)} fill="rgba(90,180,255,0.08)" stroke={C.blue} strokeWidth="1.5" strokeDasharray="5,4"/>}
-                <polygon points={poly(cur)} fill="rgba(46,204,138,0.15)" stroke={C.green} strokeWidth="2"/>
-                {cur.map((d,i)=>{const[x,y]=pt(i,d.score);return<circle key={i} cx={x} cy={y} r="3" fill={C.green}/>;})}
-              </svg>
-              {weak.length>0&&(
-                <div style={{background:"rgba(255,179,71,0.08)",border:"1px solid rgba(255,179,71,0.25)",borderRadius:10,padding:10,marginTop:8}}>
-                  <div style={{fontSize:12,fontWeight:700,color:C.amber,marginBottom:4}}>⚠️ 待加強面向</div>
-                  <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>
-                    {weak.map(d=>`${d.label}（${d.score}分）`).join("、")}
-                    <br/>你的修復早餐正是針對血脂與肝臟設計，持續執行+下次抽血驗證！
-                  </div>
-                </div>
-              )}
-              {(()=>{
-                const cvDim=cur.find(d=>d.label.startsWith("心血管"));
-                return cvDim?.cvAvg?(
-                  <div style={{background:"rgba(90,180,255,0.08)",border:"1px solid rgba(90,180,255,0.2)",borderRadius:10,padding:"8px 12px",marginBottom:8,fontSize:11,color:C.blue,lineHeight:1.6}}>
-                    💓 心血管：近{Math.min(bpHistory.length,7)}筆血壓均值 {cvDim.cvAvg} mmHg（單次波動已平滑）
-                  </div>
-                ):bpHistory.length===0?(
-                  <div style={{background:"rgba(255,179,71,0.08)",border:"1px solid rgba(255,179,71,0.2)",borderRadius:10,padding:"8px 12px",marginBottom:8,fontSize:11,color:C.amber,lineHeight:1.6}}>
-                    💓 心血管：尚無血壓記錄，請先記錄幾筆血壓（建議7筆以上取均值）
-                  </div>
-                ):null;
-              })()}
-              <div style={{fontSize:10,color:C.textMuted,marginTop:8,lineHeight:1.6}}>
-                計分方式：各指標與理想值比較換算0-10分（10=理想、5=異常臨界），面向內多指標取平均。心血管取近7筆血壓均值。
-              </div>
-            </div>
-          );
-        })()}
+        {trendItem==="radar"&&<RadarSection bpHistory={bpHistory} labHistory={labHistory}/>}
         {trendItem==="organ"&&(()=>{
           const today=new Date();
           // 把每筆影像歸到對應器官系統
@@ -3379,122 +3657,7 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
           </div>
         )}
 
-        {recordTab==="bp"&&(()=>{
-          // refs避免輸入焦點跳離
-          const sysRef=React.useRef(null);
-          const diaRef=React.useRef(null);
-          const pulseRef=React.useRef(null);
-          const recentBPList=[...bpHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,10);
-          return(
-            <div>
-              <div className="card" style={{marginBottom:12}}>
-                <div className="card-title">記錄血壓</div>
-                <div style={{marginBottom:12}}>
-                  <div className="field-label">來源</div>
-                  <div className="grid-2">
-                    {["日常","醫院"].map(s=>(
-                      <div key={s} className={`time-btn ${bpForm.source===s?"selected":""}`} onClick={()=>setBpForm(f=>({...f,source:s}))}>
-                        {s==="日常"?"🏠 OMRON（在家）":"🏥 醫院量測"}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="grid-3" style={{marginBottom:12}}>
-                  {[
-                    {label:"收縮壓",ph:"SYS",ref:sysRef,key:"sys"},
-                    {label:"舒張壓",ph:"DIA",ref:diaRef,key:"dia"},
-                    {label:"心率",ph:"PR",ref:pulseRef,key:"pulse"},
-                  ].map(f=>(
-                    <div key={f.key}>
-                      <div className="field-label">{f.label}</div>
-                      <input className="input-field" type="number" placeholder={f.ph}
-                        ref={f.ref}
-                        defaultValue={bpForm[f.key]}
-                        onBlur={e=>setBpForm(v=>({...v,[f.key]:e.target.value}))}/>
-                    </div>
-                  ))}
-                </div>
-                <div style={{background:C.bg,borderRadius:10,padding:10,marginBottom:14,fontSize:12,color:C.textMuted}}>💡 OMRON顯示HIGH表示舒張壓≥90</div>
-                <button className="btn-primary" onClick={()=>{
-                  // 儲存前先從ref取最新值
-                  setBpForm(f=>({...f,
-                    sys:sysRef.current?.value||f.sys,
-                    dia:diaRef.current?.value||f.dia,
-                    pulse:pulseRef.current?.value||f.pulse,
-                  }));
-                  setTimeout(saveBP,50);
-                }}>儲存</button>
-              </div>
-
-              {/* 近期血壓記錄 */}
-              {recentBPList.length>0&&(
-                <div className="card">
-                  <div className="card-title">近期血壓記錄 <span style={{fontSize:10,color:C.textMuted,fontWeight:400}}>點擊編輯</span></div>
-                  {recentBPList.map((r,i)=>{
-                    const sys=parseInt(r.systolic);
-                    const statusColor=sys>=140?C.red:sys>=130?C.amber:C.green;
-                    return(
-                      <div key={r.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-                        padding:"8px 0",borderBottom:i<recentBPList.length-1?`1px solid ${C.border}`:"none"}}>
-                        <div onClick={()=>setEditBPRecord({...r})} style={{flex:1,cursor:"pointer"}}>
-                          <div style={{fontSize:12,fontWeight:600,color:C.text}}>{fmtDateFull(r.date)}</div>
-                          <div style={{fontSize:10,color:C.textMuted}}>{r.source==="醫院"?"🏥":"🏠"} {r.source}</div>
-                        </div>
-                        <div style={{display:"flex",alignItems:"center",gap:10}}>
-                          <div style={{textAlign:"right"}} onClick={()=>setEditBPRecord({...r})} >
-                            <div style={{fontSize:16,fontWeight:700,color:statusColor}}>{r.systolic}/{r.diastolic}</div>
-                            {r.pulse&&<div style={{fontSize:10,color:C.textMuted}}>心率 {r.pulse}</div>}
-                          </div>
-                          <button onClick={()=>deleteBP(r.id)}
-                            style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:6,
-                              color:C.red,fontSize:11,padding:"4px 8px",cursor:"pointer"}}>
-                            刪除
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* 編輯Modal */}
-              {editBPRecord&&(
-                <div className="overlay">
-                  <div className="overlay-sheet">
-                    <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>✏️ 編輯血壓記錄</div>
-                    <div style={{fontSize:12,color:C.textMuted,marginBottom:12}}>{fmtDateFull(editBPRecord.date)}</div>
-                    <div className="grid-3" style={{marginBottom:12}}>
-                      {[
-                        {label:"收縮壓",key:"systolic"},
-                        {label:"舒張壓",key:"diastolic"},
-                        {label:"心率",key:"pulse"},
-                      ].map(f=>(
-                        <div key={f.key}>
-                          <div className="field-label">{f.label}</div>
-                          <input className="input-field" type="number"
-                            defaultValue={editBPRecord[f.key]}
-                            onBlur={e=>setEditBPRecord(v=>({...v,[f.key]:e.target.value}))}/>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="grid-2" style={{marginBottom:12}}>
-                      {["日常","醫院"].map(s=>(
-                        <div key={s} className={`time-btn ${editBPRecord.source===s?"selected":""}`}
-                          onClick={()=>setEditBPRecord(v=>({...v,source:s}))}>
-                          {s==="日常"?"🏠 日常":"🏥 醫院"}
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{display:"flex",gap:10}}>
-                      <button className="btn-secondary" style={{flex:1}} onClick={()=>setEditBPRecord(null)}>取消</button>
-                      <button className="btn-primary" style={{flex:2}} onClick={()=>updateBP(editBPRecord)}>💾 儲存更新</button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })()}
+        {recordTab==="bp"&&<BPRecordSection bpForm={bpForm} bpHistory={bpHistory} deleteBP={deleteBP} editBPRecord={editBPRecord} saveBP={saveBP} setBpForm={setBpForm} setEditBPRecord={setEditBPRecord} updateBP={updateBP}/>}
 
         {recordTab==="weight"&&(()=>{
           // ★ v4.70 BMI 計算
@@ -3830,48 +3993,7 @@ ${weekData||"尚無記錄"}
                 <div className="card-title">😴 輸入 Watch 7 睡眠數據</div>
 
                 {/* ChatGPT指令複製區 */}
-                {(()=>{
-                  const [copied,setCopied]=React.useState(false);
-                  const GPT_CMD=`請從這些 Samsung Health 睡眠截圖中擷取數據，輸出以下固定格式（純文字，不要多餘說明，時間一律用24小時制）：
-
-日期：
-上床時間：
-起床時間：
-總時間（分鐘）：
-實際睡眠（分鐘）：
-睡眠評分：
-深層睡眠（分鐘）：
-淺層睡眠（分鐘）：
-REM（分鐘）：
-清醒（分鐘）：
-血氧平均（%）：
-血氧最低值（%）：
-血氧低於90%（分鐘）：
-平均心跳（次/分）：
-心率最低值（次/分）：
-呼吸速率（次/分）：
-備註：`;
-                  return(
-                    <div style={{marginBottom:10}}>
-                      <div style={{fontSize:11,color:C.textMuted,marginBottom:6,lineHeight:1.6}}>
-                        步驟①：複製指令 → 開ChatGPT → 上傳截圖 + 貼上指令<br/>
-                        步驟②：複製ChatGPT輸出 → 貼到下方「自動填入」
-                      </div>
-                      <button onClick={()=>{
-                        navigator.clipboard?.writeText(GPT_CMD).then(()=>{
-                          setCopied(true);setTimeout(()=>setCopied(false),3000);
-                          showToast("✅ 已複製！去ChatGPT貼上");
-                        });
-                      }} style={{width:"100%",padding:"10px",marginBottom:6,
-                        background:copied?C.green+"33":C.amber+"22",
-                        border:`1px solid ${copied?C.green:C.amber}`,
-                        borderRadius:8,color:copied?C.green:C.amber,
-                        fontSize:13,fontWeight:700,cursor:"pointer"}}>
-                        {copied?"✅ 已複製！去 ChatGPT 貼上":"📤 複製 ChatGPT 擷取指令"}
-                      </button>
-                    </div>
-                  );
-                })()}
+                {<MealRecordSection showToast={showToast}/>}
                 {/* 貼上解析區 */}
                 <button onClick={()=>setShowSleepPaste(v=>!v)}
                   style={{width:"100%",padding:"10px",marginBottom:10,background:C.green+"22",
@@ -4868,45 +4990,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
         </div>
 
         {/* 我的診斷卡片（2025/03住院確診） */}
-        {!searchLower&&(()=>{
-          const [showDx,setShowDx]=React.useState(false);
-          const DX=[
-            {n:"①",name:"眼瞼肌束顫動（左側）",status:"✅已緩解",color:C.green,note:"與睡眠不足壓力相關，神經傳導左側R1延長"},
-            {n:"②",name:"高血壓",status:"💊用藥中",color:C.amber,note:"舒脈康5/40，目標<125/80"},
-            {n:"③",name:"雙側髂總動脈瘤",status:"⚠️追蹤",color:C.red,note:"CTA確診，每6個月心臟科追蹤大小"},
-            {n:"④",name:"LAD1冠狀動脈35%狹窄",status:"⚠️追蹤",color:C.red,note:"輕度<50%無需介入，保栓通+定期追蹤"},
-            {n:"⑤",name:"肝酶升高",status:"📈監測",color:C.amber,note:"ALT 63.54，與脂肪肝相關，3個月追蹤"},
-            {n:"⑥",name:"高尿酸血症",status:"📈監測",color:C.amber,note:"7.95 mg/dL，多喝水少紅肉"},
-            {n:"⑦",name:"脂肪肝 Grade II",status:"⚠️惡化",color:C.red,note:"從G1進展，飲食+運動+咖啡是核心對策"},
-          ];
-          return(
-            <div className="card" style={{marginBottom:12,cursor:"pointer"}} onClick={()=>setShowDx(v=>!v)}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div>
-                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>📋 我的診斷（7項）</div>
-                  <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>2025/03/19 海防國際醫院住院確診 · 點擊{showDx?"收合":"展開"}</div>
-                </div>
-                <span style={{color:C.textMuted}}>{showDx?"▲":"▼"}</span>
-              </div>
-              {showDx&&(
-                <div style={{marginTop:10}} onClick={e=>e.stopPropagation()}>
-                  {DX.map(d=>(
-                    <div key={d.n} style={{padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:2}}>
-                        <span style={{fontSize:12,fontWeight:600,color:C.text}}>{d.n} {d.name}</span>
-                        <span style={{fontSize:10,color:d.color,fontWeight:700}}>{d.status}</span>
-                      </div>
-                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.5}}>{d.note}</div>
-                    </div>
-                  ))}
-                  <div style={{fontSize:10,color:C.textMuted,marginTop:8,lineHeight:1.6}}>
-                    💡 看診時可直接展示此卡片給醫師。完整報告在記錄→影像。
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })()}
+        {!searchLower&&<KBGroupSection/>}
 
         {/* Tab 切換 */}
         {!searchLower&&(
@@ -5714,64 +5798,7 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
         </div>
 
         {/* Sheets 連線狀態 */}
-        {(()=>{
-          const [connStatus,setConnStatus]=React.useState("idle");
-          const [connInfo,setConnInfo]=React.useState(null);
-          const checkConn=async()=>{
-            setConnStatus("checking");
-            try{
-              const r=await api.get("ping");
-              if(r&&!r.error){
-                setConnStatus("ok");
-                setConnInfo({
-                  lab:labHistory.length,
-                  bp:bpHistory.length,
-                  glucose:glucoseHistory.length,
-                  weight:weightHistory.length,
-                  exercise:exerciseLog.length,
-                  lastSync:lastSync?lastSync.toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit"}):"—",
-                });
-              }else{setConnStatus("error");setConnInfo(null);}
-            }catch(e){setConnStatus("error");setConnInfo(null);}
-          };
-          return(
-            <div className="card">
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                <div className="card-title" style={{marginBottom:0}}>🔌 Sheets 連線狀態</div>
-                <button onClick={checkConn} disabled={connStatus==="checking"}
-                  style={{padding:"5px 12px",borderRadius:8,fontSize:11,cursor:"pointer",
-                    background:"transparent",border:`1px solid ${C.border}`,color:C.textMuted,
-                    fontFamily:"'Noto Sans TC',sans-serif"}}>
-                  {connStatus==="checking"?"檢查中...":"檢查連線"}
-                </button>
-              </div>
-              {connStatus==="idle"&&<div style={{fontSize:12,color:C.textMuted}}>點擊「檢查連線」確認 GAS 和 Sheets 狀態</div>}
-              {connStatus==="ok"&&connInfo&&(
-                <div>
-                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
-                    <div style={{width:8,height:8,borderRadius:"50%",background:C.green}}/>
-                    <span style={{fontSize:12,color:C.green,fontWeight:700}}>連線正常</span>
-                    <span style={{fontSize:11,color:C.textMuted}}>上次同步 {connInfo.lastSync}</span>
-                  </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-                    {[{label:"抽血",n:connInfo.lab},{label:"血壓",n:connInfo.bp},{label:"血糖",n:connInfo.glucose},{label:"體重",n:connInfo.weight},{label:"運動",n:connInfo.exercise}].map(s=>(
-                      <div key={s.label} style={{background:C.bg,borderRadius:8,padding:"6px 8px",textAlign:"center"}}>
-                        <div style={{fontSize:14,fontWeight:700,color:s.n>0?C.green:C.amber}}>{s.n}</div>
-                        <div style={{fontSize:10,color:C.textMuted}}>{s.label}筆</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {connStatus==="error"&&(
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
-                  <div style={{width:8,height:8,borderRadius:"50%",background:C.red}}/>
-                  <span style={{fontSize:12,color:C.red}}>連線失敗，請確認 GAS 已部署且網路正常</span>
-                </div>
-              )}
-            </div>
-          );
-        })()}
+        {<HealthSummarySection bpHistory={bpHistory} exerciseLog={exerciseLog} glucoseHistory={glucoseHistory} labHistory={labHistory} lastSync={lastSync} weightHistory={weightHistory}/>}
         {/* ★ v4.70 資料匯出備份 */}
         <div className="card">
           <div className="card-title">📦 資料匯出備份</div>
