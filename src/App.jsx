@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.79"; // v4.79: 修正React #310——9個JSX內IIFE含hooks抽為獨立元件（v4.74元件穩定後暴露的既有問題）
+const VERSION = "v4.80"; // v4.80: 血壓/血糖/體重新增表單可選日期（補登舊資料一次完成）+血壓編輯Modal可改日期
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
 const GEMINI_MODEL = "gemini-3.5-flash";
@@ -1550,6 +1550,7 @@ const BPRecordSection=({bpForm,bpHistory,deleteBP,editBPRecord,saveBP,setBpForm,
             <div>
               <div className="card" style={{marginBottom:12}}>
                 <div className="card-title">記錄血壓</div>
+                <DateField value={bpForm.date} onChange={d=>setBpForm(f=>({...f,date:d}))}/>
                 <div style={{marginBottom:12}}>
                   <div className="field-label">來源</div>
                   <div className="grid-2">
@@ -1623,7 +1624,7 @@ const BPRecordSection=({bpForm,bpHistory,deleteBP,editBPRecord,saveBP,setBpForm,
                 <div className="overlay">
                   <div className="overlay-sheet">
                     <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>✏️ 編輯血壓記錄</div>
-                    <div style={{fontSize:12,color:C.textMuted,marginBottom:12}}>{fmtDateFull(editBPRecord.date)}</div>
+                    <DateField value={editBPRecord.date} onChange={d=>setEditBPRecord(v=>({...v,date:d}))} label="日期（可修改）"/>
                     <div className="grid-3" style={{marginBottom:12}}>
                       {[
                         {label:"收縮壓",key:"systolic"},
@@ -1801,6 +1802,22 @@ const HealthSummarySection=({bpHistory,exerciseLog,glucoseHistory,labHistory,las
             </div>
           );
         };
+
+// ★ v4.80 記錄日期選擇欄位（補登舊資料用；預設今天）
+const DateField=({value,onChange,label="日期"})=>{
+  const isPast=value&&value!==today();
+  return(
+    <div style={{marginBottom:12}}>
+      <div className="field-label">
+        {label}
+        {isPast&&<span style={{color:C.amber,marginLeft:6,fontSize:10}}>· 補登（非今日）</span>}
+      </div>
+      <input className="input-field" type="date" value={value||today()} max={today()}
+        onChange={e=>onChange(e.target.value||today())}
+        style={isPast?{borderColor:C.amber}:undefined}/>
+    </div>
+  );
+};
 
 // ═══ LineChart（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
 const LineChart=({datasets,min=0,max=200,refLines=[],height=120,statusKey=null})=>{
@@ -3618,6 +3635,7 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
         {recordTab==="glucose"&&(
           <div className="card">
             <div className="card-title">記錄血糖</div>
+            <DateField value={glucoseForm.date} onChange={d=>setGlucoseForm(f=>({...f,date:d}))}/>
             <div style={{marginBottom:12}}>
               <div className="field-label">來源</div>
               <div className="grid-2">
@@ -3705,6 +3723,7 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
                   }}>儲存身高</button>
               </div>
             )}
+            <DateField value={weightForm.date} onChange={d=>setWeightForm(f=>({...f,date:d}))}/>
             <div style={{marginBottom:16}}>
               <div className="field-label">體重 (kg)</div>
               <input className="input-field" type="number" step="0.1" placeholder="例：75.2" value={weightForm.value} onChange={e=>setWeightForm({value:e.target.value})}/>
@@ -6154,10 +6173,10 @@ function HealthJournalInner(){
   const [submitting,setSubmitting]=useState(false); // 防重複提交
 
   // 表單
-  const [glucoseForm,setGlucoseForm]=useState({value:"",unit:localStorage.getItem("hj_glucose_unit")||"mmol/L",timePoint:"空腹",source:"日常",note:""});
-  const [bpForm,setBpForm]=useState({sys:"",dia:"",pulse:"",source:"日常"});
+  const [glucoseForm,setGlucoseForm]=useState({value:"",unit:localStorage.getItem("hj_glucose_unit")||"mmol/L",timePoint:"空腹",source:"日常",note:"",date:today()});
+  const [bpForm,setBpForm]=useState({sys:"",dia:"",pulse:"",source:"日常",date:today()});
   const [editBPRecord,setEditBPRecord]=useState(null);
-  const [weightForm,setWeightForm]=useState({value:""});
+  const [weightForm,setWeightForm]=useState({value:"",date:today()});
 
   // 抽血報告解析
   const [labStep,setLabStep]=useState("input"); // input | parsing | confirm | saving
@@ -6417,7 +6436,7 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
       // ★ v4.70 異常值即時提醒
       if(mgdl>=126)setTimeout(()=>window.alert(`⚠️ 血糖 ${mgdl} mg/dL 已達糖尿病標準（≥126）\n建議：確認是否空腹量測，若持續偏高請就醫`),300);
       else if(mgdl>=100)setTimeout(()=>window.alert(`⚠️ 血糖 ${mgdl} mg/dL 偏高（正常<100）\n建議：注意飲食，持續追蹤`),300);
-      setGlucoseForm({value:"",unit:localStorage.getItem("hj_glucose_unit")||"mmol/L",timePoint:"空腹",source:"日常",note:""});
+      setGlucoseForm({value:"",unit:localStorage.getItem("hj_glucose_unit")||"mmol/L",timePoint:"空腹",source:"日常",note:"",date:today()});
       loadData();
     }
     else showToast("❌ 血糖儲存失敗：" + (r?.error || "請檢查網路連線"));
@@ -6445,8 +6464,9 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
     if(!bpForm.sys||!bpForm.dia){showToast("⚠️ 請輸入血壓值");return;}
     setSubmitting(true);
     const now=new Date();
+    const useDate=bpForm.date||today(); // ★ v4.80 支援補登
     const r=await api.post("append","daily_bp",{
-      date:now.toISOString().split("T")[0],time:now.toTimeString().slice(0,5),
+      date:useDate,time:now.toTimeString().slice(0,5),
       systolic:parseInt(bpForm.sys),diastolic:parseInt(bpForm.dia),
       pulse:parseInt(bpForm.pulse)||"",source:bpForm.source,
     });
@@ -6456,7 +6476,7 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
       const s=parseInt(bpForm.sys),d=parseInt(bpForm.dia);
       if(s>=160||d>=100)setTimeout(()=>window.alert(`🚨 血壓 ${s}/${d} mmHg 顯著偏高！\n建議：休息15分鐘後再量一次，若仍≥160/100請盡快就醫`),300);
       else if(s>=140||d>=90)setTimeout(()=>window.alert(`⚠️ 血壓 ${s}/${d} mmHg 偏高（≥140/90）\n建議：確認服藥狀況，連續3天偏高請回診`),300);
-      setBpForm({sys:"",dia:"",pulse:"",source:"日常"});
+      setBpForm({sys:"",dia:"",pulse:"",source:"日常",date:today()});
       loadData();
     }
     else showToast("❌ 儲存失敗");
@@ -6467,8 +6487,8 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
     if(submitting){return;}
     if(!weightForm.value){showToast("⚠️ 請輸入體重");return;}
     setSubmitting(true);
-    const r=await api.post("append","daily_weight",{date:today(),value_kg:parseFloat(weightForm.value)});
-    if(r?.success){showToast("✅ 體重已儲存");setWeightForm({value:""});loadData();}
+    const r=await api.post("append","daily_weight",{date:weightForm.date||today(),value_kg:parseFloat(weightForm.value)}); // ★ v4.80 支援補登
+    if(r?.success){showToast("✅ 體重已儲存");setWeightForm({value:"",date:today()});loadData();}
     else showToast("❌ 儲存失敗");
     setSubmitting(false);
   };
