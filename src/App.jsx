@@ -1,13 +1,27 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.80"; // v4.80: 血壓/血糖/體重新增表單可選日期（補登舊資料一次完成）+血壓編輯Modal可改日期
+const VERSION = "v4.81"; // v4.81: 修正抽血報告照片解析失敗（v4.75轉Gemini時未處理圖文混合content格式）
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
 const GEMINI_MODEL = "gemini-3.5-flash";
 const callAI = async (messages, maxTokens=1000) => {
   const key = localStorage.getItem("hj_apikey") || "";
   if (!key) throw new Error("NO_API_KEY");
-  const contents = messages.map(m=>({role:m.role==="assistant"?"model":"user",parts:[{text:m.content}]}));
+  // ★ v4.81 content 可能是純字串，或是圖文混合陣列（抽血報告照片解析）→ 一律轉成 Gemini parts
+  const toParts=(c)=>{
+    if(typeof c==="string") return [{text:c}];
+    if(!Array.isArray(c)) return [{text:String(c)}];
+    return c.map(b=>{
+      if(b.type==="text") return {text:b.text};
+      if(b.type==="image"){
+        const src=b.source||{};
+        return {inline_data:{mime_type:src.media_type||"image/jpeg",data:src.data}};
+      }
+      if(b.inline_data||b.text) return b; // 已是Gemini格式
+      return {text:String(b.text||"")};
+    }).filter(Boolean);
+  };
+  const contents = messages.map(m=>({role:m.role==="assistant"?"model":"user",parts:toParts(m.content)}));
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": key },
