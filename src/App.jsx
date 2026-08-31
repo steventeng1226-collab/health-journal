@@ -1833,6 +1833,87 @@ const DateField=({value,onChange,label="日期"})=>{
   );
 };
 
+// ★ v4.82 拿藥提醒（慢性病連續處方箋，預設90天一次）
+const RefillCard=({showToast})=>{
+  const [cfg,setCfg]=React.useState(()=>{
+    try{return JSON.parse(localStorage.getItem("hj_medrefill")||"null")||{last:"",days:90,name:"高血壓藥"};}
+    catch(e){return {last:"",days:90,name:"高血壓藥"};}
+  });
+  const [editing,setEditing]=React.useState(false);
+  const save=(next)=>{setCfg(next);localStorage.setItem("hj_medrefill",JSON.stringify(next));};
+  if(!cfg.last&&!editing){
+    return(
+      <div className="card" style={{marginBottom:12,padding:"12px 14px",cursor:"pointer"}}
+        onClick={()=>setEditing(true)}>
+        <div style={{fontSize:13,fontWeight:700,color:C.text}}>💊 設定拿藥提醒</div>
+        <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>點此設定上次拿藥日期，自動推算下次</div>
+      </div>
+    );
+  }
+  if(editing){
+    return(
+      <div className="card" style={{marginBottom:12}}>
+        <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>💊 拿藥提醒設定</div>
+        <div className="field-label">藥品名稱</div>
+        <input className="input-field" defaultValue={cfg.name} style={{marginBottom:10}}
+          onBlur={e=>save({...cfg,name:e.target.value.trim()||"慢性病藥"})}/>
+        <div className="field-label">上次拿藥日期</div>
+        <input className="input-field" type="date" defaultValue={cfg.last||today()} max={today()}
+          style={{marginBottom:10}}
+          onBlur={e=>save({...cfg,last:e.target.value})}/>
+        <div className="field-label">週期（天）</div>
+        <input className="input-field" type="number" defaultValue={cfg.days} style={{marginBottom:12}}
+          onBlur={e=>save({...cfg,days:parseInt(e.target.value)||90})}/>
+        <div style={{display:"flex",gap:8}}>
+          <button className="btn-sm" style={{flex:1,padding:"10px"}}
+            onClick={()=>{setEditing(false);showToast&&showToast("✅ 拿藥提醒已設定");}}>完成</button>
+          {cfg.last&&(
+            <button className="btn-sm" style={{flex:1,padding:"10px",color:C.red}}
+              onClick={()=>{localStorage.removeItem("hj_medrefill");setCfg({last:"",days:90,name:"高血壓藥"});setEditing(false);}}>
+              刪除
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+  const next=new Date(cfg.last);
+  next.setDate(next.getDate()+(cfg.days||90));
+  const nextStr=`${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,"0")}-${String(next.getDate()).padStart(2,"0")}`;
+  const left=Math.ceil((next-new Date(new Date().toDateString()))/86400000);
+  const urgent=left<=7, over=left<0;
+  const col=over?C.red:urgent?C.amber:C.green;
+  return(
+    <div className="card" style={{marginBottom:12,padding:"12px 14px",
+      border:`1px solid ${col}${over||urgent?"":"44"}`}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.text}}>💊 {cfg.name}</div>
+          <div style={{fontSize:11,color:C.textMuted,marginTop:3}}>
+            下次：{fmtDateFull?fmtDateFull(nextStr):nextStr} · 每{cfg.days}天
+          </div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:20,fontWeight:800,color:col,lineHeight:1.1}}>
+            {over?`逾期${Math.abs(left)}天`:left===0?"今天":`${left}天`}
+          </div>
+          <div style={{fontSize:10,color:C.textMuted}}>{over?"請盡快回診":"後拿藥"}</div>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8,marginTop:10}}>
+        <button className="btn-sm" style={{flex:1,padding:"8px",fontSize:12}}
+          onClick={()=>{
+            const t=today();
+            save({...cfg,last:t});
+            showToast&&showToast("✅ 已記錄今天拿藥，下次自動順延");
+          }}>✅ 今天拿了</button>
+        <button className="btn-sm" style={{padding:"8px 14px",fontSize:12}}
+          onClick={()=>setEditing(true)}>設定</button>
+      </div>
+    </div>
+  );
+};
+
 // ═══ LineChart（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
 const LineChart=({datasets,min=0,max=200,refLines=[],height=120,statusKey=null})=>{
     const hasData=datasets&&datasets.some(d=>d.data.length>0);
@@ -2197,6 +2278,8 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
       </div>
       {loading&&<div style={{position:"fixed",top:10,right:10,zIndex:999,background:"rgba(20,20,20,0.92)",border:`1px solid ${C.border}`,borderRadius:20,padding:"4px 12px",fontSize:11,color:C.textMuted,pointerEvents:"none"}}><span className="spin">⟳</span> 同步中</div>}
       {!isOnline&&<div style={{background:"rgba(255,179,71,0.1)",border:"1px solid rgba(255,179,71,0.3)",borderRadius:10,padding:"8px 12px",marginBottom:10,fontSize:12,color:C.amber,textAlign:"center"}}>📴 離線模式 · 顯示本地快取資料</div>}
+      {/* ★ v4.82 拿藥提醒 */}
+      <RefillCard showToast={showToast}/>
       {/* 每日AI顧問問候 */}
       <div style={{background:"linear-gradient(135deg,rgba(46,204,138,0.12),rgba(52,152,219,0.12))",
         border:`1px solid ${C.green}44`,borderRadius:12,padding:"12px 14px",marginBottom:12}}>
@@ -5566,6 +5649,7 @@ const ArticleCard=({art,onSelect})=>(
 // ═══ SettingTab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
 const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hospitalList,imagingHistory,labHistory,lastSync,reminderSyncDone,reminders,setApiKey,setHospitalList,setReminders,showToast,sleepLog,weightHistory}=hj;
     const [inputKey,setInputKey]=useState(apiKey);
+    const [keyDiag,setKeyDiag]=useState(""); // ★ v4.82 金鑰診斷結果
     const [newHospital,setNewHospital]=useState("");
     const [cloudName,setCloudName]=useState(localStorage.getItem("cloudinary_name")||"");
     const [cloudPreset,setCloudPreset]=useState(localStorage.getItem("cloudinary_preset")||"");
