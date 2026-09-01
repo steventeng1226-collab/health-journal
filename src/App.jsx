@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.81"; // v4.81: 修正抽血報告照片解析失敗（v4.75轉Gemini時未處理圖文混合content格式）
+const VERSION = "v4.82"; // v4.82: 修正金鑰儲存被Claude格式檢查(sk-)擋住導致舊金鑰殘留+金鑰測試診斷+可設定模型+首頁拿藥提醒
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
-const GEMINI_MODEL = "gemini-3.5-flash";
+const GEMINI_MODEL_DEFAULT = "gemini-3.5-flash";
+const getModel = () => (localStorage.getItem("hj_gemini_model") || GEMINI_MODEL_DEFAULT).trim();
 const callAI = async (messages, maxTokens=1000) => {
-  const key = localStorage.getItem("hj_apikey") || "";
+  const key = (localStorage.getItem("hj_apikey") || "").trim();
   if (!key) throw new Error("NO_API_KEY");
+  if (key.startsWith("sk-")) throw new Error("目前存的是舊的 Claude 金鑰，請到設定頁改存 Gemini 金鑰");
   // ★ v4.81 content 可能是純字串，或是圖文混合陣列（抽血報告照片解析）→ 一律轉成 Gemini parts
   const toParts=(c)=>{
     if(typeof c==="string") return [{text:c}];
@@ -22,7 +24,7 @@ const callAI = async (messages, maxTokens=1000) => {
     }).filter(Boolean);
   };
   const contents = messages.map(m=>({role:m.role==="assistant"?"model":"user",parts:toParts(m.content)}));
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${getModel()}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": key },
     body: JSON.stringify({
@@ -1833,7 +1835,7 @@ const DateField=({value,onChange,label="日期"})=>{
   );
 };
 
-// ★ v4.82 拿藥提醒（慢性病連續處方箋，預設90天一次）
+// ★ v4.82 拿藥提醒（慢性病連續處方箋；日期由使用者自行輸入）
 const RefillCard=({showToast})=>{
   const [cfg,setCfg]=React.useState(()=>{
     try{return JSON.parse(localStorage.getItem("hj_medrefill")||"null")||{last:"",days:90,name:"高血壓藥"};}
@@ -1841,16 +1843,8 @@ const RefillCard=({showToast})=>{
   });
   const [editing,setEditing]=React.useState(false);
   const save=(next)=>{setCfg(next);localStorage.setItem("hj_medrefill",JSON.stringify(next));};
-  if(!cfg.last&&!editing){
-    return(
-      <div className="card" style={{marginBottom:12,padding:"12px 14px",cursor:"pointer"}}
-        onClick={()=>setEditing(true)}>
-        <div style={{fontSize:13,fontWeight:700,color:C.text}}>💊 設定拿藥提醒</div>
-        <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>點此設定上次拿藥日期，自動推算下次</div>
-      </div>
-    );
-  }
-  if(editing){
+
+  if(editing||!cfg.last){
     return(
       <div className="card" style={{marginBottom:12}}>
         <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>💊 拿藥提醒設定</div>
@@ -1858,15 +1852,17 @@ const RefillCard=({showToast})=>{
         <input className="input-field" defaultValue={cfg.name} style={{marginBottom:10}}
           onBlur={e=>save({...cfg,name:e.target.value.trim()||"慢性病藥"})}/>
         <div className="field-label">上次拿藥日期</div>
-        <input className="input-field" type="date" defaultValue={cfg.last||today()} max={today()}
-          style={{marginBottom:10}}
-          onBlur={e=>save({...cfg,last:e.target.value})}/>
+        <input className="input-field" type="date" defaultValue={cfg.last} style={{marginBottom:10}}
+          onBlur={e=>{ if(e.target.value) save({...cfg,last:e.target.value}); }}/>
         <div className="field-label">週期（天）</div>
         <input className="input-field" type="number" defaultValue={cfg.days} style={{marginBottom:12}}
           onBlur={e=>save({...cfg,days:parseInt(e.target.value)||90})}/>
         <div style={{display:"flex",gap:8}}>
           <button className="btn-sm" style={{flex:1,padding:"10px"}}
-            onClick={()=>{setEditing(false);showToast&&showToast("✅ 拿藥提醒已設定");}}>完成</button>
+            onClick={()=>{
+              if(!cfg.last){showToast&&showToast("⚠️ 請先輸入上次拿藥日期");return;}
+              setEditing(false);showToast&&showToast("✅ 拿藥提醒已設定");
+            }}>完成</button>
           {cfg.last&&(
             <button className="btn-sm" style={{flex:1,padding:"10px",color:C.red}}
               onClick={()=>{localStorage.removeItem("hj_medrefill");setCfg({last:"",days:90,name:"高血壓藥"});setEditing(false);}}>
@@ -1877,38 +1873,30 @@ const RefillCard=({showToast})=>{
       </div>
     );
   }
+
   const next=new Date(cfg.last);
   next.setDate(next.getDate()+(cfg.days||90));
-  const nextStr=`${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,"0")}-${String(next.getDate()).padStart(2,"0")}`;
+  const nextStr=next.getFullYear()+"-"+String(next.getMonth()+1).padStart(2,"0")+"-"+String(next.getDate()).padStart(2,"0");
   const left=Math.ceil((next-new Date(new Date().toDateString()))/86400000);
-  const urgent=left<=7, over=left<0;
+  const over=left<0, urgent=left>=0&&left<=7;
   const col=over?C.red:urgent?C.amber:C.green;
   return(
-    <div className="card" style={{marginBottom:12,padding:"12px 14px",
-      border:`1px solid ${col}${over||urgent?"":"44"}`}}>
+    <div className="card" style={{marginBottom:12,padding:"12px 14px",cursor:"pointer",
+      border:"1px solid "+col+((over||urgent)?"":"44")}}
+      onClick={()=>setEditing(true)}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <div style={{flex:1}}>
           <div style={{fontSize:13,fontWeight:700,color:C.text}}>💊 {cfg.name}</div>
           <div style={{fontSize:11,color:C.textMuted,marginTop:3}}>
-            下次：{fmtDateFull?fmtDateFull(nextStr):nextStr} · 每{cfg.days}天
+            下次：{nextStr} · 每{cfg.days}天 · 點此更新日期
           </div>
         </div>
         <div style={{textAlign:"right"}}>
           <div style={{fontSize:20,fontWeight:800,color:col,lineHeight:1.1}}>
-            {over?`逾期${Math.abs(left)}天`:left===0?"今天":`${left}天`}
+            {over?"逾期"+Math.abs(left)+"天":left===0?"今天":left+"天"}
           </div>
           <div style={{fontSize:10,color:C.textMuted}}>{over?"請盡快回診":"後拿藥"}</div>
         </div>
-      </div>
-      <div style={{display:"flex",gap:8,marginTop:10}}>
-        <button className="btn-sm" style={{flex:1,padding:"8px",fontSize:12}}
-          onClick={()=>{
-            const t=today();
-            save({...cfg,last:t});
-            showToast&&showToast("✅ 已記錄今天拿藥，下次自動順延");
-          }}>✅ 今天拿了</button>
-        <button className="btn-sm" style={{padding:"8px 14px",fontSize:12}}
-          onClick={()=>setEditing(true)}>設定</button>
       </div>
     </div>
   );
@@ -1989,7 +1977,7 @@ const LabReportTab=({hj})=>{ const{apiKey,handlePhotoChange,hospitalList,labForm
             <div style={{fontSize:11,color:C.textMuted,marginBottom:8}}>前往「設定」Tab 輸入金鑰，或直接在下方輸入：</div>
             <input className="input-field" type="password" placeholder="AQ. 或 AIza 開頭金鑰" value={apiKey}
               onChange={e=>setApiKey(e.target.value)} style={{marginBottom:8}}/>
-            <button className="btn-primary" onClick={()=>{if(apiKey){localStorage.setItem("hj_apikey",apiKey);showToast("✅ API金鑰已儲存");}else{showToast("⚠️請先輸入金鑰");}}}>儲存金鑰</button>
+            <button className="btn-primary" onClick={()=>{if(apiKey.trim()){localStorage.setItem("hj_apikey",apiKey.trim());showToast("✅ API金鑰已儲存");}else{showToast("⚠️請先輸入金鑰");}}}>儲存金鑰</button>
           </div>
         )}
 
@@ -5676,11 +5664,53 @@ const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hos
             />
             <button className="btn-primary" onClick={()=>{
               if(!inputKey.trim()){showToast("⚠️ 請輸入API金鑰");return;}
-              if(!inputKey.startsWith("sk-")){showToast("⚠️ 格式不正確，應以sk-開頭");return;}
               localStorage.setItem("hj_apikey",inputKey.trim());
               setApiKey(inputKey.trim());
               showToast("✅ API金鑰已儲存");
             }}>儲存金鑰</button>
+
+            {/* ★ v4.82 金鑰診斷：直接問 Google 這把金鑰能用哪些模型 */}
+            <button className="btn-sm" style={{width:"100%",marginTop:8,padding:"10px"}}
+              onClick={async()=>{
+                const k=(localStorage.getItem("hj_apikey")||"").trim();
+                if(!k){setKeyDiag("❌ 尚未儲存任何金鑰");return;}
+                if(k.startsWith("sk-")){setKeyDiag("❌ 目前存的是舊的 Claude 金鑰（開頭 "+k.slice(0,6)+"…）\n請在上方欄位貼入 Gemini 金鑰後按「儲存金鑰」覆蓋");return;}
+                setKeyDiag("⏳ 測試中…");
+                try{
+                  const r=await fetch("https://generativelanguage.googleapis.com/v1beta/models",{headers:{"x-goog-api-key":k}});
+                  const d=await r.json().catch(()=>({}));
+                  if(!r.ok){
+                    setKeyDiag("❌ 金鑰無效（HTTP "+r.status+"）\n"+(d&&d.error&&d.error.message||"未知錯誤")+"\n金鑰長度 "+k.length+"、開頭 "+k.slice(0,4)+"…");
+                    return;
+                  }
+                  const names=(d.models||[]).map(m=>String(m.name||"").replace("models/",""))
+                    .filter(n=>n.indexOf("gemini")>=0&&n.indexOf("embedding")<0);
+                  const cur=getModel();
+                  const hit=names.indexOf(cur)>=0;
+                  setKeyDiag("✅ 金鑰有效！可用 "+names.length+" 個模型\n\n目前設定："+cur+" "+(hit?"✅ 可用":"❌ 不在清單中（請改填下方其一）")+"\n\n建議可用：\n"+
+                    names.filter(n=>n.indexOf("flash")>=0).slice(0,8).map(n=>"· "+n).join("\n"));
+                }catch(e){ setKeyDiag("❌ 連線失敗："+String(e.message||e)); }
+              }}>🔍 測試金鑰（列出可用模型）</button>
+
+            {keyDiag&&(
+              <div style={{marginTop:8,padding:"10px 12px",background:"rgba(255,255,255,0.04)",borderRadius:10,
+                fontSize:11,lineHeight:1.7,color:C.text,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>
+                {keyDiag}
+              </div>
+            )}
+
+            <div style={{marginTop:10}}>
+              <div className="field-label">使用模型</div>
+              <input className="input-field" defaultValue={getModel()} placeholder="gemini-3.5-flash"
+                onBlur={e=>{
+                  const v=e.target.value.trim()||GEMINI_MODEL_DEFAULT;
+                  localStorage.setItem("hj_gemini_model",v);
+                  showToast("✅ 模型已設為 "+v);
+                }}/>
+              <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>
+                若測試顯示目前模型不可用，改填清單中的名稱（離開欄位即儲存）
+              </div>
+            </div>
           </div>
           {apiKey&&(
             <button style={{width:"100%",padding:"10px",background:"transparent",border:`1px solid ${C.red}44`,borderRadius:10,color:C.red,fontSize:13,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif",marginTop:6}}
