@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.82"; // v4.82: 修正金鑰儲存被Claude格式檢查(sk-)擋住導致舊金鑰殘留+金鑰測試診斷+可設定模型+首頁拿藥提醒
+const VERSION = "v4.83"; // v4.83: 修正Modal被推到頁面底部看不到（fade-in的transform動畫使position:fixed改以容器為基準）
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
 const GEMINI_MODEL_DEFAULT = "gemini-3.5-flash";
@@ -213,7 +213,7 @@ const styles=`
   *{box-sizing:border-box;margin:0;padding:0;}
   body{background:${C.bg};color:${C.text};font-family:'Noto Sans TC',sans-serif;}
   ::-webkit-scrollbar{width:4px;} ::-webkit-scrollbar-track{background:${C.bg};} ::-webkit-scrollbar-thumb{background:${C.greenDark};border-radius:2px;}
-  @keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}} /* ★ v4.83 移除transform：帶transform動畫的容器會成為position:fixed的定位基準，導致內部Modal被推到頁面底部 */
   @keyframes spin{to{transform:rotate(360deg)}}
   .fade-in{animation:fadeIn 0.4s ease forwards;}
   .spin{animation:spin 1s linear infinite;display:inline-block;}
@@ -260,7 +260,7 @@ const styles=`
   .photo-preview{position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;flex-shrink:0;}
   .photo-preview img{width:100%;height:100%;object-fit:cover;}
   .photo-del{position:absolute;top:2px;right:2px;background:rgba(0,0,0,0.7);border:none;border-radius:50%;width:20px;height:20px;color:white;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
-  .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:flex-end;justify-content:center;z-index:200;padding:0;}
+  .overlay{position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;background:rgba(0,0,0,0.75);display:flex;align-items:flex-end;justify-content:center;z-index:200;padding:0;}
   .overlay-sheet{background:${C.bgCard};border-radius:20px 20px 0 0;width:100%;max-width:480px;padding:20px 20px 90px;max-height:80vh;overflow-y:auto;}
 `;
 
