@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.84"; // v4.84: 「肝功能ALT+尿酸追蹤」拆為兩獨立項目（含既有資料自動遷移）
+const VERSION = "v4.88"; // v4.88: 修正GAS回傳非陣列/含空白列時App崩潰（Sheets有空行或雲端資料異常的實際風險）
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
 const GEMINI_MODEL_DEFAULT = "gemini-3.5-flash";
@@ -39,6 +39,53 @@ const callAI = async (messages, maxTokens=1000) => {
   const t = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!t) throw new Error("Gemini 沒有回傳內容");
   return String(t).trim();
+};
+
+// ★ v4.88 資料淨化：GAS/Sheets 可能回傳非陣列、null列、或空白列（Sheets留白行很常見），
+//          未淨化直接進state會讓 .find/.filter/.systolic 等存取炸掉整個App
+const cleanRows = (raw, requireDate=true) => {
+  if(!Array.isArray(raw))return [];
+  return raw.filter(r =>
+    r && typeof r === "object" && !Array.isArray(r) &&
+    (!requireDate || (r.date && String(r.date).trim()))
+  );
+};
+
+// ★ v4.86 localStorage 安全存取層
+// 動機：全App有21個key、上百次存取。任一key存入壞JSON、或手機儲存空間滿/隱私模式導致寫入throw，
+//       都可能讓整個App崩潰成白畫面。統一在此防護，讀取失敗回預設值、寫入失敗只記log不中斷。
+const LS = {
+  get(key, fallback=null){
+    try{ const v=localStorage.getItem(key); return v==null?fallback:v; }
+    catch(e){ return fallback; }
+  },
+  getJSON(key, fallback){
+    try{
+      const v=localStorage.getItem(key);
+      if(v==null||v==="")return fallback;
+      const parsed=JSON.parse(v);
+      if(parsed==null)return fallback;
+      // 型別守衛：JSON合法但結構不符（如陣列欄位存成數字）同樣會讓App崩潰
+      if(Array.isArray(fallback)&&!Array.isArray(parsed)){
+        console.warn("[LS] "+key+" 型別不符（預期陣列），已使用預設值");
+        return fallback;
+      }
+      if(fallback&&typeof fallback==="object"&&!Array.isArray(fallback)
+         &&(typeof parsed!=="object"||Array.isArray(parsed))){
+        console.warn("[LS] "+key+" 型別不符（預期物件），已使用預設值");
+        return fallback;
+      }
+      return parsed;
+    }catch(e){
+      console.warn("[LS] "+key+" 資料損毀，已使用預設值",e);
+      return fallback;
+    }
+  },
+  set(key, value){
+    try{ localStorage.setItem(key, typeof value==="string"?value:JSON.stringify(value)); return true; }
+    catch(e){ console.warn("[LS] 寫入失敗 "+key,e); return false; }
+  },
+  remove(key){ try{ localStorage.removeItem(key); }catch(e){} },
 };
 
 // ★ v4.72 GAS請求逾時保護：GAS冷啟動偶爾卡30秒+，15秒後放棄該請求（快取資料仍可用）
@@ -152,61 +199,7 @@ const fmtDateShort=(d)=>{
   if(p.length===3)return`${p[1]}/${p[2]}`;
   return s;
 };
-const daysSince=(d)=>{
-  if(!d)return"—";
-  const s=normalizeDate(d);
-  const p=s.split("-").map(Number);
-  if(p.length!==3)return"—";
-  // 用本地時間計算，不用UTC
-  const now=new Date();
-  const todayStr=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
-  const todayP=todayStr.split("-").map(Number);
-  // 計算天數差（純數字比較，不涉及時區）
-  const toNum=(pp)=>pp[0]*10000+pp[1]*100+pp[2];
-  const targetNum=toNum(p);
-  const todayNum=toNum(todayP);
-  if(targetNum===todayNum)return"今天";
-  if(todayNum-targetNum===1)return"昨天";
-  if(targetNum>todayNum)return"未來";
-  // 計算實際天數
-  const target=new Date(p[0],p[1]-1,p[2]);
-  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
-  const diff=Math.floor((today-target)/86400000);
-  if(diff<30)return`${diff}天前`;
-  if(diff<365)return`${Math.floor(diff/30)}個月前`;
-  return`${Math.floor(diff/365)}年前`;
-};
 const today=()=>new Date().toISOString().split("T")[0];
-
-const LAB_FIELDS = [
-  {key:"date",label:"抽血日期",type:"date",required:true},
-  {key:"hospital",label:"醫院名稱",type:"hospital",required:true},
-  {key:"country",label:"國家",type:"select",options:["台灣","越南"],required:true},
-  {key:"fasting",label:"空腹狀態",type:"select",options:["空腹","非空腹","不確定"]},
-  {key:"doctor",label:"醫師（選填）",type:"text",placeholder:"醫師姓名"},
-  {key:"hba1c",label:"HbA1c (%)",type:"number",placeholder:"5.8"},
-  {key:"glucose_ac",label:"空腹血糖 (mg/dL)",type:"number",placeholder:"104"},
-  {key:"alt",label:"ALT (U/L)",type:"number",placeholder:"45"},
-  {key:"ast",label:"AST (U/L)",type:"number",placeholder:""},
-  {key:"hdl",label:"HDL-C (mg/dL)",type:"number",placeholder:"38.5"},
-  {key:"ldl",label:"LDL-C (mg/dL)",type:"number",placeholder:"50.1"},
-  {key:"tg",label:"三酸甘油酯 (mg/dL)",type:"number",placeholder:"70"},
-  {key:"cholesterol",label:"總膽固醇 (mg/dL)",type:"number",placeholder:"96"},
-  {key:"uric_acid",label:"尿酸 (mg/dL)",type:"number",placeholder:"5.4"},
-  {key:"creatinine",label:"肌酸酐 (mg/dL)",type:"number",placeholder:"0.84"},
-  {key:"gfr",label:"eGFR",type:"number",placeholder:"102"},
-  {key:"upcr",label:"UPCR (mg/g)",type:"number",placeholder:"76.40"},
-  {key:"tsh",label:"TSH (uIU/mL)",type:"number",placeholder:"1.979"},
-  {key:"hb",label:"血紅素 Hb (g/dL)",type:"number",placeholder:"14.4"},
-  {key:"wbc",label:"白血球 WBC",type:"number",placeholder:"4.3"},
-  {key:"platelet",label:"血小板 Platelet",type:"number",placeholder:"137"},
-  {key:"insulin",label:"胰島素 Insulin (μIU/mL)",type:"number",placeholder:""},
-  {key:"vitamin_d3",label:"維生素D3 (ng/mL)",type:"number",placeholder:""},
-  {key:"ferritin",label:"鐵蛋白 Ferritin (ng/mL)",type:"number",placeholder:""},
-  {key:"hs_crp",label:"高敏CRP hsCRP (mg/L)",type:"number",placeholder:""},
-  {key:"insulin_resistance",label:"HOMA-IR 胰島素阻抗",type:"number",placeholder:""},
-  {key:"note",label:"備註",type:"textarea",placeholder:"其他說明..."},
-];
 
 const styles=`
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=DM+Serif+Display&display=swap');
@@ -277,7 +270,6 @@ const HomeIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 const TrendIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
 const RecordIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>;
 const AIIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 110 20A10 10 0 0112 2z"/><path d="M9 9h.01M15 9h.01M9.5 15a4 4 0 005 0"/></svg>;
-const BookIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>;
 const SettingIcon=()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>;
 
 
@@ -1184,17 +1176,17 @@ const AIReportSection=({generateOverallReport,overallDate,overallLoading,overall
         if(overallLoading)return(
           <div style={{background:C.blue+"15",border:`1px solid ${C.blue}44`,borderRadius:10,
             padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:20}}>⏳</span>
+            <span style={ST.S14}>⏳</span>
             <div style={{fontSize:12,color:C.blue}}>正在產生本週整體健康評估...</div>
           </div>
         );
         if(!report||report.startsWith("❌"))return(
           <div style={{background:C.blue+"15",border:`1px solid ${C.blue}44`,borderRadius:10,
             padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:20}}>🏥</span>
-            <div style={{flex:1}}>
+            <span style={ST.S14}>🏥</span>
+            <div style={ST.S2}>
               <div style={{fontSize:12,fontWeight:700,color:C.blue,marginBottom:2}}>整體健康評估</div>
-              <div style={{fontSize:11,color:C.textMuted}}>尚未產生評估報告</div>
+              <div style={ST.S3}>尚未產生評估報告</div>
             </div>
             <button onClick={()=>generateOverallReport(false)}
               style={{fontSize:11,padding:"5px 10px",background:C.blue,border:"none",
@@ -1220,7 +1212,7 @@ const AIReportSection=({generateOverallReport,overallDate,overallLoading,overall
         const summary=lines.find(l=>/七、|一句話/.test(l))||"";
         const [expanded,setExpanded]=React.useState(false);
         return(
-          <div style={{marginBottom:8}}>
+          <div style={ST.S1}>
             <div style={{fontSize:11,fontWeight:700,color:C.blue,letterSpacing:1,marginBottom:6,
               display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span>🏥 整體健康評估
@@ -1287,10 +1279,10 @@ const WeeklyReportSection=({aiReport,aiReportDate,setTab})=>{
         if(!report||report.startsWith("❌"))return(
           <div style={{background:C.amber+"18",border:`1px solid ${C.amber}44`,borderRadius:10,
             padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:20}}>🔗</span>
-            <div style={{flex:1}}>
+            <span style={ST.S14}>🔗</span>
+            <div style={ST.S2}>
               <div style={{fontSize:12,fontWeight:700,color:C.amber,marginBottom:2}}>複合健康提醒</div>
-              <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>尚未產生本週分析，無法顯示跨維度警示</div>
+              <div style={ST.S9}>尚未產生本週分析，無法顯示跨維度警示</div>
             </div>
             <button onClick={()=>{setTab("ai");}}
               style={{fontSize:11,padding:"5px 10px",background:C.amber,border:"none",
@@ -1325,7 +1317,7 @@ const WeeklyReportSection=({aiReport,aiReportDate,setTab})=>{
         if(toShow.length===0)return null;
         const [expanded,setExpanded]=React.useState(false);
         return(
-          <div style={{marginBottom:8}}>
+          <div style={ST.S1}>
             <div style={{fontSize:11,fontWeight:700,color:C.amber,letterSpacing:1,marginBottom:6,
               display:"flex",alignItems:"center",gap:6}}>
               🔗 複合健康提醒
@@ -1362,27 +1354,10 @@ const SleepAdviceSection=({detectHealthAlerts})=>{
         const alerts=detectHealthAlerts();
         if(alerts.length===0)return null;
         const colorMap={alert:C.red,warn:C.amber,info:C.blue};
-        const ALERT_DETAILS={
-          "肝臟需重點關注":{
-            impact:"脂肪肝若持續惡化可能進展到肝纖維化→肝硬化→肝癌。ALT持續偏高表示肝細胞正在受損。",
-            improve:"①每天快走30分鐘（最有效）②減少精緻碳水（麵食/白飯）③你的堅果奶昔+橄欖油方向正確④3個月複查ALT，目標降到40以下⑤咖啡每天1杯護肝有實證",
-          },
-          "血小板偏低":{
-            impact:"血小板負責止血。你的145偏低（正常150-450），加上服用Plavix抗血小板藥，出血風險疊加。輕微的影響：瘀青容易出現、傷口較難止血。嚴重情況（<50才要擔心）：自發性出血。",
-            improve:"①145屬於輕度偏低，無需特別緊張②告知醫師你的血小板數值，評估Plavix劑量是否需調整③避免劇烈碰撞運動④每次抽血追蹤，若持續下降再積極處理⑤增加深色蔬菜（菠菜、花椰菜）補充維生素K",
-          },
-          "代謝負擔警訊":{
-            impact:"ALT與尿酸同時偏高是代謝症候群的典型表現。肝臟同時處理脂肪代謝和嘌呤代謝的負擔，兩者超標代表代謝系統整體超負荷。",
-            improve:"①最重要：減重（體重每降1kg，尿酸降約0.3mg/dL）②大量飲水（每天>2000ml，幫助尿酸排出）③減少高嘌呤食物（內臟、海鮮、啤酒）④你的低碳飲食方向正確",
-          },
-          "待複評：左心室後壁":{
-            impact:"LVPWd影像值18.3mm超過正常12mm，但醫師報告判正常，可能是測量角度問題或確實有高血壓性心臟病早期表現。目前不確定，需要第二意見。",
-            improve:"①回台灣安排心臟科複查心臟超音波②告知醫師這個數值和你的血壓130/90③繼續服用舒脈康控制血壓，這是最重要的預防",
-          },
-        };
+        
         const [expandedAlert,setExpandedAlert]=React.useState(null);
         return(
-          <div style={{marginBottom:8}}>
+          <div style={ST.S1}>
             <div style={{fontSize:11,fontWeight:700,color:C.amber,letterSpacing:1,marginBottom:6,
               display:"flex",alignItems:"center",gap:6}}>
               🚨 健康警報（{alerts.length}）
@@ -1397,9 +1372,9 @@ const SleepAdviceSection=({detectHealthAlerts})=>{
                   <div style={{display:"flex",alignItems:"flex-start",gap:8,cursor:detail?"pointer":"default"}}
                     onClick={()=>detail&&setExpandedAlert(isOpen?null:i)}>
                     <span style={{fontSize:16,flexShrink:0}}>{a.icon}</span>
-                    <div style={{flex:1}}>
+                    <div style={ST.S2}>
                       <div style={{fontSize:12,fontWeight:700,color:colorMap[a.level],marginBottom:2}}>{a.title}</div>
-                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{a.desc}</div>
+                      <div style={ST.S9}>{a.desc}</div>
                     </div>
                     {detail&&<span style={{fontSize:11,color:colorMap[a.level],flexShrink:0}}>{isOpen?"▲":"▼"}</span>}
                   </div>
@@ -1448,7 +1423,7 @@ const ReminderEditModal=({editReminder,imagingHistory,labHistory,setEditReminder
                   padding:"8px 12px",marginBottom:12,fontSize:11,color:C.green,lineHeight:1.6}}>
                   ✅ 自動抓取：{autoSource}<br/>
                   <span style={{fontWeight:700}}>{autoDate}</span>
-                  <span style={{color:C.textMuted}}> （已自動填入）</span>
+                  <span style={ST.S20}> （已自動填入）</span>
                 </div>
               )}
               {autoDate&&autoDate===editReminder.lastDate&&(
@@ -1458,10 +1433,10 @@ const ReminderEditModal=({editReminder,imagingHistory,labHistory,setEditReminder
               )}
               <div className="field-label">最近一次檢查日期</div>
               <input className="input-field" type="date" value={reminderDate}
-                onChange={e=>setReminderDate(e.target.value)} style={{marginBottom:16}}/>
-              <div style={{display:"flex",gap:10}}>
-                <button className="btn-secondary" style={{flex:1}} onClick={()=>setEditReminder(null)}>取消</button>
-                <button className="btn-primary" style={{flex:2}} onClick={()=>{if(reminderDate)updateReminderDate(editReminder.id,reminderDate);}}>確認更新</button>
+                onChange={e=>setReminderDate(e.target.value)} style={ST.S12}/>
+              <div style={ST.S21}>
+                <button className="btn-secondary" style={ST.S2} onClick={()=>setEditReminder(null)}>取消</button>
+                <button className="btn-primary" style={ST.S10} onClick={()=>{if(reminderDate)updateReminderDate(editReminder.id,reminderDate);}}>確認更新</button>
               </div>
             </div>
           </div>
@@ -1469,7 +1444,7 @@ const ReminderEditModal=({editReminder,imagingHistory,labHistory,setEditReminder
       };
 
 // ★ v4.79 由JSX內IIFE抽出為獨立元件（IIFE內的hooks會導致React #310 hooks數量不一致）
-const RadarSection=({bpHistory,labHistory})=>{
+const RadarSection=React.memo(({bpHistory,labHistory})=>{
           const sortedLabs=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
           const [compareIdx,setCompareIdx]=React.useState(sortedLabs.length>1?sortedLabs.length-2:-1);
           const curLab=sortedLabs.length>0?sortedLabs[sortedLabs.length-1]:null;
@@ -1490,11 +1465,11 @@ const RadarSection=({bpHistory,labHistory})=>{
               <div className="card-title">健康雷達（依抽血+血壓計分）</div>
               {/* 對比選擇器 */}
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
-                <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>本次 {fmtDate(curLab.date)}</span></div>
+                <div style={ST.S15}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={ST.S3}>本次 {fmtDate(curLab.date)}</span></div>
                 {sortedLabs.length>1&&(
-                  <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <div style={ST.S15}>
                     <div style={{width:12,height:0,borderTop:`2px dashed ${C.blue}`}}/>
-                    <span style={{fontSize:11,color:C.textMuted}}>對比</span>
+                    <span style={ST.S3}>對比</span>
                     <select value={compareIdx} onChange={e=>setCompareIdx(parseInt(e.target.value))}
                       style={{fontSize:11,background:C.bgCard2,border:`1px solid ${C.border}`,borderRadius:6,color:C.textMuted,padding:"2px 4px"}}>
                       <option value={-1}>不對比</option>
@@ -1530,7 +1505,7 @@ const RadarSection=({bpHistory,labHistory})=>{
               {weak.length>0&&(
                 <div style={{background:"rgba(255,179,71,0.08)",border:"1px solid rgba(255,179,71,0.25)",borderRadius:10,padding:10,marginTop:8}}>
                   <div style={{fontSize:12,fontWeight:700,color:C.amber,marginBottom:4}}>⚠️ 待加強面向</div>
-                  <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>
+                  <div style={ST.S29}>
                     {weak.map(d=>`${d.label}（${d.score}分）`).join("、")}
                     <br/>你的修復早餐正是針對血脂與肝臟設計，持續執行+下次抽血驗證！
                   </div>
@@ -1553,7 +1528,7 @@ const RadarSection=({bpHistory,labHistory})=>{
               </div>
             </div>
           );
-        };
+        });
 
 // ★ v4.79 由JSX內IIFE抽出為獨立元件（IIFE內的hooks會導致React #310 hooks數量不一致）
 const BPRecordSection=({bpForm,bpHistory,deleteBP,editBPRecord,saveBP,setBpForm,setEditBPRecord,updateBP})=>{
@@ -1564,10 +1539,10 @@ const BPRecordSection=({bpForm,bpHistory,deleteBP,editBPRecord,saveBP,setBpForm,
           const recentBPList=[...bpHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,10);
           return(
             <div>
-              <div className="card" style={{marginBottom:12}}>
+              <div className="card" style={ST.S4}>
                 <div className="card-title">記錄血壓</div>
                 <DateField value={bpForm.date} onChange={d=>setBpForm(f=>({...f,date:d}))}/>
-                <div style={{marginBottom:12}}>
+                <div style={ST.S4}>
                   <div className="field-label">來源</div>
                   <div className="grid-2">
                     {["日常","醫院"].map(s=>(
@@ -1577,7 +1552,7 @@ const BPRecordSection=({bpForm,bpHistory,deleteBP,editBPRecord,saveBP,setBpForm,
                     ))}
                   </div>
                 </div>
-                <div className="grid-3" style={{marginBottom:12}}>
+                <div className="grid-3" style={ST.S4}>
                   {[
                     {label:"收縮壓",ph:"SYS",ref:sysRef,key:"sys"},
                     {label:"舒張壓",ph:"DIA",ref:diaRef,key:"dia"},
@@ -1615,13 +1590,13 @@ const BPRecordSection=({bpForm,bpHistory,deleteBP,editBPRecord,saveBP,setBpForm,
                       <div key={r.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
                         padding:"8px 0",borderBottom:i<recentBPList.length-1?`1px solid ${C.border}`:"none"}}>
                         <div onClick={()=>setEditBPRecord({...r})} style={{flex:1,cursor:"pointer"}}>
-                          <div style={{fontSize:12,fontWeight:600,color:C.text}}>{fmtDateFull(r.date)}</div>
-                          <div style={{fontSize:10,color:C.textMuted}}>{r.source==="醫院"?"🏥":"🏠"} {r.source}</div>
+                          <div style={ST.S30}>{fmtDateFull(r.date)}</div>
+                          <div style={ST.S5}>{r.source==="醫院"?"🏥":"🏠"} {r.source}</div>
                         </div>
-                        <div style={{display:"flex",alignItems:"center",gap:10}}>
-                          <div style={{textAlign:"right"}} onClick={()=>setEditBPRecord({...r})} >
+                        <div style={ST.S22}>
+                          <div style={ST.S31} onClick={()=>setEditBPRecord({...r})} >
                             <div style={{fontSize:16,fontWeight:700,color:statusColor}}>{r.systolic}/{r.diastolic}</div>
-                            {r.pulse&&<div style={{fontSize:10,color:C.textMuted}}>心率 {r.pulse}</div>}
+                            {r.pulse&&<div style={ST.S5}>心率 {r.pulse}</div>}
                           </div>
                           <button onClick={()=>deleteBP(r.id)}
                             style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:6,
@@ -1641,7 +1616,7 @@ const BPRecordSection=({bpForm,bpHistory,deleteBP,editBPRecord,saveBP,setBpForm,
                   <div className="overlay-sheet">
                     <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>✏️ 編輯血壓記錄</div>
                     <DateField value={editBPRecord.date} onChange={d=>setEditBPRecord(v=>({...v,date:d}))} label="日期（可修改）"/>
-                    <div className="grid-3" style={{marginBottom:12}}>
+                    <div className="grid-3" style={ST.S4}>
                       {[
                         {label:"收縮壓",key:"systolic"},
                         {label:"舒張壓",key:"diastolic"},
@@ -1655,7 +1630,7 @@ const BPRecordSection=({bpForm,bpHistory,deleteBP,editBPRecord,saveBP,setBpForm,
                         </div>
                       ))}
                     </div>
-                    <div className="grid-2" style={{marginBottom:12}}>
+                    <div className="grid-2" style={ST.S4}>
                       {["日常","醫院"].map(s=>(
                         <div key={s} className={`time-btn ${editBPRecord.source===s?"selected":""}`}
                           onClick={()=>setEditBPRecord(v=>({...v,source:s}))}>
@@ -1663,9 +1638,9 @@ const BPRecordSection=({bpForm,bpHistory,deleteBP,editBPRecord,saveBP,setBpForm,
                         </div>
                       ))}
                     </div>
-                    <div style={{display:"flex",gap:10}}>
-                      <button className="btn-secondary" style={{flex:1}} onClick={()=>setEditBPRecord(null)}>取消</button>
-                      <button className="btn-primary" style={{flex:2}} onClick={()=>updateBP(editBPRecord)}>💾 儲存更新</button>
+                    <div style={ST.S21}>
+                      <button className="btn-secondary" style={ST.S2} onClick={()=>setEditBPRecord(null)}>取消</button>
+                      <button className="btn-primary" style={ST.S10} onClick={()=>updateBP(editBPRecord)}>💾 儲存更新</button>
                     </div>
                   </div>
                 </div>
@@ -1697,7 +1672,7 @@ REM（分鐘）：
 呼吸速率（次/分）：
 備註：`;
                   return(
-                    <div style={{marginBottom:10}}>
+                    <div style={ST.S7}>
                       <div style={{fontSize:11,color:C.textMuted,marginBottom:6,lineHeight:1.6}}>
                         步驟①：複製指令 → 開ChatGPT → 上傳截圖 + 貼上指令<br/>
                         步驟②：複製ChatGPT輸出 → 貼到下方「自動填入」
@@ -1719,7 +1694,7 @@ REM（分鐘）：
                 };
 
 // ★ v4.79 由JSX內IIFE抽出為獨立元件（IIFE內的hooks會導致React #310 hooks數量不一致）
-const KBGroupSection=()=>{
+const KBGroupSection=React.memo(()=>{
           const [showDx,setShowDx]=React.useState(false);
           const DX=[
             {n:"①",name:"眼瞼肌束顫動（左側）",status:"✅已緩解",color:C.green,note:"與睡眠不足壓力相關，神經傳導左側R1延長"},
@@ -1734,17 +1709,17 @@ const KBGroupSection=()=>{
             <div className="card" style={{marginBottom:12,cursor:"pointer"}} onClick={()=>setShowDx(v=>!v)}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
-                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>📋 我的診斷（7項）</div>
-                  <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>2025/03/19 海防國際醫院住院確診 · 點擊{showDx?"收合":"展開"}</div>
+                  <div style={ST.S13}>📋 我的診斷（7項）</div>
+                  <div style={ST.S23}>2025/03/19 海防國際醫院住院確診 · 點擊{showDx?"收合":"展開"}</div>
                 </div>
-                <span style={{color:C.textMuted}}>{showDx?"▲":"▼"}</span>
+                <span style={ST.S20}>{showDx?"▲":"▼"}</span>
               </div>
               {showDx&&(
-                <div style={{marginTop:10}} onClick={e=>e.stopPropagation()}>
+                <div style={ST.S32} onClick={e=>e.stopPropagation()}>
                   {DX.map(d=>(
                     <div key={d.n} style={{padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:2}}>
-                        <span style={{fontSize:12,fontWeight:600,color:C.text}}>{d.n} {d.name}</span>
+                        <span style={ST.S30}>{d.n} {d.name}</span>
                         <span style={{fontSize:10,color:d.color,fontWeight:700}}>{d.status}</span>
                       </div>
                       <div style={{fontSize:11,color:C.textMuted,lineHeight:1.5}}>{d.note}</div>
@@ -1757,10 +1732,10 @@ const KBGroupSection=()=>{
               )}
             </div>
           );
-        };
+        });
 
 // ★ v4.79 由JSX內IIFE抽出為獨立元件（IIFE內的hooks會導致React #310 hooks數量不一致）
-const HealthSummarySection=({bpHistory,exerciseLog,glucoseHistory,labHistory,lastSync,weightHistory})=>{
+const HealthSummarySection=React.memo(({bpHistory,exerciseLog,glucoseHistory,labHistory,lastSync,weightHistory})=>{
           const [connStatus,setConnStatus]=React.useState("idle");
           const [connInfo,setConnInfo]=React.useState(null);
           const checkConn=async()=>{
@@ -1783,7 +1758,7 @@ const HealthSummarySection=({bpHistory,exerciseLog,glucoseHistory,labHistory,las
           return(
             <div className="card">
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                <div className="card-title" style={{marginBottom:0}}>🔌 Sheets 連線狀態</div>
+                <div className="card-title" style={ST.S33}>🔌 Sheets 連線狀態</div>
                 <button onClick={checkConn} disabled={connStatus==="checking"}
                   style={{padding:"5px 12px",borderRadius:8,fontSize:11,cursor:"pointer",
                     background:"transparent",border:`1px solid ${C.border}`,color:C.textMuted,
@@ -1791,39 +1766,39 @@ const HealthSummarySection=({bpHistory,exerciseLog,glucoseHistory,labHistory,las
                   {connStatus==="checking"?"檢查中...":"檢查連線"}
                 </button>
               </div>
-              {connStatus==="idle"&&<div style={{fontSize:12,color:C.textMuted}}>點擊「檢查連線」確認 GAS 和 Sheets 狀態</div>}
+              {connStatus==="idle"&&<div style={ST.S6}>點擊「檢查連線」確認 GAS 和 Sheets 狀態</div>}
               {connStatus==="ok"&&connInfo&&(
                 <div>
                   <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
                     <div style={{width:8,height:8,borderRadius:"50%",background:C.green}}/>
                     <span style={{fontSize:12,color:C.green,fontWeight:700}}>連線正常</span>
-                    <span style={{fontSize:11,color:C.textMuted}}>上次同步 {connInfo.lastSync}</span>
+                    <span style={ST.S3}>上次同步 {connInfo.lastSync}</span>
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
                     {[{label:"抽血",n:connInfo.lab},{label:"血壓",n:connInfo.bp},{label:"血糖",n:connInfo.glucose},{label:"體重",n:connInfo.weight},{label:"運動",n:connInfo.exercise}].map(s=>(
                       <div key={s.label} style={{background:C.bg,borderRadius:8,padding:"6px 8px",textAlign:"center"}}>
                         <div style={{fontSize:14,fontWeight:700,color:s.n>0?C.green:C.amber}}>{s.n}</div>
-                        <div style={{fontSize:10,color:C.textMuted}}>{s.label}筆</div>
+                        <div style={ST.S5}>{s.label}筆</div>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
               {connStatus==="error"&&(
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <div style={ST.S16}>
                   <div style={{width:8,height:8,borderRadius:"50%",background:C.red}}/>
                   <span style={{fontSize:12,color:C.red}}>連線失敗，請確認 GAS 已部署且網路正常</span>
                 </div>
               )}
             </div>
           );
-        };
+        });
 
 // ★ v4.80 記錄日期選擇欄位（補登舊資料用；預設今天）
-const DateField=({value,onChange,label="日期"})=>{
+const DateField=React.memo(({value,onChange,label="日期"})=>{
   const isPast=value&&value!==today();
   return(
-    <div style={{marginBottom:12}}>
+    <div style={ST.S4}>
       <div className="field-label">
         {label}
         {isPast&&<span style={{color:C.amber,marginLeft:6,fontSize:10}}>· 補登（非今日）</span>}
@@ -1833,7 +1808,7 @@ const DateField=({value,onChange,label="日期"})=>{
         style={isPast?{borderColor:C.amber}:undefined}/>
     </div>
   );
-};
+});
 
 // ★ v4.82 拿藥提醒（慢性病連續處方箋；日期由使用者自行輸入）
 const RefillCard=({showToast})=>{
@@ -1842,22 +1817,22 @@ const RefillCard=({showToast})=>{
     catch(e){return {last:"",days:90,name:"高血壓藥"};}
   });
   const [editing,setEditing]=React.useState(false);
-  const save=(next)=>{setCfg(next);localStorage.setItem("hj_medrefill",JSON.stringify(next));};
+  const save=(next)=>{setCfg(next);LS.set("hj_medrefill",next);};
 
   if(editing||!cfg.last){
     return(
-      <div className="card" style={{marginBottom:12}}>
+      <div className="card" style={ST.S4}>
         <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>💊 拿藥提醒設定</div>
         <div className="field-label">藥品名稱</div>
-        <input className="input-field" defaultValue={cfg.name} style={{marginBottom:10}}
+        <input className="input-field" defaultValue={cfg.name} style={ST.S7}
           onBlur={e=>save({...cfg,name:e.target.value.trim()||"慢性病藥"})}/>
         <div className="field-label">上次拿藥日期</div>
-        <input className="input-field" type="date" defaultValue={cfg.last} style={{marginBottom:10}}
+        <input className="input-field" type="date" defaultValue={cfg.last} style={ST.S7}
           onBlur={e=>{ if(e.target.value) save({...cfg,last:e.target.value}); }}/>
         <div className="field-label">週期（天）</div>
-        <input className="input-field" type="number" defaultValue={cfg.days} style={{marginBottom:12}}
+        <input className="input-field" type="number" defaultValue={cfg.days} style={ST.S4}
           onBlur={e=>save({...cfg,days:parseInt(e.target.value)||90})}/>
-        <div style={{display:"flex",gap:8}}>
+        <div style={ST.S24}>
           <button className="btn-sm" style={{flex:1,padding:"10px"}}
             onClick={()=>{
               if(!cfg.last){showToast&&showToast("⚠️ 請先輸入上次拿藥日期");return;}
@@ -1865,7 +1840,7 @@ const RefillCard=({showToast})=>{
             }}>完成</button>
           {cfg.last&&(
             <button className="btn-sm" style={{flex:1,padding:"10px",color:C.red}}
-              onClick={()=>{localStorage.removeItem("hj_medrefill");setCfg({last:"",days:90,name:"高血壓藥"});setEditing(false);}}>
+              onClick={()=>{LS.remove("hj_medrefill");setCfg({last:"",days:90,name:"高血壓藥"});setEditing(false);}}>
               刪除
             </button>
           )}
@@ -1885,25 +1860,466 @@ const RefillCard=({showToast})=>{
       border:"1px solid "+col+((over||urgent)?"":"44")}}
       onClick={()=>setEditing(true)}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-        <div style={{flex:1}}>
-          <div style={{fontSize:13,fontWeight:700,color:C.text}}>💊 {cfg.name}</div>
+        <div style={ST.S2}>
+          <div style={ST.S13}>💊 {cfg.name}</div>
           <div style={{fontSize:11,color:C.textMuted,marginTop:3}}>
             下次：{nextStr} · 每{cfg.days}天 · 點此更新日期
           </div>
         </div>
-        <div style={{textAlign:"right"}}>
+        <div style={ST.S31}>
           <div style={{fontSize:20,fontWeight:800,color:col,lineHeight:1.1}}>
             {over?"逾期"+Math.abs(left)+"天":left===0?"今天":left+"天"}
           </div>
-          <div style={{fontSize:10,color:C.textMuted}}>{over?"請盡快回診":"後拿藥"}</div>
+          <div style={ST.S5}>{over?"請盡快回診":"後拿藥"}</div>
         </div>
       </div>
     </div>
   );
 };
 
+// ★ v4.87 自元件內外提至模組層（避免每次render重建）
+const ALERT_DETAILS={
+          "肝臟需重點關注":{
+            impact:"脂肪肝若持續惡化可能進展到肝纖維化→肝硬化→肝癌。ALT持續偏高表示肝細胞正在受損。",
+            improve:"①每天快走30分鐘（最有效）②減少精緻碳水（麵食/白飯）③你的堅果奶昔+橄欖油方向正確④3個月複查ALT，目標降到40以下⑤咖啡每天1杯護肝有實證",
+          },
+          "血小板偏低":{
+            impact:"血小板負責止血。你的145偏低（正常150-450），加上服用Plavix抗血小板藥，出血風險疊加。輕微的影響：瘀青容易出現、傷口較難止血。嚴重情況（<50才要擔心）：自發性出血。",
+            improve:"①145屬於輕度偏低，無需特別緊張②告知醫師你的血小板數值，評估Plavix劑量是否需調整③避免劇烈碰撞運動④每次抽血追蹤，若持續下降再積極處理⑤增加深色蔬菜（菠菜、花椰菜）補充維生素K",
+          },
+          "代謝負擔警訊":{
+            impact:"ALT與尿酸同時偏高是代謝症候群的典型表現。肝臟同時處理脂肪代謝和嘌呤代謝的負擔，兩者超標代表代謝系統整體超負荷。",
+            improve:"①最重要：減重（體重每降1kg，尿酸降約0.3mg/dL）②大量飲水（每天>2000ml，幫助尿酸排出）③減少高嘌呤食物（內臟、海鮮、啤酒）④你的低碳飲食方向正確",
+          },
+          "待複評：左心室後壁":{
+            impact:"LVPWd影像值18.3mm超過正常12mm，但醫師報告判正常，可能是測量角度問題或確實有高血壓性心臟病早期表現。目前不確定，需要第二意見。",
+            improve:"①回台灣安排心臟科複查心臟超音波②告知醫師這個數值和你的血壓130/90③繼續服用舒脈康控制血壓，這是最重要的預防",
+          },
+        };
+
+// ★ v4.87 自元件內外提至模組層（避免每次render重建）
+const CHECK_FIELDS = [
+          {key:"hba1c",label:"HbA1c",unit:"%"},
+          {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL"},
+          {key:"alt",label:"ALT",unit:"U/L"},
+          {key:"ggt",label:"GGT",unit:"U/L"},
+          {key:"hdl",label:"HDL-C",unit:"mg/dL"},
+          {key:"ldl",label:"LDL-C",unit:"mg/dL"},
+          {key:"tg",label:"三酸甘油酯",unit:"mg/dL"},
+          {key:"uric_acid",label:"尿酸",unit:"mg/dL"},
+          {key:"creatinine",label:"肌酸酐",unit:"mg/dL"},
+          {key:"upcr",label:"UPCR",unit:"mg/g"},
+          {key:"tsh",label:"TSH",unit:"uIU/mL"},
+          {key:"hb",label:"血紅素",unit:"g/dL"},
+          {key:"wbc",label:"WBC",unit:"K/uL"},
+          {key:"platelet",label:"血小板",unit:"K/uL"},
+          {key:"crp",label:"CRP",unit:""},
+          {key:"hbsag",label:"HBsAg",unit:""},
+        ];
+
+// ★ v4.87 自元件內外提至模組層（避免每次render重建）
+const CORE=[
+            {k:"hba1c",label:"HbA1c",unit:"%",dir:"low",good:5.7,bad:6.5},
+            {k:"glucose_ac",label:"空腹血糖",unit:"",dir:"low",good:100,bad:126},
+            {k:"hdl",label:"HDL",unit:"",dir:"high",good:40,bad:35},
+            {k:"ldl",label:"LDL",unit:"",dir:"low",good:100,bad:160},
+            {k:"tg",label:"三酸甘油酯",unit:"",dir:"low",good:150,bad:200},
+            {k:"alt",label:"ALT肝",unit:"",dir:"low",good:40,bad:80},
+            {k:"ast",label:"AST肝",unit:"",dir:"low",good:37,bad:80},
+            {k:"uric_acid",label:"尿酸",unit:"",dir:"low",good:7.0,bad:8.5},
+            {k:"creatinine",label:"肌酸酐",unit:"",dir:"low",good:1.0,bad:1.3},
+            {k:"wbc",label:"白血球",unit:"",dir:"mid",good:5.5,lowB:4,highB:10},
+            {k:"platelet",label:"血小板",unit:"",dir:"high",good:200,bad:150},
+            {k:"crp",label:"CRP發炎",unit:"",dir:"low",good:1,bad:3},
+          ];
+
+// ★ v4.87 自元件內外提至模組層（避免每次render重建）
+const LAB_DISPLAY = [
+      // 血糖
+      {key:"hba1c",label:"HbA1c",unit:"%",group:"血糖"},
+      {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL",group:"血糖"},
+      {key:"glucose_pc",label:"飯後血糖",unit:"mg/dL",group:"血糖"},
+      // 肝功能
+      {key:"alt",label:"ALT",unit:"U/L",group:"肝功能"},
+      {key:"ast",label:"AST",unit:"U/L",group:"肝功能"},
+      {key:"alp",label:"ALP",unit:"U/L",group:"肝功能"},
+      {key:"ggt",label:"GGT",unit:"U/L",group:"肝功能"},
+      {key:"ldh",label:"LDH",unit:"U/L",group:"肝功能"},
+      {key:"tbil",label:"總膽紅素",unit:"mg/dL",group:"肝功能"},
+      {key:"dbil",label:"直接膽紅素",unit:"mg/dL",group:"肝功能"},
+      {key:"tp",label:"總蛋白",unit:"g/dL",group:"肝功能"},
+      {key:"alb",label:"白蛋白",unit:"g/dL",group:"肝功能"},
+      {key:"glob",label:"球蛋白",unit:"g/dL",group:"肝功能"},
+      {key:"ag_ratio",label:"A/G比值",unit:"",group:"肝功能"},
+      // 腎功能
+      {key:"creatinine",label:"肌酸酐",unit:"mg/dL",group:"腎功能"},
+      {key:"gfr",label:"eGFR(CKD-EPI)",unit:"",group:"腎功能"},
+      {key:"gfr2",label:"eGFR(MDRD)",unit:"",group:"腎功能"},
+      {key:"bun",label:"BUN",unit:"mg/dL",group:"腎功能"},
+      {key:"upcr",label:"UPCR",unit:"mg/g",group:"腎功能"},
+      {key:"urine_creatinine",label:"尿液肌酸酐",unit:"mg/dL",group:"腎功能"},
+      {key:"urine_protein",label:"尿液蛋白",unit:"mg/dL",group:"腎功能"},
+      {key:"urine_protein2",label:"尿蛋白(隨機)",unit:"mg/dL",group:"腎功能"},
+      // 血脂
+      {key:"hdl",label:"HDL-C",unit:"mg/dL",group:"血脂"},
+      {key:"ldl",label:"LDL-C",unit:"mg/dL",group:"血脂"},
+      {key:"tg",label:"三酸甘油酯",unit:"mg/dL",group:"血脂"},
+      {key:"cholesterol",label:"總膽固醇",unit:"mg/dL",group:"血脂"},
+      {key:"chol_hdl",label:"膽固醇/HDL",unit:"",group:"血脂"},
+      // 尿酸/鐵
+      {key:"uric_acid",label:"尿酸",unit:"mg/dL",group:"其他生化"},
+      {key:"fe",label:"鐵 Fe",unit:"ug/dL",group:"其他生化"},
+      {key:"uibc",label:"UIBC",unit:"ug/dL",group:"其他生化"},
+      {key:"tibc",label:"TIBC",unit:"ug/dL",group:"其他生化"},
+      {key:"fe_sat",label:"鐵飽和度",unit:"%",group:"其他生化"},
+      // 甲狀腺
+      {key:"tsh",label:"TSH",unit:"uIU/mL",group:"甲狀腺"},
+      {key:"ft3",label:"Free T3",unit:"",group:"甲狀腺"},
+      {key:"ft4",label:"Free T4",unit:"",group:"甲狀腺"},
+      // 電解質
+      {key:"na",label:"鈉 Na",unit:"mEq/L",group:"電解質"},
+      {key:"k",label:"鉀 K",unit:"mEq/L",group:"電解質"},
+      {key:"cl",label:"氯 Cl",unit:"mEq/L",group:"電解質"},
+      {key:"ca",label:"鈣 Ca",unit:"mg/dL",group:"電解質"},
+      {key:"mg",label:"鎂 Mg",unit:"mg/dL",group:"電解質"},
+      {key:"phos",label:"磷 Phos",unit:"mg/dL",group:"電解質"},
+      // 發炎/胰臟
+      {key:"crp",label:"CRP",unit:"mg/L",group:"其他生化"},
+      {key:"amy",label:"澱粉酶 AMY",unit:"U/L",group:"其他生化"},
+      {key:"lip",label:"脂肪酶 LIP",unit:"U/L",group:"其他生化"},
+      {key:"ck",label:"CK",unit:"U/L",group:"其他生化"},
+      // CBC血液
+      {key:"wbc",label:"WBC",unit:"K/uL",group:"血液CBC"},
+      {key:"rbc",label:"RBC",unit:"M/uL",group:"血液CBC"},
+      {key:"hb",label:"血紅素 Hb",unit:"g/dL",group:"血液CBC"},
+      {key:"hct",label:"Hct",unit:"%",group:"血液CBC"},
+      {key:"mcv",label:"MCV",unit:"fL",group:"血液CBC"},
+      {key:"mch",label:"MCH",unit:"pg",group:"血液CBC"},
+      {key:"mchc",label:"MCHC",unit:"g/dL",group:"血液CBC"},
+      {key:"rdw_cv",label:"RDW-CV",unit:"%",group:"血液CBC"},
+      {key:"rdw_sd",label:"RDW-SD",unit:"fL",group:"血液CBC"},
+      {key:"platelet",label:"血小板",unit:"K/uL",group:"血液CBC"},
+      {key:"mpv",label:"MPV",unit:"fL",group:"血液CBC"},
+      // 腫瘤標記
+      {key:"cea",label:"CEA",unit:"ng/mL",group:"腫瘤標記"},
+      {key:"afp",label:"AFP",unit:"ng/mL",group:"腫瘤標記"},
+      {key:"psa",label:"PSA",unit:"ng/mL",group:"腫瘤標記"},
+      // 免疫
+      {key:"asto",label:"ASTO",unit:"",group:"免疫"},
+      {key:"rf",label:"RF類風濕因子",unit:"",group:"免疫"},
+      // 病毒補充
+      {key:"anti_hbs",label:"Anti-HBs",unit:"",group:"病毒篩檢"},
+      // 尿液分析
+      {key:"urine_glucose",label:"尿糖",unit:"",group:"尿液分析"},
+      {key:"urine_bilirubin",label:"尿膽紅素",unit:"",group:"尿液分析"},
+      {key:"urine_ketone",label:"尿酮體",unit:"",group:"尿液分析"},
+      {key:"urine_sg",label:"尿比重",unit:"",group:"尿液分析"},
+      {key:"urine_ph",label:"尿液pH",unit:"",group:"尿液分析"},
+      {key:"urine_nitrite",label:"亞硝酸鹽",unit:"",group:"尿液分析"},
+      {key:"urine_urobilinogen",label:"尿膽素原",unit:"",group:"尿液分析"},
+      {key:"urine_blood",label:"尿潛血",unit:"",group:"尿液分析"},
+      {key:"urine_leukocyte",label:"尿白血球",unit:"",group:"尿液分析"},
+    ];
+
+// ★ v4.87 自元件內外提至模組層（避免每次render重建）
+const MEALS=[
+            {order:1,label:"蛋白質＋蔬菜",items:[
+              {name:"雞蛋",qty:"2-3顆",benefits:["優質蛋白飽腹延緩血糖上升","卵磷脂護大腦和肝臟","維生素D+B12"],organs:["血糖","大腦","肝臟"]},
+              {name:"青菜",qty:"有就吃（每天中、晚一定會吃）",benefits:["膳食纖維穩血糖","葉酸護心血管","低卡飽腹"],organs:["血糖","心血管"]},
+            ]},
+            {order:2,label:"好油",items:[
+              {name:"酪梨",qty:"180g",benefits:["單元不飽和脂肪直接升HDL","鉀降血壓","葉黃素護眼"],organs:["血脂HDL","心血管"]},
+            ]},
+            {order:3,label:"🥤 堅果奶昔（果汁機攪拌）",isShake:true,items:[
+              {name:"核桃",qty:"20g",benefits:["ALA Omega-3護大腦和血管","降LDL","多酚抗氧化"],organs:["大腦","血脂HDL"]},
+              {name:"杏仁",qty:"10g",benefits:["維生素E強效抗氧化","降LDL","鎂降血壓"],organs:["血脂HDL","心血管"]},
+              {name:"南瓜子",qty:"15g",benefits:["鎂+鋅降血壓護前列腺","鐵改善血液","植物固醇降膽固醇"],organs:["心血管","血液"]},
+              {name:"奇亞籽",qty:"10g",benefits:["水溶性纖維穩血糖減峰值","Omega-3降TG","吸水膨脹增飽腹感"],organs:["血糖","血脂HDL"]},
+              {name:"亞麻籽",qty:"15g",benefits:["木酚素抗發炎降雌激素","Omega-3降TG","纖維護腸道"],organs:["血脂HDL","發炎/其他"]},
+              {name:"黑芝麻粉",qty:"10g",benefits:["芝麻素護肝抗氧化","鈣強骨","芝麻素輕微降血壓"],organs:["肝臟","心血管"]},
+              {name:"燕麥",qty:"20g",benefits:["β-葡聚醣降LDL有強力實證","穩血糖減峰值","腸道益生元"],organs:["血糖","血脂HDL"]},
+              {name:"無糖可可",qty:"3–5g",benefits:["黃烷醇擴張血管降血壓","護大腦認知","抗氧化"],organs:["心血管","大腦"]},
+              {name:"薑黃",qty:"1.5–2g＋少量黑胡椒粉",benefits:["薑黃素強效抗發炎，胡椒增吸收20倍","護肝減脂肪肝","可能改善胰島素敏感性"],organs:["發炎/其他","肝臟","血糖"]},
+              {name:"甜菜根粉",qty:"3g（Datino）",benefits:["硝酸鹽→一氧化氮→擴張血管降血壓","改善全身血液循環","運動耐力+性功能血流相關"],organs:["心血管","血脂HDL"]},
+            ]},
+            {order:4,label:"水果",items:[
+              {name:"蘋果",qty:"200g",benefits:["果膠降膽固醇護腸道","槲皮素抗發炎","低GI穩血糖"],organs:["血脂HDL","血糖"]},
+              {name:"香蕉",qty:"1根",benefits:["鉀422mg降血壓（與酪梨加成）","維生素B6護神經","中GI水果：與堅果蛋白同餐可延緩血糖上升"],organs:["心血管","血糖"]},
+            ]},
+            {order:5,label:"補充品",items:[
+              {name:"EX NEO 力卡維他命",qty:"2錠（每日早上）",benefits:["B1預防神經病變（糖尿病前期必備）","B12 1,500μg超高劑量護周邊神經","B6+E抗氧化，緩解眼疲勞肩頸腰痛"],organs:["血糖","大腦"]},
+              {name:"強力若元 Wakamoto",qty:"9粒",benefits:["釀酒酵母+乳酸菌整腸","澱粉酶幫助消化","與晚上希臘酸奶益生菌加成護腸道"],organs:["腸道","血糖"]},
+            ]},
+          ];
+
+// ★ v4.87 自元件內外提至模組層（避免每次render重建）
+const DINNER=[
+            {name:"橄欖油",qty:"5ml 直接喝",benefits:["多酚Oleocanthal抗發炎護肝","升HDL","改善脂肪肝有實證"],organs:["肝臟","血脂HDL","發炎/其他"]},
+            {name:"希臘酸奶",qty:"150g（Farmers Union）",benefits:["高蛋白16g助肌肉修復","益生菌改善腸道","鈣538mg強骨，No Sugar Added血糖友善","酪蛋白慢消化穩定夜間血糖"],organs:["血糖","腸道","骨骼"],meds:"💊 同時服藥：平脂 Zulitor、保栓通 Plavix（每天）；舒脈康 Sevikar（2天1次）"},
+            {name:"ORIHIRO DHA+EPA",qty:"6粒",benefits:["DHA 780mg降中性脂肪、護大腦記憶","EPA 80mg抗發炎保護心血管","Omega-3組合對你的HDL偏低有幫助"],organs:["血脂HDL","大腦","心血管"],meds:"⚠️ 注意：你同時服用保栓通Plavix（抗血小板），高劑量Omega-3也有抗凝血效果，出血風險疊加。建議告知開立Plavix的醫師確認此劑量安全性，並注意瘀青/出血徵兆"},
+            {name:"藍莓",qty:"50g（配希臘酸奶）",benefits:["花青素抗氧化護血管與視網膜（對你的視網膜退化有幫助）","改善胰島素敏感性","低GI莓果，配酸奶血糖友善"],organs:["心血管","血糖","發炎/其他"]},
+            {name:"奇異果",qty:"1顆",benefits:["維生素C超高（每顆約100mg）抗氧化","鉀降血壓","纖維改善腸道","血清素前驅物助睡眠"],organs:["心血管","腸道","血液"]},
+          ];
+
+// ★ v4.87 自元件內外提至模組層（避免每次render重建）
+const FIELDS=[
+              {key:"hba1c",label:"HbA1c",unit:"%"},
+              {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL"},
+              {key:"alt",label:"ALT",unit:"U/L"},
+              {key:"ast",label:"AST",unit:"U/L"},
+              {key:"ggt",label:"GGT",unit:"U/L"},
+              {key:"hdl",label:"HDL-C",unit:"mg/dL"},
+              {key:"ldl",label:"LDL-C",unit:"mg/dL"},
+              {key:"tg",label:"三酸甘油酯",unit:"mg/dL"},
+              {key:"cholesterol",label:"總膽固醇",unit:"mg/dL"},
+              {key:"uric_acid",label:"尿酸",unit:"mg/dL"},
+              {key:"creatinine",label:"肌酸酐",unit:"mg/dL"},
+              {key:"egfr",label:"eGFR",unit:""},
+              {key:"bun",label:"BUN",unit:"mg/dL"},
+              {key:"tsh",label:"TSH",unit:"uIU/mL"},
+              {key:"hb",label:"血紅素",unit:"g/dL"},
+              {key:"wbc",label:"WBC",unit:"K/uL"},
+              {key:"platelet",label:"血小板",unit:"K/uL"},
+            ];
+
+// ★ v4.87 自元件內外提至模組層（避免每次render重建）
+const RULES=[
+      {recKeys:["腹部超音波","腹部CT","腹部MRI","腹超"],reminderKeys:["腹","超音波","肝臟"],months:12},
+      {recKeys:["心臟超音波","心臟CT","心臟MRI","心電圖"],reminderKeys:["心臟","心血管","心電","LAD","冠狀"],months:12},
+      {recKeys:["頸動脈超音波"],reminderKeys:["頸動脈"],months:12},
+      {recKeys:["視野檢查","右眼視野"],reminderKeys:["視野"],months:12},
+      {recKeys:["眼底攝影","眼科綜合","眼底","OCT"],reminderKeys:["眼底","眼科","視網膜","OCT"],months:12},
+      {recKeys:["大腸鏡"],reminderKeys:["大腸"],months:60},
+      {recKeys:["胃鏡"],reminderKeys:["胃鏡"],months:24},
+      {recKeys:["腦部MRI","頭部CT"],reminderKeys:["腦部","神經"],months:12},
+      {recKeys:["骨密度"],reminderKeys:["骨密度"],months:24},
+      // 抽血 → 對應多種血液相關提醒（3個月）
+      {recKeys:["lab","抽血","血液"],reminderKeys:["血液","抽血","血常規","血液常規","CBC"],months:3},
+      {recKeys:["lab","抽血","肝功能"],reminderKeys:["肝功能","肝","ALT","AST","GGT","尿酸"],months:3},
+      {recKeys:["lab","抽血","腎功能"],reminderKeys:["腎功能","腎","肌酸酐","eGFR"],months:6},
+      {recKeys:["住院摘要"],reminderKeys:["心臟科","心血管"],months:6},
+    ];
+
+// ★ v4.87 自元件內外提至模組層（避免每次render重建）
+const LAB_INFO = {
+  hba1c: {
+    name:"HbA1c（糖化血色素）",
+    desc:"反映過去2-3個月的平均血糖水平，是糖尿病診斷和控制的重要指標。",
+    range:"正常 <5.7%　糖尿病前期 5.7-6.4%　糖尿病 ≥6.5%",
+    meaning:"數值越高代表長期血糖控制越差，與心血管、腎臟、視網膜等併發症風險相關。",
+    improve:"減少精緻澱粉和甜食、規律運動、維持體重、睡眠充足",
+    related:"與空腹血糖、體重、三酸甘油酯密切相關",
+  },
+  glucose_ac: {
+    name:"空腹血糖（Fasting Glucose）",
+    desc:"禁食8小時後測量的血糖值，反映身體基礎血糖調節能力。",
+    range:"正常 70-99 mg/dL　前期 100-125　糖尿病 ≥126",
+    meaning:"空腹血糖偏高代表胰島素阻抗或胰臟功能下降，是T2D最早期指標之一。",
+    improve:"規律運動、減重、低GI飲食、避免睡前進食",
+    related:"與HbA1c、體重、三酸甘油酯、HDL相關",
+  },
+  alt: {
+    name:"ALT（丙胺酸轉胺酶）",
+    desc:"主要存在於肝細胞中，肝細胞受損時釋放入血液，是最敏感的肝功能指標。",
+    range:"正常 男性 <44 U/L　女性 <32 U/L",
+    meaning:"升高常見於脂肪肝、病毒性肝炎、藥物影響、過度飲酒。輕度升高（1-3倍）需追蹤。",
+    improve:"減重（尤其腹部脂肪）、戒酒、避免不必要藥物、規律運動",
+    related:"與體重、血脂、GGT密切相關",
+  },
+  ast: {
+    name:"AST（天門冬胺酸轉胺酶）",
+    desc:"存在於肝臟、心臟、肌肉中，比ALT更廣泛，特異性較低。",
+    range:"正常 <40 U/L",
+    meaning:"AST/ALT比值>2可能提示酒精性肝病。運動後AST也可能上升。",
+    improve:"同ALT改善方法",
+    related:"與ALT、CK、LDH相關",
+  },
+  hdl: {
+    name:"HDL-C（高密度脂蛋白）",
+    desc:"俗稱「好的膽固醇」，負責將血管中多餘膽固醇運回肝臟代謝清除。",
+    range:"正常 男性 >40 mg/dL　女性 >50 mg/dL",
+    meaning:"HDL越高越好，偏低代表心血管保護力不足，與T2D、代謝症候群相關。",
+    improve:"有氧運動（最有效）、戒菸、減少反式脂肪、適量飲酒（若無禁忌）",
+    related:"與三酸甘油酯呈反比，與體重、運動量相關",
+  },
+  ldl: {
+    name:"LDL-C（低密度脂蛋白）",
+    desc:"俗稱「壞的膽固醇」，過多時會沉積在血管壁形成動脈硬化斑塊。",
+    range:"正常 <130 mg/dL　T2D患者建議 <100 mg/dL",
+    meaning:"LDL偏高是心肌梗塞、腦中風的主要危險因子，T2D患者需嚴格控制。",
+    improve:"減少飽和脂肪和膽固醇、增加纖維攝取、規律運動",
+    related:"與總膽固醇、飲食脂肪攝取相關",
+  },
+  tg: {
+    name:"三酸甘油酯（Triglyceride）",
+    desc:"血液中最主要的脂肪形式，由飲食攝取或肝臟合成，儲存在脂肪細胞中。",
+    range:"正常 <150 mg/dL　邊緣 150-199　偏高 200-499",
+    meaning:"偏高與精緻糖、酒精攝取過多、肥胖、T2D密切相關，增加心血管風險。",
+    improve:"減少精緻糖和酒精、減重、增加omega-3攝取（魚油）",
+    related:"與HDL呈反比，與血糖、體重密切相關",
+  },
+  cholesterol: {
+    name:"總膽固醇（Total Cholesterol）",
+    desc:"血液中所有膽固醇的總和，包含HDL、LDL和其他成分。",
+    range:"正常 <200 mg/dL　邊緣 200-239　偏高 ≥240",
+    meaning:"需配合HDL/LDL比例分析，單純總膽固醇高不一定危險。",
+    improve:"均衡飲食、規律運動",
+    related:"HDL+LDL+其他脂蛋白的總和",
+  },
+  uric_acid: {
+    name:"尿酸（Uric Acid）",
+    desc:"嘌呤代謝的最終產物，由腎臟排出，過高會沉積在關節形成痛風。",
+    range:"正常 男性 3.4-7.6 mg/dL　女性 2.3-6.6",
+    meaning:"偏高與痛風、腎結石、代謝症候群、心血管疾病風險相關。",
+    improve:"多喝水（每天2L以上）、減少紅肉/海鮮/啤酒、減重",
+    related:"與腎功能、體重、飲食習慣相關",
+  },
+  creatinine: {
+    name:"肌酸酐（Creatinine）",
+    desc:"肌肉代謝產物，幾乎完全由腎臟過濾排出，是腎功能的重要指標。",
+    range:"正常 男性 0.7-1.3 mg/dL　女性 0.6-1.1",
+    meaning:"升高代表腎臟過濾功能下降，需配合eGFR一起判斷。",
+    improve:"多喝水、控制血糖血壓（T2D腎臟保護最重要）、避免腎毒性藥物",
+    related:"與eGFR、BUN、UPCR共同評估腎功能",
+  },
+  gfr: {
+    name:"eGFR（估算腎絲球過濾率）",
+    desc:"估算腎臟每分鐘能過濾多少血液，是腎功能最直接的評估指標。",
+    range:"正常 ≥60 mL/min/1.73m²　CKD分期依數值而定",
+    meaning:"數值越低代表腎功能越差，<60持續3個月以上為慢性腎臟病。",
+    improve:"控制血糖、血壓、體重，避免NSAID類止痛藥",
+    related:"與肌酸酐、UPCR、血壓、血糖密切相關",
+  },
+  upcr: {
+    name:"UPCR（尿液蛋白/肌酸酐比值）",
+    desc:"偵測尿液中是否有異常蛋白質，是糖尿病腎病變最早期的敏感指標。",
+    range:"正常 <30 mg/g　微量蛋白尿 30-300　顯性蛋白尿 >300",
+    meaning:"T2D患者UPCR偏高是腎臟早期損傷的警訊，需積極控制血糖血壓。",
+    improve:"嚴格控制血糖（HbA1c<7%）、血壓（<130/80）、ACEI/ARB藥物",
+    related:"與HbA1c、血壓、eGFR密切相關",
+  },
+  tsh: {
+    name:"TSH（甲狀腺促素）",
+    desc:"腦下垂體分泌的激素，調控甲狀腺功能，是甲狀腺疾病的第一線篩檢。",
+    range:"正常 0.34-5.60 uIU/mL",
+    meaning:"偏高=甲狀腺功能低下（疲倦、體重增加）；偏低=甲亢（心跳快、消瘦）。",
+    improve:"甲狀腺疾病需醫師治療，不能自行處理",
+    related:"T2D患者甲狀腺疾病風險較高，建議每年追蹤",
+  },
+  crp: {
+    name:"CRP（C反應蛋白）",
+    desc:"肝臟在急性發炎、感染、組織損傷時大量分泌的蛋白質，是發炎指標。",
+    range:"正常 <1.0 mg/L　輕度發炎 1-3　中度 3-10",
+    meaning:"慢性低度發炎（CRP 1-3）與T2D、心血管疾病、代謝症候群密切相關。",
+    improve:"規律運動、減重、地中海飲食、充足睡眠、戒菸",
+    related:"與血糖、血脂、體重、生活習慣相關",
+  },
+  ggt: {
+    name:"GGT（麩胺轉移酶）",
+    desc:"存在於肝臟、膽管、腎臟中，對脂肪肝和酒精性肝病特別敏感。",
+    range:"正常 男性 <60 U/L　女性 <45 U/L",
+    meaning:"GGT是脂肪肝最敏感的指標之一，飲酒後特別顯著升高。",
+    improve:"戒酒、減重（減少腹部脂肪）、規律運動",
+    related:"與ALT、體重、脂肪肝、飲酒習慣相關",
+  },
+  bun: {
+    name:"BUN（血中尿素氮）",
+    desc:"蛋白質代謝產物，由腎臟排出，反映腎功能和蛋白質攝取量。",
+    range:"正常 7-23 mg/dL",
+    meaning:"偏高可能是腎功能下降或高蛋白飲食；偏低可能是蛋白質攝取不足。",
+    improve:"適量蛋白質攝取、多喝水、控制血糖血壓",
+    related:"與肌酸酐、eGFR共同評估腎功能",
+  },
+  hb: {
+    name:"血紅素 Hb（Hemoglobin）",
+    desc:"紅血球中攜帶氧氣的蛋白質，反映貧血狀態。",
+    range:"正常 男性 13.7-17.0 g/dL",
+    meaning:"偏低代表貧血，可能影響疲勞感和運動能力；與T2D腎臟病變相關。",
+    improve:"補充鐵質、維生素B12、葉酸，治療潛在疾病",
+    related:"與RBC、HCT、MCV相關",
+  },
+  wbc: {
+    name:"WBC（白血球）",
+    desc:"免疫系統的主要細胞，負責對抗感染和異物。",
+    range:"正常 3.6-11.2 x10³/uL",
+    meaning:"偏高可能是感染、發炎、壓力；偏低可能是免疫抑制或骨髓問題。",
+    improve:"維持規律作息、均衡飲食、避免過度疲勞",
+    related:"與CRP、感染狀態相關",
+  },
+  platelet: {
+    name:"血小板（Platelet）",
+    desc:"負責血液凝固和止血的小細胞片段。",
+    range:"正常 130-400 x10³/uL",
+    meaning:"偏低增加出血風險；偏高增加血栓風險。T2D患者血小板功能常有異常。",
+    improve:"均衡飲食、避免NSAID類藥物（影響血小板功能）",
+    related:"與凝血功能、肝功能相關",
+  },
+};
+
+// ★ v4.87 自元件內外提至模組層（避免每次render重建）
+const suggestions = {
+    hba1c: {worse:"減少精緻澱粉、增加運動", better:"繼續維持良好飲食習慣", stable:"維持目前生活方式"},
+    glucose_ac: {worse:"注意睡前飲食、減少甜食", better:"血糖控制改善中", stable:"維持空腹規律"},
+    alt: {worse:"注意飲酒、避免油膩食物", better:"肝功能改善中", stable:"定期追蹤"},
+    hdl: {worse:"增加有氧運動、減少反式脂肪", better:"好膽固醇上升中", stable:"持續運動維持"},
+    ldl: {worse:"減少飽和脂肪、增加纖維攝取", better:"壞膽固醇下降中", stable:"定期追蹤"},
+    tg: {worse:"減少精緻糖和酒精", better:"三酸甘油酯改善中", stable:"定期追蹤"},
+    uric_acid: {worse:"多喝水、減少紅肉和海鮮", better:"尿酸下降中", stable:"定期追蹤"},
+    creatinine: {worse:"注意腎臟健康、多補充水分", better:"腎功能指標改善", stable:"定期追蹤"},
+    upcr: {worse:"注意腎臟早期病變", better:"蛋白尿指標改善", stable:"定期追蹤"},
+    crp: {worse:"注意發炎來源、改善生活習慣", better:"發炎指標下降", stable:"定期追蹤"},
+    ggt: {worse:"注意脂肪肝或飲酒影響", better:"肝膽指標改善", stable:"定期追蹤"},
+    ck: {worse:"避免過度激烈運動", better:"肌肉壓力減少", stable:"定期追蹤"},
+    bun: {worse:"注意腎功能或蛋白質攝取", better:"腎功能指標改善", stable:"定期追蹤"},
+    na: {worse:"注意電解質平衡", better:"鈉值趨於正常", stable:"維持均衡飲食"},
+    k: {worse:"注意電解質平衡", better:"鉀值趨於正常", stable:"維持均衡飲食"},
+    mg: {worse:"考慮補充鎂", better:"鎂值改善", stable:"維持均衡飲食"},
+    ca: {worse:"注意鈣質攝取", better:"鈣值改善", stable:"維持均衡飲食"},
+  };
+
+// ★ v4.87 共用樣式常數：重複的inline style每次render都重新配置物件，抽為模組層常數
+const ST = {
+  S1: {marginBottom:8},
+  S2: {flex:1},
+  S3: {fontSize:11,color:C.textMuted},
+  S4: {marginBottom:12},
+  S5: {fontSize:10,color:C.textMuted},
+  S6: {fontSize:12,color:C.textMuted},
+  S7: {marginBottom:10},
+  S8: {padding:"16px 16px 80px"},
+  S9: {fontSize:11,color:C.textMuted,lineHeight:1.6},
+  S10: {flex:2},
+  S11: {fontSize:11,color:C.textMuted,marginBottom:4},
+  S12: {marginBottom:16},
+  S13: {fontSize:13,fontWeight:700,color:C.text},
+  S14: {fontSize:20},
+  S15: {display:"flex",alignItems:"center",gap:5},
+  S16: {display:"flex",alignItems:"center",gap:6},
+  S17: {color:C.green},
+  S18: {fontSize:11,color:C.textMuted,marginTop:2},
+  S19: {marginBottom:6},
+  S20: {color:C.textMuted},
+  S21: {display:"flex",gap:10},
+  S22: {display:"flex",alignItems:"center",gap:10},
+  S23: {fontSize:10,color:C.textMuted,marginTop:2},
+  S24: {display:"flex",gap:8},
+  S25: {display:"none"},
+  S26: {fontSize:18},
+  S27: {display:"flex",alignItems:"center",gap:8},
+  S28: {fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.7},
+  S29: {fontSize:12,color:C.textMuted,lineHeight:1.7},
+  S30: {fontSize:12,fontWeight:600,color:C.text},
+  S31: {textAlign:"right"},
+  S32: {marginTop:10},
+  S33: {marginBottom:0},
+  S34: {fontSize:13,color:C.textMuted},
+  S35: {fontSize:11,color:C.textMuted,marginBottom:6},
+  S36: {display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"},
+  S37: {fontSize:12,fontWeight:700,color:"#ffb347",marginBottom:4},
+};
+
 // ═══ LineChart（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
-const LineChart=({datasets,min=0,max=200,refLines=[],height=120,statusKey=null})=>{
+const LineChart=React.memo(({datasets,min=0,max=200,refLines=[],height=120,statusKey=null})=>{
     const hasData=datasets&&datasets.some(d=>d.data.length>0);
     if(!hasData)return<div className="empty-state">📊 尚無資料<br/>請先記錄數值</div>;
     const W=320,H=height,P=26;
@@ -1961,7 +2377,7 @@ const LineChart=({datasets,min=0,max=200,refLines=[],height=120,statusKey=null})
         ))}
       </svg>
     );
-  };
+  });
 
 // ═══ LabReportTab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
 const LabReportTab=({hj})=>{ const{apiKey,handlePhotoChange,hospitalList,labForm,labInputText,labParsed,labPhotos,labStep,parseLabText,photoInputRef,saveLabReport,setApiKey,setLabForm,setLabInputText,setLabParsed,setLabPhotos,setLabStep,setShowPhotoWarning,showToast}=hj;
@@ -1976,8 +2392,8 @@ const LabReportTab=({hj})=>{ const{apiKey,handlePhotoChange,hospitalList,labForm
             <div style={{fontSize:12,color:C.amber,marginBottom:8}}>⚠️ 需要 Gemini API 金鑰才能解析報告</div>
             <div style={{fontSize:11,color:C.textMuted,marginBottom:8}}>前往「設定」Tab 輸入金鑰，或直接在下方輸入：</div>
             <input className="input-field" type="password" placeholder="AQ. 或 AIza 開頭金鑰" value={apiKey}
-              onChange={e=>setApiKey(e.target.value)} style={{marginBottom:8}}/>
-            <button className="btn-primary" onClick={()=>{if(apiKey.trim()){localStorage.setItem("hj_apikey",apiKey.trim());showToast("✅ API金鑰已儲存");}else{showToast("⚠️請先輸入金鑰");}}}>儲存金鑰</button>
+              onChange={e=>setApiKey(e.target.value)} style={ST.S1}/>
+            <button className="btn-primary" onClick={()=>{if(apiKey.trim()){LS.set("hj_apikey",apiKey.trim());showToast("✅ API金鑰已儲存");}else{showToast("⚠️請先輸入金鑰");}}}>儲存金鑰</button>
           </div>
         )}
 
@@ -2060,7 +2476,7 @@ const LabReportTab=({hj})=>{ const{apiKey,handlePhotoChange,hospitalList,labForm
               <div style={{fontSize:11,color:C.textMuted,marginTop:4}}>支援多張・台灣/越南格式</div>
             </div>
           )}
-          <input ref={photoInputRef} type="file" accept="image/*" multiple style={{display:"none"}}
+          <input ref={photoInputRef} type="file" accept="image/*" multiple style={ST.S25}
             onChange={e=>{handlePhotoChange(e.target.files);e.target.value="";}}/>
         </div>
 
@@ -2080,7 +2496,7 @@ const LabReportTab=({hj})=>{ const{apiKey,handlePhotoChange,hospitalList,labForm
       <div style={{textAlign:"center",padding:"60px 20px"}}>
         <div style={{fontSize:48,marginBottom:20}}>🤖</div>
         <div style={{fontSize:16,fontWeight:600,marginBottom:10}}>AI 解析中...</div>
-        <div style={{fontSize:13,color:C.textMuted}}>正在辨識報告數值<br/>請稍候約10-20秒</div>
+        <div style={ST.S34}>正在辨識報告數值<br/>請稍候約10-20秒</div>
         <div style={{marginTop:20}}><span className="spin" style={{fontSize:24,color:C.green}}>⟳</span></div>
       </div>
     );
@@ -2091,10 +2507,10 @@ const LabReportTab=({hj})=>{ const{apiKey,handlePhotoChange,hospitalList,labForm
       return(
         <div>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
-            <div style={{fontSize:20}}>✅</div>
+            <div style={ST.S14}>✅</div>
             <div>
               <div style={{fontSize:15,fontWeight:700,color:C.green}}>解析完成！請確認數值</div>
-              <div style={{fontSize:12,color:C.textMuted}}>可直接修改有誤的欄位</div>
+              <div style={ST.S6}>可直接修改有誤的欄位</div>
             </div>
           </div>
 
@@ -2135,10 +2551,10 @@ const LabReportTab=({hj})=>{ const{apiKey,handlePhotoChange,hospitalList,labForm
           {labParsed._extraData && Object.keys(labParsed._extraData).length > 0 && (
             <div className="card" style={{border:`2px solid ${C.red}88`,background:"rgba(255,80,80,0.06)",marginBottom:12}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                <span style={{fontSize:18}}>🚨</span>
+                <span style={ST.S26}>🚨</span>
                 <div>
                   <div style={{fontSize:13,fontWeight:700,color:C.red}}>以下項目無法存入！</div>
-                  <div style={{fontSize:11,color:C.textMuted}}>App尚無對應欄位，暫存備份區但不會出現在趨勢圖</div>
+                  <div style={ST.S3}>App尚無對應欄位，暫存備份區但不會出現在趨勢圖</div>
                 </div>
               </div>
               {Object.entries(labParsed._extraData).map(([k,v])=>(
@@ -2174,9 +2590,9 @@ const LabReportTab=({hj})=>{ const{apiKey,handlePhotoChange,hospitalList,labForm
                   <div key={key} className="confirm-field filled">
                     <div>
                       <div style={{fontSize:12,color:C.green}}>{label}</div>
-                      {unit&&<div style={{fontSize:11,color:C.textMuted}}>{unit}</div>}
+                      {unit&&<div style={ST.S3}>{unit}</div>}
                     </div>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <div style={ST.S16}>
                       <input style={{width:90,background:"transparent",border:`1px solid ${color}44`,borderRadius:6,padding:"4px 8px",color:C.text,fontSize:14,fontWeight:700,textAlign:"right",fontFamily:"monospace",outline:"none"}}
                         type="number" value={labParsed[key]||""} onChange={e=>setLabParsed(p=>({...p,[key]:e.target.value}))}/>
                     </div>
@@ -2196,8 +2612,8 @@ const LabReportTab=({hj})=>{ const{apiKey,handlePhotoChange,hospitalList,labForm
               .map(f=>(
                 <div key={f.key} className="confirm-field">
                   <div>
-                    <div style={{fontSize:12,color:C.textMuted}}>{f.label}</div>
-                    <div style={{fontSize:11,color:C.textMuted}}>{f.unit}</div>
+                    <div style={ST.S6}>{f.label}</div>
+                    <div style={ST.S3}>{f.unit}</div>
                   </div>
                   <input style={{width:90,background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 8px",color:C.text,fontSize:14,textAlign:"right",fontFamily:"monospace",outline:"none"}}
                     type="number" placeholder="輸入" onChange={e=>{if(e.target.value)setLabParsed(p=>({...p,[f.key]:parseFloat(e.target.value)}));}}/>
@@ -2212,8 +2628,8 @@ const LabReportTab=({hj})=>{ const{apiKey,handlePhotoChange,hospitalList,labForm
           </div>
 
           <div style={{display:"flex",gap:10,marginBottom:20}}>
-            <button className="btn-secondary" style={{flex:1}} onClick={()=>setLabStep("input")}>← 重新輸入</button>
-            <button className="btn-primary" style={{flex:2}} onClick={saveLabReport}>💾 確認儲存</button>
+            <button className="btn-secondary" style={ST.S2} onClick={()=>setLabStep("input")}>← 重新輸入</button>
+            <button className="btn-primary" style={ST.S10} onClick={saveLabReport}>💾 確認儲存</button>
           </div>
         </div>
       );
@@ -2231,20 +2647,20 @@ const LabReportTab=({hj})=>{ const{apiKey,handlePhotoChange,hospitalList,labForm
 
 // ═══ HomeTab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
 const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHistory,dailyGreeting,detectHealthAlerts,editReminder,exerciseLog,generateDailyGreeting,generateOverallReport,glucoseHistory,greetingLoading,imagingHistory,isOnline,labHistory,lastSync,latestLab,loading,overallDate,overallLoading,overallReport,overdueReminders,reminders,setDailyGreeting,setEditReminder,setExerciseLog,setKbTab,setRecordTab,setSelectedKnowledge,setShowOverdue,setTab,setTrendItem,showOverdue,showToast,syncStatus,updateReminderDate,weightHistory}=hj; return(
-    <div className="fade-in" style={{padding:"16px 16px 80px"}}>
+    <div className="fade-in" style={ST.S8}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,position:"relative"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={ST.S22}>
           <ShieldIcon size={36}/>
           <div>
             <div style={{display:"flex",alignItems:"baseline",gap:8}}>
               <span style={{fontSize:18,fontWeight:700}}>我的健康日誌</span>
               <span style={{fontSize:11,color:C.green,background:"rgba(46,204,138,0.12)",padding:"2px 7px",borderRadius:10}}>{VERSION}</span>
             </div>
-            <div style={{fontSize:12,color:C.textMuted}}>{new Date().toLocaleDateString("zh-TW",{month:"long",day:"numeric",weekday:"short"})}</div>
+            <div style={ST.S6}>{new Date().toLocaleDateString("zh-TW",{month:"long",day:"numeric",weekday:"short"})}</div>
             <div style={{fontSize:10,display:"flex",alignItems:"center",gap:4,marginTop:2}}>
-              {syncStatus==="syncing"&&<><span style={{color:C.amber}} className="spin">⟳</span><span style={{color:C.textMuted}}>同步中</span></>}
-              {syncStatus==="synced"&&<><span style={{color:C.green}}>✓</span><span style={{color:C.textMuted}}>已同步 {lastSync?lastSync.toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit"}):""}</span></>}
-              {syncStatus==="error"&&<><span style={{color:C.red}}>✕</span><span style={{color:C.textMuted}}>同步失敗</span></>}
+              {syncStatus==="syncing"&&<><span style={{color:C.amber}} className="spin">⟳</span><span style={ST.S20}>同步中</span></>}
+              {syncStatus==="synced"&&<><span style={ST.S17}>✓</span><span style={ST.S20}>已同步 {lastSync?lastSync.toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit"}):""}</span></>}
+              {syncStatus==="error"&&<><span style={{color:C.red}}>✕</span><span style={ST.S20}>同步失敗</span></>}
             </div>
           </div>
         </div>
@@ -2274,26 +2690,26 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
         <div style={{fontSize:10,color:C.green,fontWeight:700,letterSpacing:1,marginBottom:6,
           display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <span>🤖 健康顧問</span>
-          <button onClick={()=>{localStorage.removeItem("hj_daily_greeting");setDailyGreeting(null);generateDailyGreeting(true);}}
+          <button onClick={()=>{LS.remove("hj_daily_greeting");setDailyGreeting(null);generateDailyGreeting(true);}}
             style={{fontSize:9,color:C.textMuted,background:"none",border:"none",cursor:"pointer",padding:0}}>
             重新產生
           </button>
         </div>
         {greetingLoading
-          ?<div style={{fontSize:12,color:C.textMuted}}>⏳ 顧問正在思考中...</div>
+          ?<div style={ST.S6}>⏳ 顧問正在思考中...</div>
           :dailyGreeting
             ?<div style={{fontSize:13,color:C.text,lineHeight:1.8}}>{dailyGreeting}</div>
-            :<div style={{fontSize:12,color:C.textMuted}}>
+            :<div style={ST.S6}>
                 ⏰ 該更新了 — 按「重新產生」取得今日問候
                 {!localStorage.getItem("hj_apikey")&&<span>（請先設定API金鑰）</span>}
               </div>
         }
       </div>
       <div style={{background:"rgba(255,179,71,0.1)",border:"1px solid rgba(255,179,71,0.3)",borderRadius:12,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
-        <span style={{fontSize:20}}>⚠️</span>
+        <span style={ST.S14}>⚠️</span>
         <div>
           <div style={{fontSize:12,fontWeight:600,color:C.amber}}>糖尿病前期 + 家族史 T2D</div>
-          <div style={{fontSize:11,color:C.textMuted}}>HbA1c {latestLab?.hba1c||"5.8"}% · 需積極管理</div>
+          <div style={ST.S3}>HbA1c {latestLab?.hba1c||"5.8"}% · 需積極管理</div>
         </div>
       </div>
       {/* 今日狀態整合卡片 */}
@@ -2328,16 +2744,16 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
                 <div>
                   <div style={{fontSize:10,color:C.textMuted,marginBottom:2}}>綜合健康分數</div>
                   <div style={{display:"flex",alignItems:"baseline",gap:4}}>
-                    <span style={{fontFamily:"'DM Serif Display',serif",fontSize:32,color:scoreColor,lineHeight:1}}>{total}</span>
-                    <span style={{fontSize:11,color:C.textMuted}}>/100</span>
+                    <span style={{fontFamily:"Georgia,serif",fontSize:32,color:scoreColor,lineHeight:1}}>{total}</span>
+                    <span style={ST.S3}>/100</span>
                     {diff!=null&&<span style={{fontSize:11,color:diff>0?C.green:diff<0?C.red:C.textMuted,fontWeight:700}}>{diff>0?`▲+${diff}`:diff<0?`▼${diff}`:"→"}</span>}
                   </div>
                 </div>
-                <div style={{textAlign:"right"}}>
+                <div style={ST.S31}>
                   {scores.filter(d=>d.score!=null&&d.score<6.5).slice(0,2).map(d=>(
                     <div key={d.label} style={{fontSize:10,color:C.amber,marginBottom:2}}>⚠️ {d.label.split("\n")[0]}</div>
                   ))}
-                  <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>看雷達圖 →</div>
+                  <div style={ST.S23}>看雷達圖 →</div>
                 </div>
               </div>
             )}
@@ -2348,7 +2764,7 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
                 <div style={{fontSize:18,marginBottom:2}}>{exToday?"✅":"🏃"}</div>
                 <div style={{fontSize:11,fontWeight:600,color:exToday?C.blue:C.text}}>
                   運動{exToday&&todayEx?.type?` ${EX_TYPES.find(t=>t.k===todayEx.type)?.e||""}`:""}</div>
-                <div style={{fontSize:10,color:C.textMuted}}>本週{exHit7}/7天</div>
+                <div style={ST.S5}>本週{exHit7}/7天</div>
               </div>
               {/* 分隔線 */}
               <div style={{width:1,background:C.border}}/>
@@ -2359,7 +2775,7 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
                   return(<>
                     <div style={{fontSize:18,marginBottom:2}}>{todayBP?"✅":"💓"}</div>
                     <div style={{fontSize:11,fontWeight:600,color:todayBP?C.green:C.text}}>血壓</div>
-                    <div style={{fontSize:10,color:C.textMuted}}>{todayBP?`${todayBP.systolic}/${todayBP.diastolic}`:"今日未記錄"}</div>
+                    <div style={ST.S5}>{todayBP?`${todayBP.systolic}/${todayBP.diastolic}`:"今日未記錄"}</div>
                   </>);
                 })()}
               </div>
@@ -2401,14 +2817,14 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
                     <div key={r.label} onClick={()=>{setTab("record");setRecordTab(r.tab);}}
                       style={{display:"flex",alignItems:"center",justifyContent:"space-between",
                         padding:"8px 0",borderBottom:i<rows.length-1?`1px solid ${C.border}`:"none",cursor:"pointer"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={ST.S27}>
                         <span style={{fontSize:16}}>{r.icon}</span>
                         <span style={{fontSize:13,fontWeight:600,color:C.text}}>{r.label}</span>
                       </div>
-                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={ST.S27}>
                         <span style={{fontSize:14,fontWeight:700,color:r.color}}>{r.val}</span>
                         {r.date&&<span style={{fontSize:10,color:C.textMuted,minWidth:42,textAlign:"right"}}>{r.date}</span>}
-                        <span style={{fontSize:12,color:C.textMuted}}>›</span>
+                        <span style={ST.S6}>›</span>
                       </div>
                     </div>
                   ))}
@@ -2452,9 +2868,9 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
             <div style={{display:"flex",alignItems:"flex-start",gap:8,cursor:"pointer",marginBottom:6}}
               onClick={()=>{setTab("knowledge");setKbTab("articles");}}>
               <div style={{fontSize:18,flexShrink:0}}>{tip.icon}</div>
-              <div style={{flex:1}}>
+              <div style={ST.S2}>
                 <div style={{fontSize:10,fontWeight:700,color:C.blue,marginBottom:2}}>😴 睡眠提醒</div>
-                <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{tip.text}</div>
+                <div style={ST.S9}>{tip.text}</div>
               </div>
               <div style={{fontSize:10,color:C.blue,flexShrink:0}}>了解 →</div>
             </div>
@@ -2495,24 +2911,7 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
       </div>
       {/* 最新抽血報告數值 */}
       {latestLab && (()=>{
-        const CHECK_FIELDS = [
-          {key:"hba1c",label:"HbA1c",unit:"%"},
-          {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL"},
-          {key:"alt",label:"ALT",unit:"U/L"},
-          {key:"ggt",label:"GGT",unit:"U/L"},
-          {key:"hdl",label:"HDL-C",unit:"mg/dL"},
-          {key:"ldl",label:"LDL-C",unit:"mg/dL"},
-          {key:"tg",label:"三酸甘油酯",unit:"mg/dL"},
-          {key:"uric_acid",label:"尿酸",unit:"mg/dL"},
-          {key:"creatinine",label:"肌酸酐",unit:"mg/dL"},
-          {key:"upcr",label:"UPCR",unit:"mg/g"},
-          {key:"tsh",label:"TSH",unit:"uIU/mL"},
-          {key:"hb",label:"血紅素",unit:"g/dL"},
-          {key:"wbc",label:"WBC",unit:"K/uL"},
-          {key:"platelet",label:"血小板",unit:"K/uL"},
-          {key:"crp",label:"CRP",unit:""},
-          {key:"hbsag",label:"HBsAg",unit:""},
-        ];
+        
         const alerts = CHECK_FIELDS.filter(f=>{
           const v = latestLab[f.key];
           if(v===null||v===undefined||v==="")return false;
@@ -2542,15 +2941,15 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
         return(
           <div className="card">
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <div className="card-title" style={{marginBottom:0}}>最新抽血報告</div>
-              <div style={{fontSize:11,color:C.textMuted}}>{fmtDate(latestLab.date)}</div>
+              <div className="card-title" style={ST.S33}>最新抽血報告</div>
+              <div style={ST.S3}>{fmtDate(latestLab.date)}</div>
             </div>
             {alerts.length===0&&warns.length===0?(
               <div style={{fontSize:13,color:C.green,padding:"8px 0"}}>✅ 所有追蹤指標均正常</div>
             ):(
               <>
                 {alerts.length>0&&(
-                  <div style={{marginBottom:8}}>
+                  <div style={ST.S1}>
                     <span style={{fontSize:11,color:C.red,letterSpacing:1}}>❌ 異常</span>
                     <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:6}}>
                       {alerts.map(f=>(
@@ -2564,7 +2963,7 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
                   </div>
                 )}
                 {warns.length>0&&(
-                  <div style={{marginBottom:8}}>
+                  <div style={ST.S1}>
                     <span style={{fontSize:11,color:C.amber,letterSpacing:1}}>⚠️ 需注意</span>
                     <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:6}}>
                       {warns.map(f=>(
@@ -2584,7 +2983,7 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
                 <div style={{fontSize:11,color:C.textMuted,letterSpacing:1,marginBottom:6}}>📌 注意事項</div>
                 {tips.map((tip,i)=>(
                   <div key={i} style={{fontSize:12,color:C.text,padding:"4px 0",display:"flex",gap:8}}>
-                    <span style={{color:C.green}}>•</span>{tip}
+                    <span style={ST.S17}>•</span>{tip}
                   </div>
                 ))}
               </div>
@@ -2595,7 +2994,7 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
 
       <div className="card">
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-          <div className="card-title" style={{marginBottom:0}}>定期健康提醒</div>
+          <div className="card-title" style={ST.S33}>定期健康提醒</div>
           {!reminders.some(r=>r.id==="HF01")&&(
             <button onClick={addHospitalFollowups}
               style={{padding:"5px 10px",borderRadius:8,fontSize:11,cursor:"pointer",fontWeight:600,
@@ -2616,9 +3015,9 @@ const HomeTab=({hj})=>{ const{addHospitalFollowups,aiReport,aiReportDate,bpHisto
           return(
             <div key={r.id} className="reminder-item">
               <span style={{fontSize:22}}>{r.icon}</span>
-              <div style={{flex:1}}>
+              <div style={ST.S2}>
                 <div style={{fontSize:14,fontWeight:500}}>{r.title}</div>
-                <div style={{fontSize:11,color:C.textMuted}}>下次：{r.nextDate}</div>
+                <div style={ST.S3}>下次：{r.nextDate}</div>
               </div>
               <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
                 <span className={`status-chip ${isOverdue?"status-alert":diffDays<=30?"status-warn":"status-ok"}`}>
@@ -2643,7 +3042,7 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
     const bpHosp=bpHistory.filter(r=>r.source==="醫院");
     const wtData=weightHistory.map(r=>({date:r.date,v:parseFloat(r.value_kg)}));
     return(
-      <div className="fade-in" style={{padding:"16px 16px 80px"}}>
+      <div className="fade-in" style={ST.S8}>
         <div className="section-header">📈 健康趨勢</div>
         <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
           {BTNS.map(t=>(
@@ -2654,20 +3053,7 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
         {trendItem==="overview"&&(()=>{
           const sorted=[...labHistory].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
           // 核心指標定義：key, 標籤, 單位, 方向(low=越低越好/high=越高越好), 目標值, 警戒值
-          const CORE=[
-            {k:"hba1c",label:"HbA1c",unit:"%",dir:"low",good:5.7,bad:6.5},
-            {k:"glucose_ac",label:"空腹血糖",unit:"",dir:"low",good:100,bad:126},
-            {k:"hdl",label:"HDL",unit:"",dir:"high",good:40,bad:35},
-            {k:"ldl",label:"LDL",unit:"",dir:"low",good:100,bad:160},
-            {k:"tg",label:"三酸甘油酯",unit:"",dir:"low",good:150,bad:200},
-            {k:"alt",label:"ALT肝",unit:"",dir:"low",good:40,bad:80},
-            {k:"ast",label:"AST肝",unit:"",dir:"low",good:37,bad:80},
-            {k:"uric_acid",label:"尿酸",unit:"",dir:"low",good:7.0,bad:8.5},
-            {k:"creatinine",label:"肌酸酐",unit:"",dir:"low",good:1.0,bad:1.3},
-            {k:"wbc",label:"白血球",unit:"",dir:"mid",good:5.5,lowB:4,highB:10},
-            {k:"platelet",label:"血小板",unit:"",dir:"high",good:200,bad:150},
-            {k:"crp",label:"CRP發炎",unit:"",dir:"low",good:1,bad:3},
-          ];
+          
           const Spark=({series})=>{
             if(series.length<2)return <div style={{width:60,height:24}}/>;
             const vals=series.map(s=>s.v);
@@ -2785,10 +3171,10 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
                 const overdue=nextD&&nextD<=today;
                 const daysLeft=nextD?Math.ceil((nextD-today)/(1000*60*60*24)):null;
                 return(
-                  <div key={sys.key} className="card" style={{marginBottom:10}}>
+                  <div key={sys.key} className="card" style={ST.S7}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8}}>
-                        <span style={{fontSize:20}}>{sys.icon}</span>
+                      <div style={ST.S27}>
+                        <span style={ST.S14}>{sys.icon}</span>
                         <span style={{fontSize:14,fontWeight:700,color:C.text}}>{sys.name}</span>
                       </div>
                       <span style={{fontSize:10,color:C.textMuted,background:C.bg,borderRadius:8,padding:"2px 8px"}}>
@@ -2829,7 +3215,7 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
                     {sys.interval&&(
                       <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`,
                         display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                        <span style={{fontSize:11,color:C.textMuted}}>⏰ {sys.interval}</span>
+                        <span style={ST.S3}>⏰ {sys.interval}</span>
                         {nextD&&(
                           <span style={{fontSize:11,fontWeight:700,
                             color:overdue?C.red:daysLeft<=30?C.amber:C.green}}>
@@ -2851,8 +3237,8 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
           <div className="card">
             <div className="card-title">血糖趨勢</div>
             <div style={{display:"flex",gap:12,marginBottom:12}}>
-              <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏠 日常</span></div>
-              <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.blue,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏥 醫院</span></div>
+              <div style={ST.S15}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={ST.S3}>🏠 日常</span></div>
+              <div style={ST.S15}><div style={{width:12,height:3,background:C.blue,borderRadius:2}}/><span style={ST.S3}>🏥 醫院</span></div>
             </div>
             <LineChart datasets={[{data:gDaily},{data:gHosp}]} min={60} max={160}
               statusKey="glucose_ac"
@@ -2864,8 +3250,8 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
             <div className="card">
               <div className="card-title">血壓趨勢（收縮壓）</div>
               <div style={{display:"flex",gap:12,marginBottom:12}}>
-                <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏠 日常</span></div>
-                <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:12,height:3,background:C.blue,borderRadius:2}}/><span style={{fontSize:11,color:C.textMuted}}>🏥 醫院</span></div>
+                <div style={ST.S15}><div style={{width:12,height:3,background:C.green,borderRadius:2}}/><span style={ST.S3}>🏠 日常</span></div>
+                <div style={ST.S15}><div style={{width:12,height:3,background:C.blue,borderRadius:2}}/><span style={ST.S3}>🏥 醫院</span></div>
               </div>
               <LineChart datasets={[{data:bpDaily.map(r=>({date:r.date,v:parseInt(r.systolic)}))},{data:bpHosp.map(r=>({date:r.date,v:parseInt(r.systolic)}))}]}
                 min={80} max={180}
@@ -2891,10 +3277,10 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
                 <div className="card" style={{border:`1px solid ${color}44`}}>
                   <div className="card-title">最新血壓評估</div>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                    <span style={{fontSize:24,fontFamily:"'DM Serif Display',serif",color}}>{sys}/{dia}</span>
+                    <span style={{fontSize:24,fontFamily:"Georgia,serif",color}}>{sys}/{dia}</span>
                     <span style={{fontSize:13,fontWeight:700,color}}>{status}</span>
                   </div>
-                  <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>💡 {advice}</div>
+                  <div style={ST.S29}>💡 {advice}</div>
                   <div style={{fontSize:11,color:C.textMuted,marginTop:6}}>測量日期：{fmtDate(latest.date)} {latest.source&&`(${latest.source})`}</div>
                 </div>
               );
@@ -2916,15 +3302,15 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
                   <div style={{display:"flex",gap:8,marginBottom:10}}>
                     <div style={{flex:1,background:"rgba(46,204,138,0.08)",borderRadius:10,padding:"8px 10px",textAlign:"center"}}>
                       <div style={{fontSize:22,fontWeight:700,color:pct130>=60?C.green:C.amber}}>{pct130}%</div>
-                      <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>達標 &lt;130/80<br/>（理想目標）</div>
+                      <div style={ST.S23}>達標 &lt;130/80<br/>（理想目標）</div>
                     </div>
                     <div style={{flex:1,background:"rgba(90,180,255,0.08)",borderRadius:10,padding:"8px 10px",textAlign:"center"}}>
                       <div style={{fontSize:22,fontWeight:700,color:pct140>=80?C.green:C.amber}}>{pct140}%</div>
-                      <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>達標 &lt;140/90<br/>（控制目標）</div>
+                      <div style={ST.S23}>達標 &lt;140/90<br/>（控制目標）</div>
                     </div>
                     <div style={{flex:1,background:"rgba(255,179,71,0.08)",borderRadius:10,padding:"8px 10px",textAlign:"center"}}>
                       <div style={{fontSize:18,fontWeight:700,color:avgS<130?C.green:C.amber}}>{avgS}/{avgD}</div>
-                      <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>近7筆均值<br/>mmHg</div>
+                      <div style={ST.S23}>近7筆均值<br/>mmHg</div>
                     </div>
                   </div>
                   <div style={{fontSize:11,color:C.textMuted,lineHeight:1.7}}>
@@ -2948,9 +3334,9 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
             ):(
               <>
                 {/* 追蹤項目選擇器 */}
-                <div className="card" style={{marginBottom:10}}>
+                <div className="card" style={ST.S7}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                    <div className="card-title" style={{marginBottom:0}}>追蹤項目</div>
+                    <div className="card-title" style={ST.S33}>追蹤項目</div>
                     <div style={{display:"flex",gap:6}}>
                       <button className="btn-sm" onClick={()=>setShowTrackPicker(p=>!p)}>
                         {showTrackPicker?"收起":"＋ 新增/移除"}
@@ -2991,11 +3377,11 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
                   const colors=[C.amber,C.green,C.red,C.blue,C.purple];
                   const colorIdx=trackItems.indexOf(key)%colors.length;
                   return(
-                    <div key={key} className="card" style={{marginBottom:10}}>
+                    <div key={key} className="card" style={ST.S7}>
                       <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
                         <span style={{fontSize:13,fontWeight:600,color:colors[colorIdx]}}>{s.label}</span>
-                        <div style={{display:"flex",alignItems:"center",gap:8}}>
-                          <span style={{fontSize:11,color:C.textMuted}}>{s.unit}</span>
+                        <div style={ST.S27}>
+                          <span style={ST.S3}>{s.unit}</span>
                           {/* 最新值 + 上次值 */}
                           {data.length>=2&&(()=>{
                             const latest=data[data.length-1].v;
@@ -3017,7 +3403,7 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
                                 const updated=[...trackItems];
                                 [updated[idx-1],updated[idx]]=[updated[idx],updated[idx-1]];
                                 setTrackItems(updated);
-                                localStorage.setItem("hj_track",JSON.stringify(updated));
+                                LS.set("hj_track",updated);
                                 api.saveSetting("trackItems",updated);
                               }
                             }} style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,color:C.textMuted,padding:"1px 6px",cursor:"pointer",fontSize:11}}>↑</button>
@@ -3027,7 +3413,7 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
                                 const updated=[...trackItems];
                                 [updated[idx],updated[idx+1]]=[updated[idx+1],updated[idx]];
                                 setTrackItems(updated);
-                                localStorage.setItem("hj_track",JSON.stringify(updated));
+                                LS.set("hj_track",updated);
                                 api.saveSetting("trackItems",updated);
                               }
                             }} style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,color:C.textMuted,padding:"1px 6px",cursor:"pointer",fontSize:11}}>↓</button>
@@ -3051,7 +3437,7 @@ const TrendTab=({hj})=>{ const{analyzeTrend,bpHistory,glucoseHistory,imagingHist
                                 </span>
                               </div>
                             </div>
-                            <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>
+                            <div style={ST.S35}>
                               💡 {trend.suggest}
                             </div>
                             {/* AI 深度分析 */}
@@ -3142,92 +3528,7 @@ const HistoryTab=({hj})=>{ const{imagingHistory,labHistory,lightboxUrl,loadData,
     };
 
     // 抽血報告完整數值欄位 - 依分類排列
-    const LAB_DISPLAY = [
-      // 血糖
-      {key:"hba1c",label:"HbA1c",unit:"%",group:"血糖"},
-      {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL",group:"血糖"},
-      {key:"glucose_pc",label:"飯後血糖",unit:"mg/dL",group:"血糖"},
-      // 肝功能
-      {key:"alt",label:"ALT",unit:"U/L",group:"肝功能"},
-      {key:"ast",label:"AST",unit:"U/L",group:"肝功能"},
-      {key:"alp",label:"ALP",unit:"U/L",group:"肝功能"},
-      {key:"ggt",label:"GGT",unit:"U/L",group:"肝功能"},
-      {key:"ldh",label:"LDH",unit:"U/L",group:"肝功能"},
-      {key:"tbil",label:"總膽紅素",unit:"mg/dL",group:"肝功能"},
-      {key:"dbil",label:"直接膽紅素",unit:"mg/dL",group:"肝功能"},
-      {key:"tp",label:"總蛋白",unit:"g/dL",group:"肝功能"},
-      {key:"alb",label:"白蛋白",unit:"g/dL",group:"肝功能"},
-      {key:"glob",label:"球蛋白",unit:"g/dL",group:"肝功能"},
-      {key:"ag_ratio",label:"A/G比值",unit:"",group:"肝功能"},
-      // 腎功能
-      {key:"creatinine",label:"肌酸酐",unit:"mg/dL",group:"腎功能"},
-      {key:"gfr",label:"eGFR(CKD-EPI)",unit:"",group:"腎功能"},
-      {key:"gfr2",label:"eGFR(MDRD)",unit:"",group:"腎功能"},
-      {key:"bun",label:"BUN",unit:"mg/dL",group:"腎功能"},
-      {key:"upcr",label:"UPCR",unit:"mg/g",group:"腎功能"},
-      {key:"urine_creatinine",label:"尿液肌酸酐",unit:"mg/dL",group:"腎功能"},
-      {key:"urine_protein",label:"尿液蛋白",unit:"mg/dL",group:"腎功能"},
-      {key:"urine_protein2",label:"尿蛋白(隨機)",unit:"mg/dL",group:"腎功能"},
-      // 血脂
-      {key:"hdl",label:"HDL-C",unit:"mg/dL",group:"血脂"},
-      {key:"ldl",label:"LDL-C",unit:"mg/dL",group:"血脂"},
-      {key:"tg",label:"三酸甘油酯",unit:"mg/dL",group:"血脂"},
-      {key:"cholesterol",label:"總膽固醇",unit:"mg/dL",group:"血脂"},
-      {key:"chol_hdl",label:"膽固醇/HDL",unit:"",group:"血脂"},
-      // 尿酸/鐵
-      {key:"uric_acid",label:"尿酸",unit:"mg/dL",group:"其他生化"},
-      {key:"fe",label:"鐵 Fe",unit:"ug/dL",group:"其他生化"},
-      {key:"uibc",label:"UIBC",unit:"ug/dL",group:"其他生化"},
-      {key:"tibc",label:"TIBC",unit:"ug/dL",group:"其他生化"},
-      {key:"fe_sat",label:"鐵飽和度",unit:"%",group:"其他生化"},
-      // 甲狀腺
-      {key:"tsh",label:"TSH",unit:"uIU/mL",group:"甲狀腺"},
-      {key:"ft3",label:"Free T3",unit:"",group:"甲狀腺"},
-      {key:"ft4",label:"Free T4",unit:"",group:"甲狀腺"},
-      // 電解質
-      {key:"na",label:"鈉 Na",unit:"mEq/L",group:"電解質"},
-      {key:"k",label:"鉀 K",unit:"mEq/L",group:"電解質"},
-      {key:"cl",label:"氯 Cl",unit:"mEq/L",group:"電解質"},
-      {key:"ca",label:"鈣 Ca",unit:"mg/dL",group:"電解質"},
-      {key:"mg",label:"鎂 Mg",unit:"mg/dL",group:"電解質"},
-      {key:"phos",label:"磷 Phos",unit:"mg/dL",group:"電解質"},
-      // 發炎/胰臟
-      {key:"crp",label:"CRP",unit:"mg/L",group:"其他生化"},
-      {key:"amy",label:"澱粉酶 AMY",unit:"U/L",group:"其他生化"},
-      {key:"lip",label:"脂肪酶 LIP",unit:"U/L",group:"其他生化"},
-      {key:"ck",label:"CK",unit:"U/L",group:"其他生化"},
-      // CBC血液
-      {key:"wbc",label:"WBC",unit:"K/uL",group:"血液CBC"},
-      {key:"rbc",label:"RBC",unit:"M/uL",group:"血液CBC"},
-      {key:"hb",label:"血紅素 Hb",unit:"g/dL",group:"血液CBC"},
-      {key:"hct",label:"Hct",unit:"%",group:"血液CBC"},
-      {key:"mcv",label:"MCV",unit:"fL",group:"血液CBC"},
-      {key:"mch",label:"MCH",unit:"pg",group:"血液CBC"},
-      {key:"mchc",label:"MCHC",unit:"g/dL",group:"血液CBC"},
-      {key:"rdw_cv",label:"RDW-CV",unit:"%",group:"血液CBC"},
-      {key:"rdw_sd",label:"RDW-SD",unit:"fL",group:"血液CBC"},
-      {key:"platelet",label:"血小板",unit:"K/uL",group:"血液CBC"},
-      {key:"mpv",label:"MPV",unit:"fL",group:"血液CBC"},
-      // 腫瘤標記
-      {key:"cea",label:"CEA",unit:"ng/mL",group:"腫瘤標記"},
-      {key:"afp",label:"AFP",unit:"ng/mL",group:"腫瘤標記"},
-      {key:"psa",label:"PSA",unit:"ng/mL",group:"腫瘤標記"},
-      // 免疫
-      {key:"asto",label:"ASTO",unit:"",group:"免疫"},
-      {key:"rf",label:"RF類風濕因子",unit:"",group:"免疫"},
-      // 病毒補充
-      {key:"anti_hbs",label:"Anti-HBs",unit:"",group:"病毒篩檢"},
-      // 尿液分析
-      {key:"urine_glucose",label:"尿糖",unit:"",group:"尿液分析"},
-      {key:"urine_bilirubin",label:"尿膽紅素",unit:"",group:"尿液分析"},
-      {key:"urine_ketone",label:"尿酮體",unit:"",group:"尿液分析"},
-      {key:"urine_sg",label:"尿比重",unit:"",group:"尿液分析"},
-      {key:"urine_ph",label:"尿液pH",unit:"",group:"尿液分析"},
-      {key:"urine_nitrite",label:"亞硝酸鹽",unit:"",group:"尿液分析"},
-      {key:"urine_urobilinogen",label:"尿膽素原",unit:"",group:"尿液分析"},
-      {key:"urine_blood",label:"尿潛血",unit:"",group:"尿液分析"},
-      {key:"urine_leukocyte",label:"尿白血球",unit:"",group:"尿液分析"},
-    ];
+    
     // 依分組顯示
     const groups = [...new Set(LAB_DISPLAY.map(f=>f.group))];
 
@@ -3270,13 +3571,13 @@ const HistoryTab=({hj})=>{ const{imagingHistory,labHistory,lightboxUrl,loadData,
                   onClick={()=>setExpanded(isExpanded?null:record.id)}>
                   <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
                     <span style={{fontSize:24}}>{record._icon}</span>
-                    <div style={{flex:1}}>
+                    <div style={ST.S2}>
                       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
                         <span style={{fontSize:14,fontWeight:600,color:C.text}}>{fmtDateFull(record.date)}</span>
-                        <span style={{fontSize:12,color:C.textMuted}}>{normalizeHospital(record.hospital)}</span>
-                        {record.fasting&&<span style={{fontSize:10,color:C.textMuted}}>({record.fasting})</span>}
+                        <span style={ST.S6}>{normalizeHospital(record.hospital)}</span>
+                        {record.fasting&&<span style={ST.S5}>({record.fasting})</span>}
                       </div>
-                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <div style={ST.S16}>
                         <div style={{fontSize:12,color:C.green}}>{record._label}</div>
                         {record._type==="lab"&&(()=>{
                           const cnt = Object.keys(record).filter(k=>!['id','date','hospital','country','doctor','fasting','note','extra_data','source_country','createdAt','_type','_icon','_label','_summary'].includes(k)&&record[k]!==null&&record[k]!==undefined&&record[k]!=="").length;
@@ -3288,11 +3589,11 @@ const HistoryTab=({hj})=>{ const{imagingHistory,labHistory,lightboxUrl,loadData,
                         })()}
                       </div>
                       {!isExpanded&&record._summary&&(
-                        <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>{record._summary}</div>
+                        <div style={ST.S18}>{record._summary}</div>
                       )}
                     </div>
                   </div>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <div style={ST.S27}>
                     <span style={{color:C.textMuted,fontSize:18}}>{isExpanded?"▲":"▼"}</span>
                   </div>
                 </div>
@@ -3306,7 +3607,7 @@ const HistoryTab=({hj})=>{ const{imagingHistory,labHistory,lightboxUrl,loadData,
                         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
                           {record.country&&<span className="status-chip status-ok">{record.country}</span>}
                           {record.fasting&&<span className="status-chip status-ok">{record.fasting}</span>}
-                          {record.doctor&&<span style={{fontSize:11,color:C.textMuted}}>醫師：{record.doctor}</span>}
+                          {record.doctor&&<span style={ST.S3}>醫師：{record.doctor}</span>}
                         </div>
                         {/* 數值列表 - 先顯示LAB_DISPLAY定義的，再顯示其他有值的欄位 */}
                         {/* 已知欄位依分組顯示 */}
@@ -3314,17 +3615,17 @@ const HistoryTab=({hj})=>{ const{imagingHistory,labHistory,lightboxUrl,loadData,
                           const groupFields=LAB_DISPLAY.filter(f=>f.group===group&&record[f.key]!==null&&record[f.key]!==undefined&&record[f.key]!=="");
                           if(groupFields.length===0)return null;
                           return(
-                            <div key={group} style={{marginBottom:8}}>
+                            <div key={group} style={ST.S1}>
                               <div style={{fontSize:10,color:C.green,letterSpacing:1,marginBottom:4,marginTop:8}}>{group.toUpperCase()}</div>
                               {groupFields.map(f=>{
                                 const st=getStatus(f.key,record[f.key]);
                                 const stColors={ok:C.green,warn:C.amber,alert:C.red};
                                 return(
                                   <div key={f.key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:`1px solid ${C.border}`}}>
-                                    <span style={{fontSize:12,color:C.textMuted}}>{f.label}</span>
-                                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                    <span style={ST.S6}>{f.label}</span>
+                                    <div style={ST.S16}>
                                       <span style={{fontSize:13,fontWeight:600,color:st?stColors[st]:C.text}}>{fmtLabVal(f.key,record[f.key])}</span>
-                                      <span style={{fontSize:11,color:C.textMuted}}>{f.unit}</span>
+                                      <span style={ST.S3}>{f.unit}</span>
                                       <StatusDot status={st}/>
                                     </div>
                                   </div>
@@ -3344,7 +3645,7 @@ const HistoryTab=({hj})=>{ const{imagingHistory,labHistory,lightboxUrl,loadData,
                           );
                           if(extraFields.length===0)return null;
                           return(
-                            <div style={{marginBottom:8}}>
+                            <div style={ST.S1}>
                               <div style={{fontSize:10,color:C.green,letterSpacing:1,marginBottom:4,marginTop:8}}>其他檢驗</div>
                               {extraFields.map(k=>{
                                 const s=LAB_STATUS[k];
@@ -3352,10 +3653,10 @@ const HistoryTab=({hj})=>{ const{imagingHistory,labHistory,lightboxUrl,loadData,
                                 const stColors={ok:C.green,warn:C.amber,alert:C.red};
                                 return(
                                   <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:`1px solid ${C.border}`}}>
-                                    <span style={{fontSize:12,color:C.textMuted}}>{s?.label||k.toUpperCase()}</span>
-                                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                    <span style={ST.S6}>{s?.label||k.toUpperCase()}</span>
+                                    <div style={ST.S16}>
                                       <span style={{fontSize:13,fontWeight:600,color:st?stColors[st]:C.text}}>{record[k]}</span>
-                                      <span style={{fontSize:11,color:C.textMuted}}>{s?.unit||""}</span>
+                                      <span style={ST.S3}>{s?.unit||""}</span>
                                       <StatusDot status={st}/>
                                     </div>
                                   </div>
@@ -3378,7 +3679,7 @@ const HistoryTab=({hj})=>{ const{imagingHistory,labHistory,lightboxUrl,loadData,
                               <div style={{fontSize:10,color:C.amber,letterSpacing:1,marginBottom:6}}>備份資料（欄位待新增）</div>
                               {Object.entries(extras).map(([k,v])=>(
                                 <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:`1px solid ${C.border}`}}>
-                                  <span style={{fontSize:11,color:C.textMuted}}>{k}</span>
+                                  <span style={ST.S3}>{k}</span>
                                   <span style={{fontSize:11,color:C.text}}>{String(v)}</span>
                                 </div>
                               ))}
@@ -3394,8 +3695,8 @@ const HistoryTab=({hj})=>{ const{imagingHistory,labHistory,lightboxUrl,loadData,
                             .split(/[\n\r]+|[。]|[-－•·]/)
                             .map(s=>s.trim()).filter(Boolean);
                           return(
-                            <div style={{marginBottom:8}}>
-                              <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>報告結論</div>
+                            <div style={ST.S1}>
+                              <div style={ST.S35}>報告結論</div>
                               {lines.length>1?(
                                 <ul style={{margin:0,padding:"0 0 0 16px",listStyle:"none"}}>
                                   {lines.map((l,i)=>(
@@ -3416,8 +3717,8 @@ const HistoryTab=({hj})=>{ const{imagingHistory,labHistory,lightboxUrl,loadData,
                             .split(/[\n\r]+|[。]|[-－•·]/)
                             .map(s=>s.trim()).filter(Boolean);
                           return(
-                            <div style={{marginBottom:8}}>
-                              <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>醫師建議</div>
+                            <div style={ST.S1}>
+                              <div style={ST.S35}>醫師建議</div>
                               {lines.length>1?(
                                 <ul style={{margin:0,padding:"0 0 0 16px",listStyle:"none"}}>
                                   {lines.map((l,i)=>(
@@ -3442,7 +3743,7 @@ const HistoryTab=({hj})=>{ const{imagingHistory,labHistory,lightboxUrl,loadData,
                           if(urls.length===0)return null;
                           return(
                             <div style={{marginTop:8}}>
-                              <div style={{fontSize:11,color:C.textMuted,marginBottom:6}}>影像照片（{urls.length}張）</div>
+                              <div style={ST.S35}>影像照片（{urls.length}張）</div>
                               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                                 {urls.map((url,i)=>(
                                   <div key={i} style={{width:90,height:90,borderRadius:8,overflow:"hidden",cursor:"pointer",border:`1px solid ${C.border}`}}
@@ -3609,7 +3910,7 @@ const MealTab=({hj})=>{ const{setTab,showToast}=hj;
         </div>
 
         {/* 拍照區域 */}
-        <div style={{marginBottom:12}}>
+        <div style={ST.S4}>
           {mealPhoto ? (
             <div style={{position:"relative",borderRadius:12,overflow:"hidden",marginBottom:8}}>
               <img src={mealPhoto} style={{width:"100%",maxHeight:200,objectFit:"cover"}}/>
@@ -3624,7 +3925,7 @@ const MealTab=({hj})=>{ const{setTab,showToast}=hj;
               <div style={{fontSize:11,color:C.textMuted,marginTop:4}}>AI 自動辨識食物</div>
             </div>
           )}
-          <input ref={mealPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}}
+          <input ref={mealPhotoRef} type="file" accept="image/*" multiple style={ST.S25}
             onChange={async e=>{
               if(e.target.files[0]){
                 const dataUrl=await new Promise(res=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.readAsDataURL(e.target.files[0]);});
@@ -3635,7 +3936,7 @@ const MealTab=({hj})=>{ const{setTab,showToast}=hj;
         </div>
 
         <input className="input-field" placeholder="或輸入食物名稱（例：越南河粉、白飯+雞肉）"
-          value={mealText} onChange={e=>setMealText(e.target.value)} style={{marginBottom:12}}/>
+          value={mealText} onChange={e=>setMealText(e.target.value)} style={ST.S4}/>
 
         {/* AI分析結果 */}
         {mealAnalysis && (
@@ -3644,19 +3945,19 @@ const MealTab=({hj})=>{ const{setTab,showToast}=hj;
             <div style={{fontSize:13,color:C.text,marginBottom:8,fontWeight:600}}>{mealAnalysis.foods}</div>
 
             {/* 營養數值 */}
-            <div className="grid-3" style={{marginBottom:8}}>
+            <div className="grid-3" style={ST.S1}>
               {[["熱量",mealAnalysis.calories,"kcal"],["碳水",mealAnalysis.carbs,"g"],["蛋白質",mealAnalysis.protein,"g"],["脂肪",mealAnalysis.fat,"g"],["GI值",mealAnalysis.gi,""]].map(([l,v,u])=>(
                 <div key={l} style={{textAlign:"center",background:C.bgCard2,borderRadius:8,padding:"6px 4px"}}>
-                  <div style={{fontSize:10,color:C.textMuted}}>{l}</div>
+                  <div style={ST.S5}>{l}</div>
                   <div style={{fontSize:15,fontWeight:700,color:C.green}}>{v}</div>
-                  {u&&<div style={{fontSize:10,color:C.textMuted}}>{u}</div>}
+                  {u&&<div style={ST.S5}>{u}</div>}
                 </div>
               ))}
             </div>
 
             {/* 器官影響 */}
             {mealAnalysis.organs&&(
-              <div style={{marginBottom:8}}>
+              <div style={ST.S1}>
                 <div style={{fontSize:11,color:C.textMuted,marginBottom:6,letterSpacing:1}}>對身體的影響</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
                   {[
@@ -3688,11 +3989,11 @@ const MealTab=({hj})=>{ const{setTab,showToast}=hj;
           </div>
         )}
 
-        <div style={{display:"flex",gap:8}}>
-          <button className="btn-secondary" style={{flex:1}} onClick={analyzeMeal} disabled={analyzing}>
+        <div style={ST.S24}>
+          <button className="btn-secondary" style={ST.S2} onClick={analyzeMeal} disabled={analyzing}>
             {analyzing?"⏳ 分析中...":"🤖 AI分析"}
           </button>
-          <button className="btn-primary" style={{flex:2}} onClick={saveMeal}>儲存</button>
+          <button className="btn-primary" style={ST.S10} onClick={saveMeal}>儲存</button>
         </div>
       </div>
     );
@@ -3702,7 +4003,7 @@ const MealTab=({hj})=>{ const{setTab,showToast}=hj;
 const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,editSleepRecord,emptySleepForm,glucoseForm,hospitalList,imagingForm,imagingPhotoRef,imagingPhotos,recordTab,saveBP,saveGlucose,saveImaging,saveWeight,setBpForm,setEditBPRecord,setEditSleepRecord,setGlucoseForm,setImagingForm,setImagingPhotos,setRecordTab,setShowSleepPaste,setSleepAnalysis,setSleepAnalyzing,setSleepForm,setSleepLog,setSleepPasteText,setWeightForm,showSleepPaste,showToast,sleepAnalysis,sleepAnalyzing,sleepForm,sleepLog,sleepPasteText,updateBP,weightForm,weightHistory}=hj;
     const SUBS=[{key:"history",label:"📂歷史"},{key:"glucose",label:"🩸血糖"},{key:"bp",label:"💓血壓"},{key:"weight",label:"⚖️體重"},{key:"lab",label:"📋抽血"},{key:"imaging",label:"🔬影像"},{key:"meal",label:"🍱飲食"},{key:"exercise",label:"🏃運動"},{key:"sleep",label:"😴睡眠"}];
     return(
-      <div className="fade-in" style={{padding:"16px 16px 80px"}}>
+      <div className="fade-in" style={ST.S8}>
         <div className="section-header">📝 記錄</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:16}}>
           {SUBS.map(t=>(
@@ -3721,7 +4022,7 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
           <div className="card">
             <div className="card-title">記錄血糖</div>
             <DateField value={glucoseForm.date} onChange={d=>setGlucoseForm(f=>({...f,date:d}))}/>
-            <div style={{marginBottom:12}}>
+            <div style={ST.S4}>
               <div className="field-label">來源</div>
               <div className="grid-2">
                 {["日常","醫院"].map(s=>(
@@ -3731,7 +4032,7 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
                 ))}
               </div>
             </div>
-            <div style={{marginBottom:12}}>
+            <div style={ST.S4}>
               <div className="field-label">時間點</div>
               <div className="grid-3">
                 {["空腹","飯後2hr","睡前"].map(tp=>(
@@ -3739,12 +4040,12 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
                 ))}
               </div>
             </div>
-            <div style={{marginBottom:12}}>
+            <div style={ST.S4}>
               <div className="field-label">血糖值</div>
-              <div style={{display:"flex",gap:8}}>
+              <div style={ST.S24}>
                 <input className="input-field" type="number" step="0.1" placeholder={glucoseForm.unit==="mmol/L"?"例：5.7":"例：104"}
-                  value={glucoseForm.value} onChange={e=>setGlucoseForm(f=>({...f,value:e.target.value}))} style={{flex:2}}/>
-                <select className="input-field" value={glucoseForm.unit} onChange={e=>{setGlucoseForm(f=>({...f,unit:e.target.value}));localStorage.setItem("hj_glucose_unit",e.target.value);}} style={{flex:1}}>
+                  value={glucoseForm.value} onChange={e=>setGlucoseForm(f=>({...f,value:e.target.value}))} style={ST.S10}/>
+                <select className="input-field" value={glucoseForm.unit} onChange={e=>{setGlucoseForm(f=>({...f,unit:e.target.value}));LS.set("hj_glucose_unit",e.target.value);}} style={ST.S2}>
                   <option>mmol/L</option><option>mg/dL</option>
                 </select>
               </div>
@@ -3752,7 +4053,7 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
                 <div style={{fontSize:11,color:C.green,marginTop:6}}>≈ {toMgdl(glucoseForm.value,glucoseForm.unit)} mg/dL</div>
               )}
             </div>
-            <div style={{marginBottom:16}}>
+            <div style={ST.S12}>
               <div className="field-label">備註（可選）</div>
               <input className="input-field" placeholder="例：飯後運動30分鐘" value={glucoseForm.note} onChange={e=>setGlucoseForm(f=>({...f,note:e.target.value}))}/>
             </div>
@@ -3780,36 +4081,36 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
                 display:"flex",justifyContent:"space-around",textAlign:"center"}}>
                 <div>
                   <div style={{fontSize:20,fontWeight:700,color:bmiColor}}>{bmi?bmi.toFixed(1):"—"}</div>
-                  <div style={{fontSize:10,color:C.textMuted}}>BMI {bmiLabel}</div>
+                  <div style={ST.S5}>BMI {bmiLabel}</div>
                 </div>
                 <div>
                   <div style={{fontSize:20,fontWeight:700,color:C.text}}>{latestKg||"—"}</div>
-                  <div style={{fontSize:10,color:C.textMuted}}>目前 kg</div>
+                  <div style={ST.S5}>目前 kg</div>
                 </div>
                 {idealMax&&latestKg&&(
                   <div>
                     <div style={{fontSize:20,fontWeight:700,color:latestKg>idealMax?C.amber:C.green}}>
                       {latestKg>idealMax?`-${(latestKg-idealMax).toFixed(1)}`:"✓"}
                     </div>
-                    <div style={{fontSize:10,color:C.textMuted}}>{latestKg>idealMax?"距BMI24目標":"已達標"}</div>
+                    <div style={ST.S5}>{latestKg>idealMax?"距BMI24目標":"已達標"}</div>
                   </div>
                 )}
               </div>
             ):(
               <div style={{background:C.bg,borderRadius:10,padding:"10px 12px",marginBottom:12,
                 display:"flex",gap:8,alignItems:"center"}}>
-                <input className="input-field" type="number" placeholder="輸入身高cm（只需一次）" style={{flex:1}}
+                <input className="input-field" type="number" placeholder="輸入身高cm（只需一次）" style={ST.S2}
                   id="heightInput"/>
                 <button className="btn-secondary" style={{flexShrink:0,padding:"10px 14px"}}
                   onClick={()=>{
                     const h=document.getElementById("heightInput")?.value;
-                    if(h&&parseFloat(h)>100){localStorage.setItem("hj_height",h);showToast("✅ 身高已儲存");setWeightForm(f=>({...f}));}
+                    if(h&&parseFloat(h)>100){LS.set("hj_height",h);showToast("✅ 身高已儲存");setWeightForm(f=>({...f}));}
                     else showToast("⚠️ 請輸入正確身高");
                   }}>儲存身高</button>
               </div>
             )}
             <DateField value={weightForm.date} onChange={d=>setWeightForm(f=>({...f,date:d}))}/>
-            <div style={{marginBottom:16}}>
+            <div style={ST.S12}>
               <div className="field-label">體重 (kg)</div>
               <input className="input-field" type="number" step="0.1" placeholder="例：75.2" value={weightForm.value} onChange={e=>setWeightForm({value:e.target.value})}/>
             </div>
@@ -3848,7 +4149,7 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
               </div>
               <input className="input-field" placeholder="或輸入新醫院" value={imagingForm.hospital} onChange={e=>setImagingForm(f=>({...f,hospital:e.target.value}))}/>
             </div>
-            <div className="grid-2" style={{marginBottom:12}}>
+            <div className="grid-2" style={ST.S4}>
               <div>
                 <div className="field-label">國家</div>
                 <select className="input-field" value={imagingForm.country} onChange={e=>setImagingForm(f=>({...f,country:e.target.value}))}>
@@ -3879,7 +4180,7 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
                 ⚠️ 照片僅供留存參考，AI不會分析影像內容
               </div>
               {imagingPhotos.length>0&&(
-                <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                <div style={ST.S36}>
                   {imagingPhotos.map((p,i)=>(
                     <div key={i} className="photo-preview">
                       <img src={p} alt={`影像${i+1}`}/>
@@ -3913,11 +4214,11 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
                     showToast(`✅ 貼上 ${urls.length} 張照片成功`);
                   }}>
                   <div style={{fontSize:24,marginBottom:4}}>📷</div>
-                  <div style={{fontSize:12,color:C.textMuted}}>點擊上傳照片</div>
+                  <div style={ST.S6}>點擊上傳照片</div>
                   <div style={{fontSize:10,color:C.blue,marginTop:4}}>💻 電腦版：點此區後可直接 Ctrl+V 貼上截圖</div>
                 </div>
               )}
-              <input ref={imagingPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}}
+              <input ref={imagingPhotoRef} type="file" accept="image/*" multiple style={ST.S25}
                 onChange={async e=>{
                   const cloudName = localStorage.getItem("cloudinary_name");
                   if(!cloudName){showToast("⚠️ 請先在設定頁填入 Cloudinary 設定");e.target.value="";return;}
@@ -3950,7 +4251,7 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
         {recordTab==="exercise"&&(
           <div className="card">
             <div className="card-title">記錄運動</div>
-            <div style={{marginBottom:12}}>
+            <div style={ST.S4}>
               <div className="field-label">運動類型</div>
               <div className="grid-3">
                 {["走路","騎車","游泳","重訓","瑜伽","其他"].map(type=>(
@@ -3958,7 +4259,7 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
                 ))}
               </div>
             </div>
-            <div className="grid-2" style={{marginBottom:12}}>
+            <div className="grid-2" style={ST.S4}>
               <div><div className="field-label">時長（分鐘）</div><input className="input-field" type="number" placeholder="30"/></div>
               <div><div className="field-label">強度</div><select className="input-field"><option>輕度</option><option>中度</option><option>高強度</option></select></div>
             </div>
@@ -4093,7 +4394,7 @@ ${weekData||"尚無記錄"}
 
           return(
             <div>
-              <div className="card" style={{marginBottom:12}}>
+              <div className="card" style={ST.S4}>
                 <div className="card-title">😴 輸入 Watch 7 睡眠數據</div>
 
                 {/* ChatGPT指令複製區 */}
@@ -4106,7 +4407,7 @@ ${weekData||"尚無記錄"}
                 </button>
 
                 {showSleepPaste&&(
-                  <div style={{marginBottom:12}}>
+                  <div style={ST.S4}>
                     <div style={{fontSize:11,color:C.textMuted,marginBottom:6,lineHeight:1.7}}>
                       用 ChatGPT 分析截圖後，複製輸出文字貼到下方，點「解析並填入」自動填好所有欄位。
                     </div>
@@ -4131,7 +4432,7 @@ ${weekData||"尚無記錄"}
                   或手動輸入各項數值：
                 </div>
 
-                <div className="grid-2" style={{marginBottom:8}}>
+                <div className="grid-2" style={ST.S1}>
                   <div><div className="field-label">日期 <span style={{fontSize:9,color:C.textMuted,fontWeight:400}}>以起床當天為準</span></div>
                     <input className="input-field" type="date" value={sleepForm.date}
                       onChange={e=>setSleepForm(v=>({...v,date:e.target.value}))}/></div>
@@ -4140,7 +4441,7 @@ ${weekData||"尚無記錄"}
                       placeholder="78"
                       onChange={e=>setSleepForm(v=>({...v,score:parseInt(e.target.value)||0}))}/></div>
                 </div>
-                <div className="grid-2" style={{marginBottom:8}}>
+                <div className="grid-2" style={ST.S1}>
                   <div><div className="field-label">🛏️ 上床時間</div>
                     <input className="input-field" type="time" value={sleepForm.bedtime}
                       onChange={e=>setSleepForm(v=>({...v,bedtime:e.target.value}))}/></div>
@@ -4148,7 +4449,7 @@ ${weekData||"尚無記錄"}
                     <input className="input-field" type="time" value={sleepForm.waketime}
                       onChange={e=>setSleepForm(v=>({...v,waketime:e.target.value}))}/></div>
                 </div>
-                <div className="grid-2" style={{marginBottom:8}}>
+                <div className="grid-2" style={ST.S1}>
                   <div><div className="field-label">總時間（分鐘）</div>
                     <input className="input-field" type="number" value={sleepForm.total_min||""}
                       onChange={e=>setSleepForm(v=>({...v,total_min:parseInt(e.target.value)||0}))}/></div>
@@ -4156,7 +4457,7 @@ ${weekData||"尚無記錄"}
                     <input className="input-field" type="number" value={sleepForm.actual_min||""}
                       onChange={e=>setSleepForm(v=>({...v,actual_min:parseInt(e.target.value)||0}))}/></div>
                 </div>
-                <div className="grid-2" style={{marginBottom:8}}>
+                <div className="grid-2" style={ST.S1}>
                   <div><div className="field-label">🌙 深層睡眠（分鐘）</div>
                     <input className="input-field" type="number" value={sleepForm.deep_min||""}
                       onChange={e=>setSleepForm(v=>({...v,deep_min:parseInt(e.target.value)||0}))}/></div>
@@ -4164,7 +4465,7 @@ ${weekData||"尚無記錄"}
                     <input className="input-field" type="number" value={sleepForm.rem_min||""}
                       onChange={e=>setSleepForm(v=>({...v,rem_min:parseInt(e.target.value)||0}))}/></div>
                 </div>
-                <div className="grid-2" style={{marginBottom:8}}>
+                <div className="grid-2" style={ST.S1}>
                   <div><div className="field-label">😪 淺層睡眠（分鐘）</div>
                     <input className="input-field" type="number" value={sleepForm.light_min||""}
                       onChange={e=>setSleepForm(v=>({...v,light_min:parseInt(e.target.value)||0}))}/></div>
@@ -4172,7 +4473,7 @@ ${weekData||"尚無記錄"}
                     <input className="input-field" type="number" value={sleepForm.awake_min||""}
                       onChange={e=>setSleepForm(v=>({...v,awake_min:parseInt(e.target.value)||0}))}/></div>
                 </div>
-                <div className="grid-2" style={{marginBottom:8}}>
+                <div className="grid-2" style={ST.S1}>
                   <div><div className="field-label">🩸 血氧平均（%）</div>
                     <input className="input-field" type="number" value={sleepForm.spo2_avg||""}
                       onChange={e=>setSleepForm(v=>({...v,spo2_avg:parseInt(e.target.value)||0}))}/></div>
@@ -4180,7 +4481,7 @@ ${weekData||"尚無記錄"}
                     <input className="input-field" type="number" step="0.1" value={sleepForm.spo2_below90_min||""}
                       onChange={e=>setSleepForm(v=>({...v,spo2_below90_min:parseFloat(e.target.value)||0}))}/></div>
                 </div>
-                <div className="grid-2" style={{marginBottom:8}}>
+                <div className="grid-2" style={ST.S1}>
                   <div><div className="field-label">❤️ 平均心跳（次/分）</div>
                     <input className="input-field" type="number" value={sleepForm.hr_avg||""}
                       onChange={e=>setSleepForm(v=>({...v,hr_avg:parseInt(e.target.value)||0}))}/></div>
@@ -4188,7 +4489,7 @@ ${weekData||"尚無記錄"}
                     <input className="input-field" type="number" value={sleepForm.hr_min||""}
                       onChange={e=>setSleepForm(v=>({...v,hr_min:parseInt(e.target.value)||0}))}/></div>
                 </div>
-                <div className="grid-2" style={{marginBottom:8}}>
+                <div className="grid-2" style={ST.S1}>
                   <div><div className="field-label">🌬️ 呼吸速率（次/分）</div>
                     <input className="input-field" type="number" step="0.1" value={sleepForm.breath_rate||""}
                       onChange={e=>setSleepForm(v=>({...v,breath_rate:parseFloat(e.target.value)||0}))}/></div>
@@ -4200,7 +4501,7 @@ ${weekData||"尚無記錄"}
                 {/* 即時計算 */}
                 {sleepForm.total_min>0&&(
                   <div style={{background:C.bg,borderRadius:8,padding:"8px 10px",marginBottom:10}}>
-                    <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>即時計算</div>
+                    <div style={ST.S11}>即時計算</div>
                     <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
                       {[
                         {label:"評分",v:sleepForm.score||"-",color:sleepForm.score>=80?C.green:sleepForm.score>=60?C.amber:C.red},
@@ -4225,7 +4526,7 @@ ${weekData||"尚無記錄"}
                       {sleepForm.spo2_below90_min>10&&(
                         <div style={{textAlign:"center"}}>
                           <div style={{fontSize:11,color:C.red,fontWeight:700}}>⚠️ 低氧{sleepForm.spo2_below90_min}分</div>
-                          <div style={{fontSize:10,color:C.textMuted}}>建議告知醫師</div>
+                          <div style={ST.S5}>建議告知醫師</div>
                         </div>
                       )}
                     </div>
@@ -4251,7 +4552,7 @@ ${weekData||"尚無記錄"}
                     ))}
                   </div>
                   {/* 時間項目 */}
-                  <div className="grid-2" style={{marginBottom:8}}>
+                  <div className="grid-2" style={ST.S1}>
                     <div><div className="field-label">☕ 咖啡（最後一杯）</div>
                       <input className="input-field" type="time" value={sleepForm.pre_sleep_coffee}
                         onChange={e=>setSleepForm(v=>({...v,pre_sleep_coffee:e.target.value}))}/></div>
@@ -4259,7 +4560,7 @@ ${weekData||"尚無記錄"}
                       <input className="input-field" type="time" value={sleepForm.pre_sleep_dinner}
                         onChange={e=>setSleepForm(v=>({...v,pre_sleep_dinner:e.target.value}))}/></div>
                   </div>
-                  <div className="grid-2" style={{marginBottom:8}}>
+                  <div className="grid-2" style={ST.S1}>
                     <div><div className="field-label">🥛 優格+奇異果時間</div>
                       <input className="input-field" type="time" value={sleepForm.pre_sleep_yogurt}
                         onChange={e=>setSleepForm(v=>({...v,pre_sleep_yogurt:e.target.value}))}/></div>
@@ -4288,7 +4589,7 @@ ${weekData||"尚無記錄"}
                   </div>
                 </div>
 
-                <input className="input-field" placeholder="其他備註" style={{marginBottom:10}}
+                <input className="input-field" placeholder="其他備註" style={ST.S7}
                   value={sleepForm.note} onChange={e=>setSleepForm(v=>({...v,note:e.target.value}))}/>
                 <button className="btn-primary" onClick={saveSleepRecord}>💾 儲存睡眠記錄</button>
               </div>
@@ -4300,23 +4601,23 @@ ${weekData||"尚無記錄"}
                 const deepData=trend14.filter(r=>r.total_min>0).map(r=>({date:normalizeDate(r.date),v:Math.round((r.deep_min||0)/(r.total_min||1)*100)}));
                 const spo2Data=trend14.filter(r=>r.spo2_avg>0).map(r=>({date:normalizeDate(r.date),v:parseInt(r.spo2_avg)}));
                 return(
-                  <div className="card" style={{marginBottom:12}}>
+                  <div className="card" style={ST.S4}>
                     <div className="card-title">📈 睡眠趨勢（近14天）</div>
                     {scoreData.length>0&&(
                       <div style={{marginBottom:14}}>
-                        <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>睡眠評分（目標≥80）</div>
+                        <div style={ST.S11}>睡眠評分（目標≥80）</div>
                         <LineChart datasets={[{data:scoreData}]} min={40} max={100} refLines={[{v:80,label:"良好"}]} height={100}/>
                       </div>
                     )}
                     {deepData.length>0&&(
                       <div style={{marginBottom:14}}>
-                        <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>深層睡眠 %（目標18-22%）</div>
+                        <div style={ST.S11}>深層睡眠 %（目標18-22%）</div>
                         <LineChart datasets={[{data:deepData}]} min={0} max={35} refLines={[{v:18,label:"目標"}]} height={100}/>
                       </div>
                     )}
                     {spo2Data.length>0&&(
                       <div>
-                        <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>血氧平均 %（≥95正常）</div>
+                        <div style={ST.S11}>血氧平均 %（≥95正常）</div>
                         <LineChart datasets={[{data:spo2Data}]} min={85} max={100} refLines={[{v:95,label:"正常"},{v:90,label:"警戒"}]} height={100}/>
                       </div>
                     )}
@@ -4326,7 +4627,7 @@ ${weekData||"尚無記錄"}
 
               {/* 近期睡眠記錄 */}
               {savedSleep.length>0&&(
-                <div className="card" style={{marginBottom:12}}>
+                <div className="card" style={ST.S4}>
                   <div className="card-title">近期睡眠記錄 <span style={{fontSize:10,color:C.textMuted,fontWeight:400}}>點擊可編輯</span></div>
                   {savedSleep.slice(0,7).map((r,i)=>{
                     const deepPct=Math.round(r.deep_min/(r.total_min||1)*100);
@@ -4341,10 +4642,10 @@ ${weekData||"尚無記錄"}
                         style={{padding:"8px 0",borderBottom:i<Math.min(savedSleep.length,7)-1?`1px solid ${C.border}`:"none",cursor:"pointer"}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                           <div>
-                            <div style={{fontSize:12,fontWeight:600,color:C.text}}>{fmtDateFull(r.date)}</div>
-                            <div style={{fontSize:10,color:C.textMuted}}>{r.bedtime}→{r.waketime}</div>
+                            <div style={ST.S30}>{fmtDateFull(r.date)}</div>
+                            <div style={ST.S5}>{r.bedtime}→{r.waketime}</div>
                           </div>
-                          <div style={{textAlign:"right"}}>
+                          <div style={ST.S31}>
                             <div style={{fontSize:13,fontWeight:700,color:r.total_min>=420?C.green:C.red}}>
                               {Math.floor(r.total_min/60)}h{r.total_min%60}m
                             </div>
@@ -4353,11 +4654,11 @@ ${weekData||"尚無記錄"}
                         </div>
                         <div style={{display:"flex",gap:8,marginTop:4,flexWrap:"wrap"}}>
                           <span style={{fontSize:10,color:deepPct>=18?C.green:C.amber}}>深層{deepPct}%</span>
-                          {r.rem_min>0&&<span style={{fontSize:10,color:C.textMuted}}>REM {Math.round(r.rem_min/(r.total_min||1)*100)}%</span>}
+                          {r.rem_min>0&&<span style={ST.S5}>REM {Math.round(r.rem_min/(r.total_min||1)*100)}%</span>}
                           {r.spo2_avg>0&&<span style={{fontSize:10,color:r.spo2_avg>=95?C.green:r.spo2_avg>=90?C.amber:C.red}}>血氧avg{r.spo2_avg}%</span>}
                           {r.spo2_min>0&&<span style={{fontSize:10,color:r.spo2_min>=90?C.green:C.red}}>min{r.spo2_min}%</span>}
                           {r.spo2_below90_min>0&&<span style={{fontSize:10,color:C.red}}>低氧{r.spo2_below90_min}分</span>}
-                          {r.hr_avg>0&&<span style={{fontSize:10,color:C.textMuted}}>心跳{r.hr_avg}{r.hr_min>0?`(min${r.hr_min})`:""}</span>}
+                          {r.hr_avg>0&&<span style={ST.S5}>心跳{r.hr_avg}{r.hr_min>0?`(min${r.hr_min})`:""}</span>}
                           {tags.map((t,ti)=><span key={ti} style={{fontSize:10,color:t.c}}>{t.t}</span>)}
                         </div>
                       </div>
@@ -4371,7 +4672,7 @@ ${weekData||"尚無記錄"}
                 <div className="overlay">
                   <div className="overlay-sheet" style={{maxHeight:"85vh",overflowY:"auto"}}>
                     <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>✏️ 編輯睡眠記錄 - {fmtDateFull(editSleepRecord.date)}</div>
-                    <div className="grid-2" style={{marginBottom:8}}>
+                    <div className="grid-2" style={ST.S1}>
                       <div><div className="field-label">睡眠評分</div>
                         <input className="input-field" type="number" value={editSleepRecord.score||""}
                           onChange={e=>setEditSleepRecord(v=>({...v,score:parseInt(e.target.value)||0}))}/></div>
@@ -4379,7 +4680,7 @@ ${weekData||"尚無記錄"}
                         <input className="input-field" type="number" value={editSleepRecord.total_min||""}
                           onChange={e=>setEditSleepRecord(v=>({...v,total_min:parseInt(e.target.value)||0}))}/></div>
                     </div>
-                    <div className="grid-2" style={{marginBottom:8}}>
+                    <div className="grid-2" style={ST.S1}>
                       <div><div className="field-label">深層（分鐘）</div>
                         <input className="input-field" type="number" value={editSleepRecord.deep_min||""}
                           onChange={e=>setEditSleepRecord(v=>({...v,deep_min:parseInt(e.target.value)||0}))}/></div>
@@ -4387,7 +4688,7 @@ ${weekData||"尚無記錄"}
                         <input className="input-field" type="number" value={editSleepRecord.rem_min||""}
                           onChange={e=>setEditSleepRecord(v=>({...v,rem_min:parseInt(e.target.value)||0}))}/></div>
                     </div>
-                    <div className="grid-2" style={{marginBottom:8}}>
+                    <div className="grid-2" style={ST.S1}>
                       <div><div className="field-label">血氧平均（%）</div>
                         <input className="input-field" type="number" value={editSleepRecord.spo2_avg||""}
                           onChange={e=>setEditSleepRecord(v=>({...v,spo2_avg:parseInt(e.target.value)||0}))}/></div>
@@ -4395,7 +4696,7 @@ ${weekData||"尚無記錄"}
                         <input className="input-field" type="number" value={editSleepRecord.spo2_min||""}
                           onChange={e=>setEditSleepRecord(v=>({...v,spo2_min:parseInt(e.target.value)||0}))}/></div>
                     </div>
-                    <div className="grid-2" style={{marginBottom:8}}>
+                    <div className="grid-2" style={ST.S1}>
                       <div><div className="field-label">心率最低（次/分）</div>
                         <input className="input-field" type="number" value={editSleepRecord.hr_min||""}
                           onChange={e=>setEditSleepRecord(v=>({...v,hr_min:parseInt(e.target.value)||0}))}/></div>
@@ -4404,9 +4705,9 @@ ${weekData||"尚無記錄"}
                           onChange={e=>setEditSleepRecord(v=>({...v,spo2_below90_min:parseFloat(e.target.value)||0}))}/></div>
                     </div>
                     {/* 睡前事項 */}
-                    <div style={{marginBottom:8}}>
+                    <div style={ST.S1}>
                       <div className="field-label">睡前事項</div>
-                      <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                      <div style={ST.S36}>
                         {[{key:"pre_sleep_eurodin",label:"💊 悠樂丁"},{key:"pre_sleep_alcohol",label:"🍺 酒精"}].map(item=>(
                           <button key={item.key} onClick={()=>setEditSleepRecord(v=>({...v,[item.key]:!v[item.key]}))}
                             style={{padding:"5px 12px",borderRadius:16,fontSize:11,cursor:"pointer",
@@ -4417,7 +4718,7 @@ ${weekData||"尚無記錄"}
                           </button>
                         ))}
                       </div>
-                      <div className="grid-2" style={{marginBottom:6}}>
+                      <div className="grid-2" style={ST.S19}>
                         <div><div className="field-label">☕ 咖啡</div>
                           <input className="input-field" type="time" value={editSleepRecord.pre_sleep_coffee||""}
                             onChange={e=>setEditSleepRecord(v=>({...v,pre_sleep_coffee:e.target.value}))}/></div>
@@ -4425,7 +4726,7 @@ ${weekData||"尚無記錄"}
                           <input className="input-field" type="time" value={editSleepRecord.pre_sleep_dinner||""}
                             onChange={e=>setEditSleepRecord(v=>({...v,pre_sleep_dinner:e.target.value}))}/></div>
                       </div>
-                      <div className="grid-2" style={{marginBottom:6}}>
+                      <div className="grid-2" style={ST.S19}>
                         <div><div className="field-label">🥛 優格+奇異果</div>
                           <input className="input-field" type="time" value={editSleepRecord.pre_sleep_yogurt||""}
                             onChange={e=>setEditSleepRecord(v=>({...v,pre_sleep_yogurt:e.target.value}))}/></div>
@@ -4446,12 +4747,12 @@ ${weekData||"尚無記錄"}
                         ))}
                       </div>
                     </div>
-                    <input className="input-field" placeholder="備註" style={{marginBottom:12}}
+                    <input className="input-field" placeholder="備註" style={ST.S4}
                       value={editSleepRecord.note||""}
                       onChange={e=>setEditSleepRecord(v=>({...v,note:e.target.value}))}/>
-                    <div style={{display:"flex",gap:10}}>
-                      <button className="btn-secondary" style={{flex:1}} onClick={()=>setEditSleepRecord(null)}>取消</button>
-                      <button className="btn-primary" style={{flex:2}} onClick={()=>updateSleepRecord(editSleepRecord)}>💾 儲存更新</button>
+                    <div style={ST.S21}>
+                      <button className="btn-secondary" style={ST.S2} onClick={()=>setEditSleepRecord(null)}>取消</button>
+                      <button className="btn-primary" style={ST.S10} onClick={()=>updateSleepRecord(editSleepRecord)}>💾 儲存更新</button>
                     </div>
                   </div>
                 </div>
@@ -4462,10 +4763,10 @@ ${weekData||"尚無記錄"}
                 <div className="card-title">🤖 每週睡眠AI分析</div>
                 {sleepAnalysis
                   ?<div style={{fontSize:12,lineHeight:1.9,whiteSpace:"pre-wrap",color:C.text}}>{sleepAnalysis}</div>
-                  :<div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>
+                  :<div style={ST.S29}>
                     輸入至少1筆睡眠記錄後，讓AI分析本週睡眠品質、對身體的影響，並給出具體改善建議。
                   </div>}
-                <button className="btn-primary" style={{marginTop:10}} onClick={analyzeSleep} disabled={sleepAnalyzing||savedSleep.length===0}>
+                <button className="btn-primary" style={ST.S32} onClick={analyzeSleep} disabled={sleepAnalyzing||savedSleep.length===0}>
                   {sleepAnalyzing?"⏳ 分析中...":"📊 產生本週睡眠分析"}
                 </button>
               </div>
@@ -4506,7 +4807,7 @@ const AITab=({hj})=>{ const{aiLoading,aiReport,aiReportDate,apiKey,bpHistory,gen
       const avgSleepMin=slp1m.length>0?Math.round(slp1m.reduce((s,r)=>s+(parseInt(r.total_min)||0),0)/slp1m.length):null;
       const lowSpo2Days=slp1m.filter(r=>parseFloat(r.spo2_below90_min)>10).length;
       // 用藥
-      const meds=JSON.parse(localStorage.getItem("hj_mymeds")||"[]");
+      const meds=LS.getJSON("hj_mymeds",[]);
       // 異常項目
       const abnormal=[];
       if(lab){
@@ -4557,14 +4858,14 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
       setAiQLoading(false);
     };
     return(
-    <div className="fade-in" style={{padding:"16px 16px 80px"}}>
+    <div className="fade-in" style={ST.S8}>
       <div className="section-header">🤖 AI 健康分析</div>
       {/* ★ v4.70 看診摘要產生器 */}
       <div className="card" style={{marginBottom:12,border:`1px solid ${C.blue}44`}}>
         <div className="card-title" style={{color:C.blue}}>🏥 看診摘要（給醫師看）</div>
         {!visitSummary?(
           <>
-            <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.7}}>
+            <div style={ST.S28}>
               自動整理近3個月血壓/血糖均值、最新抽血、異常項目、用藥清單，看診時直接給醫師看。不需API、即時產生。
             </div>
             <button className="btn-primary" style={{background:C.blue,padding:"10px"}} onClick={generateVisitSummary}>
@@ -4576,12 +4877,12 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
             <div style={{fontSize:12,color:C.text,lineHeight:1.8,whiteSpace:"pre-wrap",
               background:C.bg,borderRadius:10,padding:12,marginBottom:10,
               maxHeight:400,overflowY:"auto"}}>{visitSummary}</div>
-            <div style={{display:"flex",gap:8}}>
-              <button className="btn-secondary" style={{flex:1}}
+            <div style={ST.S24}>
+              <button className="btn-secondary" style={ST.S2}
                 onClick={()=>{navigator.clipboard?.writeText(visitSummary).then(()=>showToast("✅ 已複製，可貼到訊息或列印"));}}>
                 📋 複製全文
               </button>
-              <button className="btn-secondary" style={{flex:1}} onClick={generateVisitSummary}>🔄 重新產生</button>
+              <button className="btn-secondary" style={ST.S2} onClick={generateVisitSummary}>🔄 重新產生</button>
               <button className="btn-sm" onClick={()=>setVisitSummary("")}>收起</button>
             </div>
           </>
@@ -4589,11 +4890,11 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
       </div>
       {!apiKey&&(
         <div className="card" style={{marginBottom:12,border:`1px solid ${C.amber}44`,cursor:"pointer"}} onClick={()=>setTab("setting")}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={ST.S22}>
             <span style={{fontSize:24}}>⚙️</span>
             <div>
               <div style={{fontSize:13,fontWeight:600,color:C.amber}}>尚未設定 API 金鑰</div>
-              <div style={{fontSize:11,color:C.textMuted}}>點此前往設定 → 輸入 Gemini API Key</div>
+              <div style={ST.S3}>點此前往設定 → 輸入 Gemini API Key</div>
             </div>
             <span style={{color:C.textMuted,marginLeft:"auto",fontSize:18}}>›</span>
           </div>
@@ -4602,11 +4903,11 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
       {/* 整體健康評估（階段一：讀取全部歷史）*/}
       <div className="ai-bubble" style={{marginBottom:12,border:`1px solid ${C.green}44`}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={ST.S22}>
             <div style={{width:36,height:36,borderRadius:"50%",background:`linear-gradient(135deg,${C.blue},${C.green})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🩺</div>
             <div>
               <div style={{fontSize:13,fontWeight:600,color:C.green}}>整體健康評估</div>
-              <div style={{fontSize:10,color:C.textMuted}}>讀取全部 {labHistory.length} 筆抽血 + {imagingHistory.length} 筆影像</div>
+              <div style={ST.S5}>讀取全部 {labHistory.length} 筆抽血 + {imagingHistory.length} 筆影像</div>
             </div>
           </div>
           {overallReport&&(
@@ -4622,7 +4923,7 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
         {overallReport
           ?<div style={{fontSize:13,lineHeight:1.9,whiteSpace:"pre-wrap",color:C.text}}>{overallReport}</div>
           :<div style={{fontSize:12,color:C.textMuted,lineHeight:1.8}}>
-            讓 AI 綜觀你的<b style={{color:C.green}}>全部</b>歷史數據，產生主治醫師等級的完整評估：<br/>
+            讓 AI 綜觀你的<b style={ST.S17}>全部</b>歷史數據，產生主治醫師等級的完整評估：<br/>
             健康全貌 · 指標趨勢 · 指標關聯 · 結構追蹤 · 紅旗標記 · 看診建議<br/>
             <span style={{color:C.amber}}>看診前複製給醫師，一次掌握你的完整狀況</span>
           </div>}
@@ -4635,19 +4936,19 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
         <div style={{fontSize:10,color:C.textMuted,marginBottom:16,textAlign:"center"}}>
           上次評估 {overallDate} ·
           <span style={{color:C.blue,cursor:"pointer",marginLeft:4}}
-            onClick={()=>{localStorage.removeItem("hj_overall_cache");setOverallReport(null);setOverallDate(null);showToast("已清除，可重新評估");}}>
+            onClick={()=>{LS.remove("hj_overall_cache");setOverallReport(null);setOverallDate(null);showToast("已清除，可重新評估");}}>
             重新產生
           </span>
         </div>
       )}
       {/* 週報區塊 */}
-      <div className="ai-bubble" style={{marginBottom:12}}>
+      <div className="ai-bubble" style={ST.S4}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={ST.S22}>
             <div style={{width:36,height:36,borderRadius:"50%",background:`linear-gradient(135deg,${C.green},${C.greenDark})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🤖</div>
             <div>
               <div style={{fontSize:13,fontWeight:600,color:C.green}}>本週健康週報</div>
-              <div style={{fontSize:10,color:C.textMuted}}>{new Date().toLocaleDateString("zh-TW",{month:"long",day:"numeric",weekday:"short"})}</div>
+              <div style={ST.S5}>{new Date().toLocaleDateString("zh-TW",{month:"long",day:"numeric",weekday:"short"})}</div>
             </div>
           </div>
           {aiReport&&(
@@ -4674,7 +4975,7 @@ ${meds.length>0?meds.map(m=>`・${m.name}${m.dose?" "+m.dose:""}${m.timing?"（"
         <div style={{fontSize:10,color:C.textMuted,marginBottom:12,textAlign:"center"}}>
           今日快取 {aiReportDate} ·
           <span style={{color:C.blue,cursor:"pointer",marginLeft:4}}
-            onClick={()=>{localStorage.removeItem("hj_weekly_cache");setAiReport(null);setAiReportDate(null);showToast("快取清除，可重新產生");}}>
+            onClick={()=>{LS.remove("hj_weekly_cache");setAiReport(null);setAiReportDate(null);showToast("快取清除，可重新產生");}}>
             重新產生
           </span>
         </div>
@@ -4730,8 +5031,8 @@ const STAR_DINNER=[
   {name:"藍莓",s:[0,0,3,0,3,4,0]},
   {name:"奇異果",s:[0,0,3,0,0,3,3]},
 ];
-const StarMatrix=({title,rows})=>(
-  <div style={{marginBottom:10}}>
+const StarMatrix=React.memo(({title,rows})=>(
+  <div style={ST.S7}>
     <div style={{fontSize:12,fontWeight:700,color:C.amber,marginBottom:6}}>{title}</div>
     <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch",border:`1px solid ${C.border}`,borderRadius:10}}>
       <table style={{borderCollapse:"collapse",fontSize:10,minWidth:420}}>
@@ -4760,7 +5061,7 @@ const StarMatrix=({title,rows})=>(
       </table>
     </div>
   </div>
-);
+));
 
 const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArticle,selectedKnowledge,selectedMedicine,setCustomArticles,setKbTab,setLightboxUrl,setSelectedArticle,setSelectedKnowledge,setSelectedMedicine,setShowAddArticle,showAddArticle,showToast}=hj;
     const [kbSearch, setKbSearch] = useState("");
@@ -4768,13 +5069,13 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
     const [openGroup, setOpenGroup] = useState(null);
     const [medSubTab, setMedSubTab] = useState("supplement");
     const [myMeds, setMyMeds] = useState(()=>{
-      try{return JSON.parse(localStorage.getItem("hj_mymeds")||"[]");}catch(e){return[];}
+      return LS.getJSON("hj_mymeds",[]);
     });
     const [showMedForm, setShowMedForm] = useState(false);
     const [medForm, setMedForm] = useState({name:"",dose:"",freq:"每天",timing:"早餐後",note:""});
     const saveMyMeds = (list)=>{
       setMyMeds(list);
-      localStorage.setItem("hj_mymeds", JSON.stringify(list));
+      LS.set("hj_mymeds",list);
     };
     const [articleForm, setArticleForm] = useState({title:"",tag:"血糖",content:"",photos:[]});
     const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -4796,7 +5097,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
       };
       const updated = [...customArticles, newArt];
       setCustomArticles(updated);
-      localStorage.setItem("hj_articles", JSON.stringify(updated));
+      LS.set("hj_articles",updated);
       setArticleForm({title:"",tag:"血糖",content:"",photos:[]});
       setShowAddArticle(false);
       showToast("✅ 知識文章已儲存");
@@ -4805,7 +5106,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
     const deleteCustomArticle = (id) => {
       const updated = customArticles.filter(a=>a.id!==id);
       setCustomArticles(updated);
-      localStorage.setItem("hj_articles", JSON.stringify(updated));
+      LS.set("hj_articles",updated);
       setSelectedArticle(null);
       showToast("🗑️ 已刪除");
     };
@@ -4814,8 +5115,8 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
     if(selectedMedicine){
       const m = selectedMedicine;
       return(
-        <div className="fade-in" style={{padding:"16px 16px 80px"}}>
-          <button className="btn-secondary" style={{marginBottom:16}} onClick={()=>setSelectedMedicine(null)}>← 返回知識庫</button>
+        <div className="fade-in" style={ST.S8}>
+          <button className="btn-secondary" style={ST.S12} onClick={()=>setSelectedMedicine(null)}>← 返回知識庫</button>
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
             <span style={{fontSize:40}}>{m.icon}</span>
             <div>
@@ -4835,7 +5136,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
             <div className="card-title">主要好處</div>
             {m.benefits.map((b,i)=>(
               <div key={i} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
-                <span style={{color:C.green}}>✓</span>
+                <span style={ST.S17}>✓</span>
                 <span style={{fontSize:13,color:C.text}}>{b}</span>
               </div>
             ))}
@@ -4870,8 +5171,8 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
         return <div key={i} style={{fontSize:13,lineHeight:1.8,color:C.text}}>{line}</div>;
       });
       return(
-        <div className="fade-in" style={{padding:"16px 16px 80px"}}>
-          <button className="btn-secondary" style={{marginBottom:16}} onClick={()=>setSelectedArticle(null)}>← 返回知識庫</button>
+        <div className="fade-in" style={ST.S8}>
+          <button className="btn-secondary" style={ST.S12} onClick={()=>setSelectedArticle(null)}>← 返回知識庫</button>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
             <span style={{fontSize:36}}>{art.icon}</span>
             <div>
@@ -4879,7 +5180,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
               <div style={{display:"flex",gap:6,marginTop:4}}>
                 <span style={{fontSize:11,padding:"2px 8px",background:"rgba(46,204,138,0.15)",borderRadius:10,color:C.green}}>{art.tag}</span>
                 {art.builtin&&<span style={{fontSize:11,padding:"2px 8px",background:"rgba(90,180,255,0.15)",borderRadius:10,color:C.blue}}>內建</span>}
-                {art.createdAt&&!art.builtin&&<span style={{fontSize:11,color:C.textMuted}}>{art.createdAt}</span>}
+                {art.createdAt&&!art.builtin&&<span style={ST.S3}>{art.createdAt}</span>}
               </div>
             </div>
           </div>
@@ -4927,14 +5228,14 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
         return{text:String(yourVal),color:C.text};
       })() : null;
       return(
-        <div className="fade-in" style={{padding:"16px 16px 80px"}}>
-          <button className="btn-secondary" style={{marginBottom:16}} onClick={()=>setSelectedKnowledge(null)}>← 返回知識庫</button>
+        <div className="fade-in" style={ST.S8}>
+          <button className="btn-secondary" style={ST.S12} onClick={()=>setSelectedKnowledge(null)}>← 返回知識庫</button>
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
             <span style={{fontSize:40}}>{item.icon}</span>
             <div>
               <div style={{fontSize:18,fontWeight:700,color:item.color}}>{item.title}</div>
-              <div style={{fontSize:11,color:C.textMuted}}>{item.fullName}</div>
-              <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>{item.group}</div>
+              <div style={ST.S3}>{item.fullName}</div>
+              <div style={ST.S18}>{item.group}</div>
             </div>
           </div>
           <div className="card"><div className="card-title">說明</div><div style={{fontSize:14,lineHeight:1.8,color:C.text}}>{item.desc}</div></div>
@@ -4957,7 +5258,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
                 {isQual&&qualVal?(
                   <span style={{fontSize:22,fontWeight:700,color:qualVal.color}}>{qualVal.text}</span>
                 ):(
-                  <span style={{fontSize:28,fontFamily:"'DM Serif Display',serif",color:st?stColors[st]:C.text}}>{fmtLabVal(item.key,yourVal)}</span>
+                  <span style={{fontSize:28,fontFamily:"Georgia,serif",color:st?stColors[st]:C.text}}>{fmtLabVal(item.key,yourVal)}</span>
                 )}
                 {st&&!isQual&&(
                   <span className={`status-chip ${st==="ok"?"status-ok":st==="warn"?"status-warn":"status-alert"}`}>
@@ -4966,7 +5267,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
                 )}
               </div>
             ):(
-              <div style={{fontSize:13,color:C.textMuted}}>此項目尚無記錄</div>
+              <div style={ST.S34}>此項目尚無記錄</div>
             )}
             {hasVal&&<div style={{fontSize:11,color:C.textMuted,marginTop:6}}>來自最新報告：{fmtDateFull(latestLab?.date)} {latestLab?.hospital}</div>}
           </div>
@@ -4991,12 +5292,12 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
     if(showAddArticle){
       const TAGS=["血糖","肝臟","腎臟","血脂","心血管","大腦","骨骼","腸道","尿酸","綜合","其他"];
       return(
-        <div className="fade-in" style={{padding:"16px 16px 80px"}}>
-          <button className="btn-secondary" style={{marginBottom:16}} onClick={()=>setShowAddArticle(false)}>← 返回</button>
+        <div className="fade-in" style={ST.S8}>
+          <button className="btn-secondary" style={ST.S12} onClick={()=>setShowAddArticle(false)}>← 返回</button>
           <div className="section-header">✏️ 新增健康知識</div>
           <div className="card">
             <div className="field-label">標題</div>
-            <input className="input-field" style={{marginBottom:12}} placeholder="例：我的血壓控制心得"
+            <input className="input-field" style={ST.S4} placeholder="例：我的血壓控制心得"
               value={articleForm.title} onChange={e=>setArticleForm(f=>({...f,title:e.target.value}))}/>
             <div className="field-label">分類</div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
@@ -5012,7 +5313,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
               value={articleForm.content} onChange={e=>setArticleForm(f=>({...f,content:e.target.value}))}/>
             <div className="field-label">圖片（選填，最多3張）</div>
             {articleForm.photos.length>0&&(
-              <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+              <div style={ST.S36}>
                 {articleForm.photos.map((url,i)=>(
                   <div key={i} style={{position:"relative",width:80,height:80}}>
                     <img src={url} style={{width:80,height:80,objectFit:"cover",borderRadius:8}}/>
@@ -5026,16 +5327,16 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
               <div style={{border:`2px dashed ${C.border}`,borderRadius:10,padding:"12px",textAlign:"center",cursor:"pointer",marginBottom:12}}
                 onClick={()=>articlePhotoRef.current?.click()}>
                 {uploadingPhoto?(
-                  <div style={{fontSize:12,color:C.textMuted}}>⏳ 上傳中...</div>
+                  <div style={ST.S6}>⏳ 上傳中...</div>
                 ):(
                   <>
                     <div style={{fontSize:20,marginBottom:4}}>📷</div>
-                    <div style={{fontSize:12,color:C.textMuted}}>點擊上傳圖片</div>
+                    <div style={ST.S6}>點擊上傳圖片</div>
                   </>
                 )}
               </div>
             )}
-            <input ref={articlePhotoRef} type="file" accept="image/*" multiple style={{display:"none"}}
+            <input ref={articlePhotoRef} type="file" accept="image/*" multiple style={ST.S25}
               onChange={async e=>{
                 const cloudName=localStorage.getItem("cloudinary_name");
                 if(!cloudName){showToast("⚠️ 請先在設定頁填入 Cloudinary 設定");e.target.value="";return;}
@@ -5078,7 +5379,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
       : null;
 
     return(
-      <div className="fade-in" style={{padding:"16px 16px 80px"}}>
+      <div className="fade-in" style={ST.S8}>
         <div className="section-header">📚 健康知識庫</div>
 
         {/* 搜尋欄 */}
@@ -5139,7 +5440,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
           <>
             <div style={{background:"rgba(255,179,71,0.08)",border:"1px solid rgba(255,179,71,0.25)",borderRadius:14,padding:14,marginBottom:16}}>
               <div style={{fontSize:13,fontWeight:700,color:C.amber,marginBottom:6}}>📌 糖尿病前期專區</div>
-              <div style={{fontSize:12,color:C.textMuted,lineHeight:1.7}}>HbA1c 5.97% + 家族史 T2D = 高風險群<br/>好消息：糖尿病前期是可逆的，現在介入效果最好！</div>
+              <div style={ST.S29}>HbA1c 5.97% + 家族史 T2D = 高風險群<br/>好消息：糖尿病前期是可逆的，現在介入效果最好！</div>
             </div>
             {(()=>{
               const groupList = groups.map(group=>({
@@ -5204,7 +5505,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
         {!searchLower&&kbTab==="medicine"&&(
           <>
             <div style={{background:"rgba(46,204,138,0.06)",border:`1px solid ${C.border}`,borderRadius:12,padding:"8px 12px",marginBottom:10}}>
-              <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>
+              <div style={ST.S9}>
                 💡 以下資訊僅供參考，實際用藥請諮詢醫師或藥師。
               </div>
             </div>
@@ -5224,16 +5525,16 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
                 <div style={{background:C.bg,borderRadius:10,padding:10,marginBottom:8}}>
                   <input className="input-field" placeholder="藥品/保健品名稱（例：舒脈康 5/40mg）"
                     value={medForm.name} onChange={e=>setMedForm(f=>({...f,name:e.target.value}))}
-                    style={{marginBottom:6}}/>
+                    style={ST.S19}/>
                   <div style={{display:"flex",gap:6,marginBottom:6}}>
-                    <input className="input-field" placeholder="劑量（例：1錠）" style={{flex:1}}
+                    <input className="input-field" placeholder="劑量（例：1錠）" style={ST.S2}
                       value={medForm.dose} onChange={e=>setMedForm(f=>({...f,dose:e.target.value}))}/>
-                    <select className="input-field" style={{flex:1}}
+                    <select className="input-field" style={ST.S2}
                       value={medForm.freq} onChange={e=>setMedForm(f=>({...f,freq:e.target.value}))}>
                       <option>每天</option><option>2天1次</option><option>每週1次</option><option>需要時</option>
                     </select>
                   </div>
-                  <div style={{marginBottom:6}}>
+                  <div style={ST.S19}>
                     <select className="input-field"
                       value={medForm.timing} onChange={e=>setMedForm(f=>({...f,timing:e.target.value}))}>
                       <option>早餐前</option><option>早餐後</option><option>午餐後</option>
@@ -5242,7 +5543,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
                   </div>
                   <input className="input-field" placeholder="備註（選填，例：醫師處方/自行補充）"
                     value={medForm.note} onChange={e=>setMedForm(f=>({...f,note:e.target.value}))}
-                    style={{marginBottom:8}}/>
+                    style={ST.S1}/>
                   <button className="btn-primary" style={{padding:"8px"}}
                     onClick={()=>{
                       if(!medForm.name.trim()){showToast("⚠️ 請輸入名稱");return;}
@@ -5259,9 +5560,9 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
               {myMeds.map(med=>(
                 <div key={med.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
                   padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
-                  <div style={{flex:1}}>
+                  <div style={ST.S2}>
                     <div style={{fontSize:13,fontWeight:600,color:C.text}}>{med.name}</div>
-                    <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>
+                    <div style={ST.S18}>
                       {[med.dose,med.freq,med.timing,med.note].filter(Boolean).join(" · ")}
                     </div>
                   </div>
@@ -5328,48 +5629,14 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
           </>
         )}
         {!searchLower&&kbTab==="breakfast"&&(()=>{
-          const MEALS=[
-            {order:1,label:"蛋白質＋蔬菜",items:[
-              {name:"雞蛋",qty:"2-3顆",benefits:["優質蛋白飽腹延緩血糖上升","卵磷脂護大腦和肝臟","維生素D+B12"],organs:["血糖","大腦","肝臟"]},
-              {name:"青菜",qty:"有就吃（每天中、晚一定會吃）",benefits:["膳食纖維穩血糖","葉酸護心血管","低卡飽腹"],organs:["血糖","心血管"]},
-            ]},
-            {order:2,label:"好油",items:[
-              {name:"酪梨",qty:"180g",benefits:["單元不飽和脂肪直接升HDL","鉀降血壓","葉黃素護眼"],organs:["血脂HDL","心血管"]},
-            ]},
-            {order:3,label:"🥤 堅果奶昔（果汁機攪拌）",isShake:true,items:[
-              {name:"核桃",qty:"20g",benefits:["ALA Omega-3護大腦和血管","降LDL","多酚抗氧化"],organs:["大腦","血脂HDL"]},
-              {name:"杏仁",qty:"10g",benefits:["維生素E強效抗氧化","降LDL","鎂降血壓"],organs:["血脂HDL","心血管"]},
-              {name:"南瓜子",qty:"15g",benefits:["鎂+鋅降血壓護前列腺","鐵改善血液","植物固醇降膽固醇"],organs:["心血管","血液"]},
-              {name:"奇亞籽",qty:"10g",benefits:["水溶性纖維穩血糖減峰值","Omega-3降TG","吸水膨脹增飽腹感"],organs:["血糖","血脂HDL"]},
-              {name:"亞麻籽",qty:"15g",benefits:["木酚素抗發炎降雌激素","Omega-3降TG","纖維護腸道"],organs:["血脂HDL","發炎/其他"]},
-              {name:"黑芝麻粉",qty:"10g",benefits:["芝麻素護肝抗氧化","鈣強骨","芝麻素輕微降血壓"],organs:["肝臟","心血管"]},
-              {name:"燕麥",qty:"20g",benefits:["β-葡聚醣降LDL有強力實證","穩血糖減峰值","腸道益生元"],organs:["血糖","血脂HDL"]},
-              {name:"無糖可可",qty:"3–5g",benefits:["黃烷醇擴張血管降血壓","護大腦認知","抗氧化"],organs:["心血管","大腦"]},
-              {name:"薑黃",qty:"1.5–2g＋少量黑胡椒粉",benefits:["薑黃素強效抗發炎，胡椒增吸收20倍","護肝減脂肪肝","可能改善胰島素敏感性"],organs:["發炎/其他","肝臟","血糖"]},
-              {name:"甜菜根粉",qty:"3g（Datino）",benefits:["硝酸鹽→一氧化氮→擴張血管降血壓","改善全身血液循環","運動耐力+性功能血流相關"],organs:["心血管","血脂HDL"]},
-            ]},
-            {order:4,label:"水果",items:[
-              {name:"蘋果",qty:"200g",benefits:["果膠降膽固醇護腸道","槲皮素抗發炎","低GI穩血糖"],organs:["血脂HDL","血糖"]},
-              {name:"香蕉",qty:"1根",benefits:["鉀422mg降血壓（與酪梨加成）","維生素B6護神經","中GI水果：與堅果蛋白同餐可延緩血糖上升"],organs:["心血管","血糖"]},
-            ]},
-            {order:5,label:"補充品",items:[
-              {name:"EX NEO 力卡維他命",qty:"2錠（每日早上）",benefits:["B1預防神經病變（糖尿病前期必備）","B12 1,500μg超高劑量護周邊神經","B6+E抗氧化，緩解眼疲勞肩頸腰痛"],organs:["血糖","大腦"]},
-              {name:"強力若元 Wakamoto",qty:"9粒",benefits:["釀酒酵母+乳酸菌整腸","澱粉酶幫助消化","與晚上希臘酸奶益生菌加成護腸道"],organs:["腸道","血糖"]},
-            ]},
-          ];
-          const DINNER=[
-            {name:"橄欖油",qty:"5ml 直接喝",benefits:["多酚Oleocanthal抗發炎護肝","升HDL","改善脂肪肝有實證"],organs:["肝臟","血脂HDL","發炎/其他"]},
-            {name:"希臘酸奶",qty:"150g（Farmers Union）",benefits:["高蛋白16g助肌肉修復","益生菌改善腸道","鈣538mg強骨，No Sugar Added血糖友善","酪蛋白慢消化穩定夜間血糖"],organs:["血糖","腸道","骨骼"],meds:"💊 同時服藥：平脂 Zulitor、保栓通 Plavix（每天）；舒脈康 Sevikar（2天1次）"},
-            {name:"ORIHIRO DHA+EPA",qty:"6粒",benefits:["DHA 780mg降中性脂肪、護大腦記憶","EPA 80mg抗發炎保護心血管","Omega-3組合對你的HDL偏低有幫助"],organs:["血脂HDL","大腦","心血管"],meds:"⚠️ 注意：你同時服用保栓通Plavix（抗血小板），高劑量Omega-3也有抗凝血效果，出血風險疊加。建議告知開立Plavix的醫師確認此劑量安全性，並注意瘀青/出血徵兆"},
-            {name:"藍莓",qty:"50g（配希臘酸奶）",benefits:["花青素抗氧化護血管與視網膜（對你的視網膜退化有幫助）","改善胰島素敏感性","低GI莓果，配酸奶血糖友善"],organs:["心血管","血糖","發炎/其他"]},
-            {name:"奇異果",qty:"1顆",benefits:["維生素C超高（每顆約100mg）抗氧化","鉀降血壓","纖維改善腸道","血清素前驅物助睡眠"],organs:["心血管","腸道","血液"]},
-          ];
+          
+          
           const ItemCard=({item,dinnerMode})=>(
             <div style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px",marginBottom:6}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                  <span style={{fontSize:13,fontWeight:700,color:C.text}}>{item.name}</span>
-                  <span style={{fontSize:11,color:C.textMuted}}>{item.qty}</span>
+                  <span style={ST.S13}>{item.name}</span>
+                  <span style={ST.S3}>{item.qty}</span>
                 </div>
                 <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end"}}>
                   {item.organs.map(o=>(
@@ -5389,13 +5656,13 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
             <>
               {/* ★ v4.73 固定早餐標題（取消打卡）*/}
               <div className="card" style={{padding:"12px",marginBottom:4}}>
-                <div style={{fontSize:13,fontWeight:700,color:C.text}}>🍳 固定早餐清單</div>
-                <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>每天固定執行 · 定期抽血驗證效果</div>
+                <div style={ST.S13}>🍳 固定早餐清單</div>
+                <div style={ST.S18}>每天固定執行 · 定期抽血驗證效果</div>
               </div>
               {/* 早餐整體策略摘要 */}
               <div className="card" style={{marginBottom:12,background:"rgba(46,204,138,0.04)",border:`1px solid ${C.green}44`}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                  <span style={{fontSize:18}}>🎯</span>
+                  <span style={ST.S26}>🎯</span>
                   <div style={{fontSize:13,fontWeight:700,color:C.green}}>早餐策略總目標</div>
                 </div>
                 <div style={{fontSize:12,color:C.textMuted,lineHeight:1.8,marginBottom:8}}>
@@ -5411,7 +5678,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
                     <span style={{fontSize:14,flexShrink:0}}>{item.icon}</span>
                     <div>
                       <div style={{fontSize:11,fontWeight:700,color:C.text,marginBottom:1}}>{item.label}</div>
-                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{item.desc}</div>
+                      <div style={ST.S9}>{item.desc}</div>
                     </div>
                   </div>
                 ))}
@@ -5420,14 +5687,14 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
                 💡 依吃的順序排列 · 綠標對應雷達圖弱項 · 每天執行+定期抽血驗證效果
               </div>
               {/* ★ v4.76 營養星等一覽表（可收合）*/}
-              <div className="card" style={{marginBottom:12}}>
+              <div className="card" style={ST.S4}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer"}}
                   onClick={()=>setShowStarMatrix(v=>!v)}>
-                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>⭐ 營養星等一覽表</div>
-                  <span style={{fontSize:12,color:C.textMuted}}>{showStarMatrix?"收合 ▲":"展開 ▼"}</span>
+                  <div style={ST.S13}>⭐ 營養星等一覽表</div>
+                  <span style={ST.S6}>{showStarMatrix?"收合 ▲":"展開 ▼"}</span>
                 </div>
                 {showStarMatrix&&(
-                  <div style={{marginTop:10}}>
+                  <div style={ST.S32}>
                     <StarMatrix title="🍳 早餐" rows={STAR_BREAKFAST}/>
                     <StarMatrix title="☀️ 午後（13:00–14:00）" rows={STAR_AFTERNOON}/>
                     <StarMatrix title="🌙 晚上" rows={STAR_DINNER}/>
@@ -5439,17 +5706,17 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
                 )}
               </div>
               {/* 早餐組合評估 */}
-              <div className="card" style={{marginBottom:12}}>
+              <div className="card" style={ST.S4}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>📊 早餐組合評估</div>
+                  <div style={ST.S13}>📊 早餐組合評估</div>
                   <div style={{display:"flex",alignItems:"center",gap:4}}>
-                    <span style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:C.green}}>9</span>
-                    <span style={{fontSize:11,color:C.textMuted}}>/10</span>
+                    <span style={{fontFamily:"Georgia,serif",fontSize:22,color:C.green}}>9</span>
+                    <span style={ST.S3}>/10</span>
                     <span style={{fontSize:14,marginLeft:2}}>⭐</span>
                   </div>
                 </div>
                 {/* 優點 */}
-                <div style={{marginBottom:10}}>
+                <div style={ST.S7}>
                   <div style={{fontSize:11,fontWeight:700,color:C.green,letterSpacing:1,marginBottom:6}}>✅ 優點</div>
                   {[
                     {title:"HDL偏低→直接命中",desc:"酪梨+橄欖油+核桃+杏仁+亞麻籽，五種來源單元/多元不飽和脂肪，升HDL最有實證的飲食策略"},
@@ -5460,7 +5727,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
                   ].map((item,i)=>(
                     <div key={i} style={{padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
                       <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:2}}>{item.title}</div>
-                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{item.desc}</div>
+                      <div style={ST.S9}>{item.desc}</div>
                     </div>
                   ))}
                 </div>
@@ -5475,7 +5742,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
                   ].map((item,i)=>(
                     <div key={i} style={{padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
                       <div style={{fontSize:12,fontWeight:600,color:item.color,marginBottom:2}}>{item.title}</div>
-                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>{item.desc}</div>
+                      <div style={ST.S9}>{item.desc}</div>
                     </div>
                   ))}
                 </div>
@@ -5485,7 +5752,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
               </div>
               {/* 早餐食材 */}
               {MEALS.map(meal=>(
-                <div key={meal.order} style={{marginBottom:12}}>
+                <div key={meal.order} style={ST.S4}>
                   <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                     <span style={{fontSize:11,fontWeight:700,color:meal.isShake?C.amber:C.textMuted,letterSpacing:0.5}}>
                       {meal.isShake?"🥤":""} 順序{meal.order}
@@ -5534,8 +5801,8 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
                 <div key={item.name} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                      <span style={{fontSize:13,fontWeight:700,color:C.text}}>{item.name}</span>
-                      <span style={{fontSize:11,color:C.textMuted}}>{item.qty}</span>
+                      <span style={ST.S13}>{item.name}</span>
+                      <span style={ST.S3}>{item.qty}</span>
                     </div>
                     <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end"}}>
                       {item.organs.map(o=>(
@@ -5543,13 +5810,13 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
                       ))}
                     </div>
                   </div>
-                  <div style={{marginBottom:6}}>
+                  <div style={ST.S19}>
                     <div style={{fontSize:10,fontWeight:700,color:C.green,marginBottom:3}}>✅ 優點</div>
-                    {item.pros.map((p,i)=><div key={i} style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>• {p}</div>)}
+                    {item.pros.map((p,i)=><div key={i} style={ST.S9}>• {p}</div>)}
                   </div>
-                  <div style={{marginBottom:6}}>
+                  <div style={ST.S19}>
                     <div style={{fontSize:10,fontWeight:700,color:C.amber,marginBottom:3}}>⚠️ 注意</div>
-                    {item.cons.map((c,i)=><div key={i} style={{fontSize:11,color:C.textMuted,lineHeight:1.6}}>• {c}</div>)}
+                    {item.cons.map((c,i)=><div key={i} style={ST.S9}>• {c}</div>)}
                   </div>
                   <div style={{fontSize:11,color:C.blue,lineHeight:1.6,marginTop:4}}>💡 {item.note}</div>
                 </div>
@@ -5567,7 +5834,7 @@ const KnowledgeTab=({hj})=>{ const{customArticles,kbTab,labHistory,selectedArtic
   };
 
 // ═══ KnowledgeCard（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
-const KnowledgeCard=({item,latestLab,onSelect})=>{
+const KnowledgeCard=React.memo(({item,latestLab,onSelect})=>{
     const yourVal = latestLab?.[item.key];
     const hasVal = yourVal!==null&&yourVal!==undefined&&yourVal!=="";
     const st = getStatus(item.key, yourVal);
@@ -5589,8 +5856,8 @@ const KnowledgeCard=({item,latestLab,onSelect})=>{
         padding:"12px 16px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:"transparent"}}
         onClick={()=>onSelect(item)}>
         <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
-          <span style={{fontSize:18}}>{item.icon}</span>
-          <div style={{flex:1}}>
+          <span style={ST.S26}>{item.icon}</span>
+          <div style={ST.S2}>
             <div style={{fontSize:13,fontWeight:600,color:C.text}}>{item.title}</div>
             {hasVal?(
               isQual&&qualDisplay?(
@@ -5601,11 +5868,11 @@ const KnowledgeCard=({item,latestLab,onSelect})=>{
                 </div>
               )
             ):(
-              <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>尚無記錄</div>
+              <div style={ST.S18}>尚無記錄</div>
             )}
           </div>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:6}}>
+        <div style={ST.S16}>
           {hasVal&&!isQual&&st&&(
             <span className={`status-chip ${st==="ok"?"status-ok":st==="warn"?"status-warn":"status-alert"}`}>
               {st==="ok"?"正常":st==="warn"?"注意":"異常"}
@@ -5618,21 +5885,21 @@ const KnowledgeCard=({item,latestLab,onSelect})=>{
         </div>
       </div>
     );
-  };
+  });
 
 // ═══ ArticleCard（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
-const ArticleCard=({art,onSelect})=>(
+const ArticleCard=React.memo(({art,onSelect})=>(
     <div style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:12,
       padding:"10px 8px",cursor:"pointer"}} onClick={()=>onSelect(art)}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginBottom:6}}>
-        <span style={{fontSize:18}}>{art.icon}</span>
+        <span style={ST.S26}>{art.icon}</span>
         <span style={{fontSize:12,padding:"2px 8px",background:"rgba(46,204,138,0.12)",borderRadius:8,color:C.green,fontWeight:600}}>{art.tag}</span>
       </div>
       <div style={{fontSize:12,fontWeight:600,color:C.text,lineHeight:1.4,textAlign:"center"}}>
         {art.title}
       </div>
     </div>
-  );
+  ));
 
 // ═══ SettingTab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
 const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hospitalList,imagingHistory,labHistory,lastSync,reminderSyncDone,reminders,setApiKey,setHospitalList,setReminders,showToast,sleepLog,weightHistory}=hj;
@@ -5643,28 +5910,28 @@ const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hos
     const [cloudPreset,setCloudPreset]=useState(localStorage.getItem("cloudinary_preset")||"");
     const saved=!!localStorage.getItem("hj_apikey");
     return(
-      <div className="fade-in" style={{padding:"16px 16px 80px"}}>
+      <div className="fade-in" style={ST.S8}>
         <div className="section-header">⚙️ 設定</div>
 
         {/* API Key */}
         <div className="card">
           <div className="card-title">Gemini API 金鑰</div>
-          <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.7}}>
-            至 <span style={{color:C.green}}>aistudio.google.com</span> 取得金鑰（與投資理財App同一組可共用）<br/>
+          <div style={ST.S28}>
+            至 <span style={ST.S17}>aistudio.google.com</span> 取得金鑰（與投資理財App同一組可共用）<br/>
             格式：AQ. 或 AIza 開頭 · 免費額度 15次/分鐘、1,500次/天
           </div>
           {saved&&<div style={{fontSize:12,color:C.green,marginBottom:8,padding:"6px 10px",background:"rgba(46,204,138,0.1)",borderRadius:8}}>✅ 已儲存金鑰（輸入新金鑰可覆蓋）</div>}
-          <div style={{marginBottom:10}}>
+          <div style={ST.S7}>
             <div className="field-label">API Key</div>
             <input className="input-field" type="password"
               placeholder="AQ. 或 AIza 開頭金鑰"
               value={inputKey}
               onChange={e=>setInputKey(e.target.value)}
-              style={{marginBottom:10}}
+              style={ST.S7}
             />
             <button className="btn-primary" onClick={()=>{
               if(!inputKey.trim()){showToast("⚠️ 請輸入API金鑰");return;}
-              localStorage.setItem("hj_apikey",inputKey.trim());
+              LS.set("hj_apikey",inputKey.trim());
               setApiKey(inputKey.trim());
               showToast("✅ API金鑰已儲存");
             }}>儲存金鑰</button>
@@ -5699,12 +5966,12 @@ const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hos
               </div>
             )}
 
-            <div style={{marginTop:10}}>
+            <div style={ST.S32}>
               <div className="field-label">使用模型</div>
               <input className="input-field" defaultValue={getModel()} placeholder="gemini-3.5-flash"
                 onBlur={e=>{
                   const v=e.target.value.trim()||GEMINI_MODEL_DEFAULT;
-                  localStorage.setItem("hj_gemini_model",v);
+                  LS.set("hj_gemini_model",v);
                   showToast("✅ 模型已設為 "+v);
                 }}/>
               <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>
@@ -5714,7 +5981,7 @@ const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hos
           </div>
           {apiKey&&(
             <button style={{width:"100%",padding:"10px",background:"transparent",border:`1px solid ${C.red}44`,borderRadius:10,color:C.red,fontSize:13,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif",marginTop:6}}
-              onClick={()=>{localStorage.removeItem("hj_apikey");setApiKey("");setInputKey("");showToast("🗑️ 金鑰已清除");}}>
+              onClick={()=>{LS.remove("hj_apikey");setApiKey("");setInputKey("");showToast("🗑️ 金鑰已清除");}}>
               清除金鑰
             </button>
           )}
@@ -5723,7 +5990,7 @@ const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hos
         {/* 醫院管理 */}
         <div className="card">
           <div className="card-title">醫院清單管理</div>
-          <div style={{marginBottom:12}}>
+          <div style={ST.S4}>
             {hospitalList.map((h,i)=>(
               <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
                 <span style={{fontSize:14}}>{h}</span>
@@ -5731,21 +5998,21 @@ const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hos
                   onClick={()=>{
                     const updated=hospitalList.filter((_,idx)=>idx!==i);
                     setHospitalList(updated);
-                    localStorage.setItem("hj_hospitals",JSON.stringify(updated));
+                    LS.set("hj_hospitals",updated);
                     api.saveSetting("hospitals", updated);
                     showToast("🗑️ 已刪除並同步");
                   }}>×</button>
               </div>
             ))}
           </div>
-          <div style={{display:"flex",gap:8}}>
+          <div style={ST.S24}>
             <input className="input-field" placeholder="新增醫院名稱" value={newHospital}
-              onChange={e=>setNewHospital(e.target.value)} style={{flex:1}}/>
+              onChange={e=>setNewHospital(e.target.value)} style={ST.S2}/>
             <button className="btn-secondary" onClick={()=>{
               if(!newHospital.trim())return;
               const updated=[...hospitalList,newHospital.trim()];
               setHospitalList(updated);
-              localStorage.setItem("hj_hospitals",JSON.stringify(updated));
+              LS.set("hj_hospitals",updated);
               api.saveSetting("hospitals", updated);
               setNewHospital("");
               showToast("✅ 醫院已新增並同步");
@@ -5766,7 +6033,7 @@ const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hos
             {label:"體重計",val:"小米體重計"},
           ].map(item=>(
             <div key={item.label} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
-              <span style={{fontSize:13,color:C.textMuted}}>{item.label}</span>
+              <span style={ST.S34}>{item.label}</span>
               <span style={{fontSize:13,color:C.text,textAlign:"right",flex:1,marginLeft:12}}>{item.val}</span>
             </div>
           ))}
@@ -5776,36 +6043,36 @@ const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hos
         {/* Cloudinary 照片上傳設定 */}
         <div className="card">
           <div className="card-title">📷 照片上傳設定（Cloudinary）</div>
-          <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.7}}>
+          <div style={ST.S28}>
             用於影像檢查照片上傳<br/>
-            至 <span style={{color:C.green}}>cloudinary.com</span> 取得 Cloud Name 與 Upload Preset（需設為 Unsigned）
+            至 <span style={ST.S17}>cloudinary.com</span> 取得 Cloud Name 與 Upload Preset（需設為 Unsigned）
           </div>
           {localStorage.getItem("cloudinary_name")&&(
             <div style={{fontSize:12,color:C.green,marginBottom:8,padding:"6px 10px",background:"rgba(46,204,138,0.1)",borderRadius:8}}>
               ✅ 已設定：{localStorage.getItem("cloudinary_name")}
             </div>
           )}
-          <div style={{marginBottom:10}}>
+          <div style={ST.S7}>
             <div className="field-label">Cloud Name</div>
             <input className="input-field" placeholder="例：dxaxjnhil"
               value={cloudName} onChange={e=>setCloudName(e.target.value)}
-              style={{marginBottom:8}}/>
+              style={ST.S1}/>
             <div className="field-label">Upload Preset（Unsigned）</div>
             <input className="input-field" placeholder="例：health-journal"
               value={cloudPreset} onChange={e=>setCloudPreset(e.target.value)}
-              style={{marginBottom:10}}/>
+              style={ST.S7}/>
             <button className="btn-primary" onClick={()=>{
               if(!cloudName.trim()||!cloudPreset.trim()){showToast("⚠️ 請填入 Cloud Name 和 Preset");return;}
-              localStorage.setItem("cloudinary_name",cloudName.trim());
-              localStorage.setItem("cloudinary_preset",cloudPreset.trim());
+              LS.set("cloudinary_name",cloudName.trim());
+              LS.set("cloudinary_preset",cloudPreset.trim());
               showToast("✅ Cloudinary 設定已儲存");
             }}>儲存設定</button>
           </div>
           {localStorage.getItem("cloudinary_name")&&(
             <button style={{width:"100%",padding:"10px",background:"transparent",border:`1px solid ${C.red}44`,borderRadius:10,color:C.red,fontSize:13,cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}
               onClick={()=>{
-                localStorage.removeItem("cloudinary_name");
-                localStorage.removeItem("cloudinary_preset");
+                LS.remove("cloudinary_name");
+                LS.remove("cloudinary_preset");
                 setCloudName(""); setCloudPreset("");
                 showToast("🗑️ Cloudinary 設定已清除");
               }}>清除設定</button>
@@ -5815,7 +6082,7 @@ const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hos
         {/* 藥物提醒設定 */}
         <div className="card">
           <div className="card-title">💊 藥物提醒</div>
-          <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.7}}>
+          <div style={ST.S28}>
             依你的用藥時間設定提醒，使用手機瀏覽器通知（需允許通知權限）
           </div>
           {[
@@ -5826,8 +6093,8 @@ const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hos
           ].map(med=>(
             <div key={med.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
               <div>
-                <div style={{fontSize:12,fontWeight:600,color:C.text}}>{med.name}</div>
-                <div style={{fontSize:11,color:C.textMuted,marginTop:2}}>{med.time} · {med.freq}</div>
+                <div style={ST.S30}>{med.name}</div>
+                <div style={ST.S18}>{med.time} · {med.freq}</div>
               </div>
               <button onClick={()=>{
                 if(!("Notification" in window)){showToast("⚠️ 此瀏覽器不支援通知");return;}
@@ -5853,7 +6120,7 @@ const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hos
         {/* 健康摘要匯出 */}
         <div className="card">
           <div className="card-title">📄 健康摘要報告</div>
-          <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.7}}>
+          <div style={ST.S28}>
             動態生成完整健康摘要（異常項目自動列出、用藥清單、雷達分數），可列印或儲存為PDF帶去看診。
           </div>
           <button className="btn-primary" onClick={()=>{
@@ -5864,25 +6131,7 @@ const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hos
             const latestWt=weightHistory.length>0?weightHistory[weightHistory.length-1]:null;
             if(!latest){showToast("⚠️ 尚無抽血資料");return;}
             // 動態異常項目
-            const FIELDS=[
-              {key:"hba1c",label:"HbA1c",unit:"%"},
-              {key:"glucose_ac",label:"空腹血糖",unit:"mg/dL"},
-              {key:"alt",label:"ALT",unit:"U/L"},
-              {key:"ast",label:"AST",unit:"U/L"},
-              {key:"ggt",label:"GGT",unit:"U/L"},
-              {key:"hdl",label:"HDL-C",unit:"mg/dL"},
-              {key:"ldl",label:"LDL-C",unit:"mg/dL"},
-              {key:"tg",label:"三酸甘油酯",unit:"mg/dL"},
-              {key:"cholesterol",label:"總膽固醇",unit:"mg/dL"},
-              {key:"uric_acid",label:"尿酸",unit:"mg/dL"},
-              {key:"creatinine",label:"肌酸酐",unit:"mg/dL"},
-              {key:"egfr",label:"eGFR",unit:""},
-              {key:"bun",label:"BUN",unit:"mg/dL"},
-              {key:"tsh",label:"TSH",unit:"uIU/mL"},
-              {key:"hb",label:"血紅素",unit:"g/dL"},
-              {key:"wbc",label:"WBC",unit:"K/uL"},
-              {key:"platelet",label:"血小板",unit:"K/uL"},
-            ];
+            
             const rows=FIELDS.filter(f=>latest[f.key]!=null&&latest[f.key]!=="")
               .map(f=>{
                 const st=getStatus(f.key,latest[f.key]);
@@ -5906,7 +6155,7 @@ const SettingTab=({hj})=>{ const{apiKey,bpHistory,exerciseLog,glucoseHistory,hos
             const radarRows=radarScores?radarScores.filter(d=>d.score!=null)
               .map(d=>`<tr><td style="padding:4px 12px">${d.label.split("\\n")[0]}</td><td style="padding:4px 12px;text-align:right;font-weight:bold;color:${d.score>=7?"#1a8c5e":d.score>=6?"#e67e22":"#e74c3c"}">${d.score}/10</td></tr>`).join(""):"";
             // 用藥清單（取我的用藥及保健清單）★v4.74修正：myMeds原引用KnowledgeTab內部state會ReferenceError，改讀localStorage
-            const myMeds=JSON.parse(localStorage.getItem("hj_mymeds")||"[]");
+            const myMeds=LS.getJSON("hj_mymeds",[]);
             const medList=myMeds.length>0?myMeds.map(m=>`${m.name}　${m.dose||""}　${m.freq||""}　${m.timing||""}`).join("<br/>"):"（請至知識庫→藥物→我的用藥及保健清單填寫）";
             // 打卡統計
             const exHit7=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}).filter(ds=>exerciseLog.some(r=>normalizeDate(r.date)===ds)).length;
@@ -5952,7 +6201,7 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
           <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.6}}>
             匯出所有記錄成 CSV 檔（可用 Excel 開啟），建議每月備份一次。
           </div>
-          <button className="btn-primary" style={{marginBottom:8}} onClick={()=>{
+          <button className="btn-primary" style={ST.S1} onClick={()=>{
             try{
               const esc=(v)=>{
                 if(v===null||v===undefined)return"";
@@ -5974,7 +6223,7 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
               csv+=toCSV(sleepLog,"睡眠 sleep_log");
               csv+=toCSV(imagingHistory,"影像 imaging");
               csv+=toCSV(exerciseLog,"運動 exercise_log");
-              const meds=JSON.parse(localStorage.getItem("hj_mymeds")||"[]");
+              const meds=LS.getJSON("hj_mymeds",[]);
               csv+=toCSV(meds,"用藥清單 my_meds");
               const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
               const url=URL.createObjectURL(blob);
@@ -6000,7 +6249,7 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
             if(!("Notification" in window)){showToast("❌ 此瀏覽器不支援通知");return;}
             const perm=await Notification.requestPermission();
             if(perm==="granted"){
-              localStorage.setItem("hj_notify","1");
+              LS.set("hj_notify","1");
               showToast("✅ 通知已開啟");
               const overdue=reminders.filter(r=>new Date(r.nextDate)<=new Date());
               if(overdue.length>0){
@@ -6010,7 +6259,7 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
                 });
               }
             }else{
-              localStorage.removeItem("hj_notify");
+              LS.remove("hj_notify");
               showToast("⚠️ 通知權限被拒絕，請到瀏覽器設定開啟");
             }
           }}>
@@ -6022,7 +6271,7 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
         <div className="card">
           <div className="card-title">維護工具</div>
           {/* 強制同步追蹤提醒 */}
-          <button className="btn-primary" style={{marginBottom:12}} onClick={async()=>{
+          <button className="btn-primary" style={ST.S4} onClick={async()=>{
             showToast("⏳ 同步追蹤提醒中...");
             const todayStr=new Date().toISOString().split("T")[0];
             const SYNC=[
@@ -6078,7 +6327,7 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
           <div style={{fontSize:12,color:C.textMuted,marginBottom:10,lineHeight:1.6}}>
             更新 Google Sheets 欄位（新版本後執行一次）
           </div>
-          <button className="btn-primary" style={{marginBottom:8}} onClick={async()=>{
+          <button className="btn-primary" style={ST.S1} onClick={async()=>{
             showToast("⏳ 更新欄位中，請稍候...");
             try {
               const r = await api.get("updateLabColumns");
@@ -6091,7 +6340,7 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
           }}>
             🔧 更新 lab_reports 欄位
           </button>
-          <div style={{fontSize:11,color:C.textMuted}}>
+          <div style={ST.S3}>
             自動新增所有缺少的欄位，不影響現有資料
           </div>
         </div>
@@ -6106,7 +6355,7 @@ table{width:100%;border-collapse:collapse}th{background:#f0f7f3;padding:8px 12px
             {label:"資料存儲",val:"localStorage + Sheets"},
           ].map(item=>(
             <div key={item.label} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
-              <span style={{fontSize:13,color:C.textMuted}}>{item.label}</span>
+              <span style={ST.S34}>{item.label}</span>
               <span style={{fontSize:13,color:C.green}}>{item.val}</span>
             </div>
           ))}
@@ -6169,16 +6418,16 @@ class ErrorCatcher extends React.Component{
           版本 {VERSION} · 畫面沒有變白，錯誤原因如下（可截圖回報）
         </div>
 
-        <div style={{fontSize:12,fontWeight:700,color:"#ffb347",marginBottom:4}}>錯誤訊息</div>
+        <div style={ST.S37}>錯誤訊息</div>
         <div style={box}>{String(e&&e.message||e)}</div>
 
-        <div style={{fontSize:12,fontWeight:700,color:"#ffb347",marginBottom:4}}>發生位置（元件）</div>
+        <div style={ST.S37}>發生位置（元件）</div>
         <div style={box}>{String(this.state.info&&this.state.info.componentStack||"—").split("\n").slice(0,6).join("\n").trim()||"—"}</div>
 
-        <div style={{fontSize:12,fontWeight:700,color:"#ffb347",marginBottom:4}}>技術細節</div>
+        <div style={ST.S37}>技術細節</div>
         <div style={box}>{String(e&&e.stack||"—").split("\n").slice(0,5).join("\n")}</div>
 
-        <div style={{fontSize:12,fontWeight:700,color:"#ffb347",marginBottom:4}}>環境</div>
+        <div style={ST.S37}>環境</div>
         <div style={box}>{`快取大小：${cacheInfo}\n網路：${(typeof navigator!=="undefined"&&navigator.onLine)?"連線中":"離線"}\n時間：${new Date().toLocaleString("zh-TW")}`}</div>
 
         <div style={{marginTop:6}}>
@@ -6238,7 +6487,7 @@ function HealthJournalInner(){
   const [bpHistory,setBpHistory]=useState([]);
   const [weightHistory,setWeightHistory]=useState([]);
   const [hospitalList,setHospitalList]=useState(
-    JSON.parse(localStorage.getItem("hj_hospitals")||'["台灣新陳代謝科","越南醫院"]')
+    LS.getJSON("hj_hospitals",["台灣新陳代謝科","越南醫院"])
   );
 
   // 提醒
@@ -6266,14 +6515,12 @@ function HealthJournalInner(){
         nextDate:"2025-06-19",
       });
     }
-    try{localStorage.setItem("hj_reminders",JSON.stringify(out));}catch(e){}
+    LS.set("hj_reminders",out);
     return out;
   };
   const [reminders,setReminders]=useState(()=>{
-    try{
-      const saved=localStorage.getItem("hj_reminders");
-      return saved?migrateReminders(JSON.parse(saved)):DEFAULT_REMINDERS;
-    }catch(e){return DEFAULT_REMINDERS;}
+    const saved=LS.getJSON("hj_reminders",null);
+    return Array.isArray(saved)&&saved.length?migrateReminders(saved):DEFAULT_REMINDERS;
   });
   const [editReminder,setEditReminder]=useState(null);
   const [sleepLog,setSleepLog]=useState([]);
@@ -6337,7 +6584,7 @@ function HealthJournalInner(){
   // ── 每日AI顧問問候 ──────────────────────────────────
   const [dailyGreeting,setDailyGreeting]=useState(()=>{
     try{
-      const cache=JSON.parse(localStorage.getItem("hj_daily_greeting")||"null");
+      const cache=LS.getJSON("hj_daily_greeting",null);
       if(cache&&cache.date===new Date().toISOString().split("T")[0])return cache.greeting;
     }catch(e){}
     return null;
@@ -6353,7 +6600,7 @@ function HealthJournalInner(){
     const lastBP=[...bpHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
     const lastGluc=[...glucoseHistory].sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
     const dataKey=`${todayStr}|${lastSleep?.date||""}|${lastSleep?.score||""}|${lastBP?.date||""}|${lastGluc?.date||""}`;
-    const cache=JSON.parse(localStorage.getItem("hj_daily_greeting")||"null");
+    const cache=LS.getJSON("hj_daily_greeting",null);
     // 條件：同dataKey且未超過3天 → 直接用快取
     const cacheAge=cache?.date?Math.floor((new Date()-new Date(cache.date))/(1000*60*60*24)):999;
     if(!force&&cache&&cache.dataKey===dataKey&&cacheAge<3)return;
@@ -6460,7 +6707,7 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
     if(!name||hospitalList.includes(name))return;
     const updated=[name,...hospitalList].slice(0,10);
     setHospitalList(updated);
-    localStorage.setItem("hj_hospitals",JSON.stringify(updated));
+    LS.set("hj_hospitals",updated);
     api.saveSetting("hospitals", updated); // 同步到Sheets
   };
 
@@ -6468,18 +6715,19 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
   const lastLoadRef=useRef(0);
   const loadData=useCallback(async()=>{
     // ★ v4.71 快取優先秒開：先用本地快取渲染，再背景更新
-    try{
-      const cached=JSON.parse(localStorage.getItem("hj_data_cache")||"null");
-      if(cached){
-        if(cached.lab)setLabHistory(cached.lab);
-        if(cached.glu)setGlucoseHistory(cached.glu);
-        if(cached.bp)setBpHistory(cached.bp);
-        if(cached.wt)setWeightHistory(cached.wt);
-        if(cached.sleep)setSleepLog(cached.sleep);
-        if(cached.imaging)setImagingHistory(cached.imaging);
-        if(cached.ex)setExerciseLog(cached.ex);
+    // ★ v4.88 快取同樣經 cleanRows 淨化（壞快取會走同一條崩潰路徑）
+    {
+      const cached=LS.getJSON("hj_data_cache",null);
+      if(cached&&typeof cached==="object"&&!Array.isArray(cached)){
+        if(cached.lab)setLabHistory(cleanRows(cached.lab,false));
+        if(cached.glu)setGlucoseHistory(cleanRows(cached.glu));
+        if(cached.bp)setBpHistory(cleanRows(cached.bp));
+        if(cached.wt)setWeightHistory(cleanRows(cached.wt));
+        if(cached.sleep)setSleepLog(cleanRows(cached.sleep));
+        if(cached.imaging)setImagingHistory(cleanRows(cached.imaging));
+        if(cached.ex)setExerciseLog(cleanRows(cached.ex));
       }
-    }catch(e){}
+    }
     setLoading(true);
     setSyncStatus("syncing");
     try{
@@ -6494,18 +6742,16 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
         api.get("getAll",{sheet:"exercise_log"}),
         api.get("getAll",{sheet:"sleep_log"}),
       ]);
-      if(lab?.data){setLabHistory(lab.data);cacheObj.lab=lab.data;}
-      if(glu?.data){setGlucoseHistory(glu.data);cacheObj.glu=glu.data;}
-      if(bp?.data){setBpHistory(bp.data);cacheObj.bp=bp.data;}
-      if(wt?.data){setWeightHistory(wt.data);cacheObj.wt=wt.data;}
-      if(exLog?.data){const v=exLog.data.filter(r=>r.date&&String(r.date).trim());setExerciseLog(v);cacheObj.ex=v;}
-      if(slp?.data){const v=slp.data.filter(r=>r.date&&String(r.date).trim());setSleepLog(v);cacheObj.sleep=v;}
+      // ★ v4.88 一律經 cleanRows 淨化，避免雲端異常資料造成白畫面
+      if(lab?.data){const v=cleanRows(lab.data,false);setLabHistory(v);cacheObj.lab=v;}
+      if(glu?.data){const v=cleanRows(glu.data);setGlucoseHistory(v);cacheObj.glu=v;}
+      if(bp?.data){const v=cleanRows(bp.data);setBpHistory(v);cacheObj.bp=v;}
+      if(wt?.data){const v=cleanRows(wt.data);setWeightHistory(v);cacheObj.wt=v;}
+      if(exLog?.data){const v=cleanRows(exLog.data);setExerciseLog(v);cacheObj.ex=v;}
+      if(slp?.data){const v=cleanRows(slp.data);setSleepLog(v);cacheObj.sleep=v;}
       if(imaging?.data){
-        // 過濾空白列（id或date或type為空/空白的）
-        const validImaging = imaging.data.filter(r =>
-          r.id && String(r.id).trim() &&
-          r.date && String(r.date).trim() &&
-          r.type && String(r.type).trim()
+        const validImaging = cleanRows(imaging.data).filter(r =>
+          r.id && String(r.id).trim() && r.type && String(r.type).trim()
         );
         setImagingHistory(validImaging);
         cacheObj.imaging=validImaging;
@@ -6533,9 +6779,13 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
           localStorage.setItem("hj_hospitals",JSON.stringify(h));
         }
         if(s.reminders){
-          const r=JSON.parse(s.reminders);
+          // ★ v4.85 GAS資料也要跑遷移，否則會覆蓋掉本地已遷移的結果（v4.84拆分失效的原因）
+          const raw=JSON.parse(s.reminders);
+          if(!Array.isArray(raw))throw new Error("雲端reminders格式異常");
+          const r=migrateReminders(raw);
           setReminders(r);
           localStorage.setItem("hj_reminders",JSON.stringify(r));
+          if(JSON.stringify(raw)!==JSON.stringify(r)) api.saveSetting("reminders",r);
         }
         if(s.trackItems){
           const t=JSON.parse(s.trackItems);
@@ -6562,7 +6812,7 @@ ${overdues.length>0?`・過期追蹤（最急迫）：${overdues[0]}`:""}
         body:`有 ${overdue.length} 項追蹤到期：${overdue.slice(0,3).map(r=>r.title).join("、")}`,
         icon:"/health-journal/icon-192.png"
       });
-      localStorage.setItem("hj_last_notify_date",todayStr);
+      LS.set("hj_last_notify_date",todayStr);
     }
   },[reminders]);
 
@@ -6982,7 +7232,7 @@ ${textPart}
   const toggleTrack = (key) => {
     setTrackItems(prev => {
       const updated = prev.includes(key) ? prev.filter(k=>k!==key) : [...prev, key];
-      localStorage.setItem("hj_track", JSON.stringify(updated));
+      LS.set("hj_track",updated);
       api.saveSetting("trackItems", updated); // 同步到Sheets
       return updated;
     });
@@ -6992,22 +7242,7 @@ ${textPart}
   const autoUpdateReminder=async(recordType,recordDate)=>{
     if(!reminders||reminders.length===0)return;
     // 配對規則：記錄類型關鍵字 → 提醒關鍵字 + 間隔月數
-    const RULES=[
-      {recKeys:["腹部超音波","腹部CT","腹部MRI","腹超"],reminderKeys:["腹","超音波","肝臟"],months:12},
-      {recKeys:["心臟超音波","心臟CT","心臟MRI","心電圖"],reminderKeys:["心臟","心血管","心電","LAD","冠狀"],months:12},
-      {recKeys:["頸動脈超音波"],reminderKeys:["頸動脈"],months:12},
-      {recKeys:["視野檢查","右眼視野"],reminderKeys:["視野"],months:12},
-      {recKeys:["眼底攝影","眼科綜合","眼底","OCT"],reminderKeys:["眼底","眼科","視網膜","OCT"],months:12},
-      {recKeys:["大腸鏡"],reminderKeys:["大腸"],months:60},
-      {recKeys:["胃鏡"],reminderKeys:["胃鏡"],months:24},
-      {recKeys:["腦部MRI","頭部CT"],reminderKeys:["腦部","神經"],months:12},
-      {recKeys:["骨密度"],reminderKeys:["骨密度"],months:24},
-      // 抽血 → 對應多種血液相關提醒（3個月）
-      {recKeys:["lab","抽血","血液"],reminderKeys:["血液","抽血","血常規","血液常規","CBC"],months:3},
-      {recKeys:["lab","抽血","肝功能"],reminderKeys:["肝功能","肝","ALT","AST","GGT","尿酸"],months:3},
-      {recKeys:["lab","抽血","腎功能"],reminderKeys:["腎功能","腎","肌酸酐","eGFR"],months:6},
-      {recKeys:["住院摘要"],reminderKeys:["心臟科","心血管"],months:6},
-    ];
+    
     // 找所有符合的規則（一筆抽血可能對應多項提醒）
     const matchedRules=RULES.filter(r=>r.recKeys.some(k=>recordType.includes(k)||recordType===k));
     if(matchedRules.length===0)return;
@@ -7096,7 +7331,7 @@ ${textPart}
         next.setDate(next.getDate()+r.intervalDays);
         return{...r,lastDate,nextDate:next.toISOString().split("T")[0]};
       });
-      localStorage.setItem("hj_reminders",JSON.stringify(updated));
+      LS.set("hj_reminders",updated);
       api.saveSetting("reminders", updated); // 同步到Sheets
       return updated;
     });
@@ -7119,7 +7354,7 @@ ${textPart}
       const toAdd=PACK.filter(p=>!existIds.has(p.id));
       if(toAdd.length===0){showToast("✅ 追蹤套組已存在，無需重複建立");return prev;}
       const updated=[...prev,...toAdd];
-      localStorage.setItem("hj_reminders",JSON.stringify(updated));
+      LS.set("hj_reminders",updated);
       api.saveSetting("reminders",updated);
       showToast(`✅ 已建立 ${toAdd.length} 項住院追蹤提醒`);
       return updated;
@@ -7135,160 +7370,7 @@ ${textPart}
 
 
 // ── 檢驗項目說明資料庫 ────────────────────────────────
-const LAB_INFO = {
-  hba1c: {
-    name:"HbA1c（糖化血色素）",
-    desc:"反映過去2-3個月的平均血糖水平，是糖尿病診斷和控制的重要指標。",
-    range:"正常 <5.7%　糖尿病前期 5.7-6.4%　糖尿病 ≥6.5%",
-    meaning:"數值越高代表長期血糖控制越差，與心血管、腎臟、視網膜等併發症風險相關。",
-    improve:"減少精緻澱粉和甜食、規律運動、維持體重、睡眠充足",
-    related:"與空腹血糖、體重、三酸甘油酯密切相關",
-  },
-  glucose_ac: {
-    name:"空腹血糖（Fasting Glucose）",
-    desc:"禁食8小時後測量的血糖值，反映身體基礎血糖調節能力。",
-    range:"正常 70-99 mg/dL　前期 100-125　糖尿病 ≥126",
-    meaning:"空腹血糖偏高代表胰島素阻抗或胰臟功能下降，是T2D最早期指標之一。",
-    improve:"規律運動、減重、低GI飲食、避免睡前進食",
-    related:"與HbA1c、體重、三酸甘油酯、HDL相關",
-  },
-  alt: {
-    name:"ALT（丙胺酸轉胺酶）",
-    desc:"主要存在於肝細胞中，肝細胞受損時釋放入血液，是最敏感的肝功能指標。",
-    range:"正常 男性 <44 U/L　女性 <32 U/L",
-    meaning:"升高常見於脂肪肝、病毒性肝炎、藥物影響、過度飲酒。輕度升高（1-3倍）需追蹤。",
-    improve:"減重（尤其腹部脂肪）、戒酒、避免不必要藥物、規律運動",
-    related:"與體重、血脂、GGT密切相關",
-  },
-  ast: {
-    name:"AST（天門冬胺酸轉胺酶）",
-    desc:"存在於肝臟、心臟、肌肉中，比ALT更廣泛，特異性較低。",
-    range:"正常 <40 U/L",
-    meaning:"AST/ALT比值>2可能提示酒精性肝病。運動後AST也可能上升。",
-    improve:"同ALT改善方法",
-    related:"與ALT、CK、LDH相關",
-  },
-  hdl: {
-    name:"HDL-C（高密度脂蛋白）",
-    desc:"俗稱「好的膽固醇」，負責將血管中多餘膽固醇運回肝臟代謝清除。",
-    range:"正常 男性 >40 mg/dL　女性 >50 mg/dL",
-    meaning:"HDL越高越好，偏低代表心血管保護力不足，與T2D、代謝症候群相關。",
-    improve:"有氧運動（最有效）、戒菸、減少反式脂肪、適量飲酒（若無禁忌）",
-    related:"與三酸甘油酯呈反比，與體重、運動量相關",
-  },
-  ldl: {
-    name:"LDL-C（低密度脂蛋白）",
-    desc:"俗稱「壞的膽固醇」，過多時會沉積在血管壁形成動脈硬化斑塊。",
-    range:"正常 <130 mg/dL　T2D患者建議 <100 mg/dL",
-    meaning:"LDL偏高是心肌梗塞、腦中風的主要危險因子，T2D患者需嚴格控制。",
-    improve:"減少飽和脂肪和膽固醇、增加纖維攝取、規律運動",
-    related:"與總膽固醇、飲食脂肪攝取相關",
-  },
-  tg: {
-    name:"三酸甘油酯（Triglyceride）",
-    desc:"血液中最主要的脂肪形式，由飲食攝取或肝臟合成，儲存在脂肪細胞中。",
-    range:"正常 <150 mg/dL　邊緣 150-199　偏高 200-499",
-    meaning:"偏高與精緻糖、酒精攝取過多、肥胖、T2D密切相關，增加心血管風險。",
-    improve:"減少精緻糖和酒精、減重、增加omega-3攝取（魚油）",
-    related:"與HDL呈反比，與血糖、體重密切相關",
-  },
-  cholesterol: {
-    name:"總膽固醇（Total Cholesterol）",
-    desc:"血液中所有膽固醇的總和，包含HDL、LDL和其他成分。",
-    range:"正常 <200 mg/dL　邊緣 200-239　偏高 ≥240",
-    meaning:"需配合HDL/LDL比例分析，單純總膽固醇高不一定危險。",
-    improve:"均衡飲食、規律運動",
-    related:"HDL+LDL+其他脂蛋白的總和",
-  },
-  uric_acid: {
-    name:"尿酸（Uric Acid）",
-    desc:"嘌呤代謝的最終產物，由腎臟排出，過高會沉積在關節形成痛風。",
-    range:"正常 男性 3.4-7.6 mg/dL　女性 2.3-6.6",
-    meaning:"偏高與痛風、腎結石、代謝症候群、心血管疾病風險相關。",
-    improve:"多喝水（每天2L以上）、減少紅肉/海鮮/啤酒、減重",
-    related:"與腎功能、體重、飲食習慣相關",
-  },
-  creatinine: {
-    name:"肌酸酐（Creatinine）",
-    desc:"肌肉代謝產物，幾乎完全由腎臟過濾排出，是腎功能的重要指標。",
-    range:"正常 男性 0.7-1.3 mg/dL　女性 0.6-1.1",
-    meaning:"升高代表腎臟過濾功能下降，需配合eGFR一起判斷。",
-    improve:"多喝水、控制血糖血壓（T2D腎臟保護最重要）、避免腎毒性藥物",
-    related:"與eGFR、BUN、UPCR共同評估腎功能",
-  },
-  gfr: {
-    name:"eGFR（估算腎絲球過濾率）",
-    desc:"估算腎臟每分鐘能過濾多少血液，是腎功能最直接的評估指標。",
-    range:"正常 ≥60 mL/min/1.73m²　CKD分期依數值而定",
-    meaning:"數值越低代表腎功能越差，<60持續3個月以上為慢性腎臟病。",
-    improve:"控制血糖、血壓、體重，避免NSAID類止痛藥",
-    related:"與肌酸酐、UPCR、血壓、血糖密切相關",
-  },
-  upcr: {
-    name:"UPCR（尿液蛋白/肌酸酐比值）",
-    desc:"偵測尿液中是否有異常蛋白質，是糖尿病腎病變最早期的敏感指標。",
-    range:"正常 <30 mg/g　微量蛋白尿 30-300　顯性蛋白尿 >300",
-    meaning:"T2D患者UPCR偏高是腎臟早期損傷的警訊，需積極控制血糖血壓。",
-    improve:"嚴格控制血糖（HbA1c<7%）、血壓（<130/80）、ACEI/ARB藥物",
-    related:"與HbA1c、血壓、eGFR密切相關",
-  },
-  tsh: {
-    name:"TSH（甲狀腺促素）",
-    desc:"腦下垂體分泌的激素，調控甲狀腺功能，是甲狀腺疾病的第一線篩檢。",
-    range:"正常 0.34-5.60 uIU/mL",
-    meaning:"偏高=甲狀腺功能低下（疲倦、體重增加）；偏低=甲亢（心跳快、消瘦）。",
-    improve:"甲狀腺疾病需醫師治療，不能自行處理",
-    related:"T2D患者甲狀腺疾病風險較高，建議每年追蹤",
-  },
-  crp: {
-    name:"CRP（C反應蛋白）",
-    desc:"肝臟在急性發炎、感染、組織損傷時大量分泌的蛋白質，是發炎指標。",
-    range:"正常 <1.0 mg/L　輕度發炎 1-3　中度 3-10",
-    meaning:"慢性低度發炎（CRP 1-3）與T2D、心血管疾病、代謝症候群密切相關。",
-    improve:"規律運動、減重、地中海飲食、充足睡眠、戒菸",
-    related:"與血糖、血脂、體重、生活習慣相關",
-  },
-  ggt: {
-    name:"GGT（麩胺轉移酶）",
-    desc:"存在於肝臟、膽管、腎臟中，對脂肪肝和酒精性肝病特別敏感。",
-    range:"正常 男性 <60 U/L　女性 <45 U/L",
-    meaning:"GGT是脂肪肝最敏感的指標之一，飲酒後特別顯著升高。",
-    improve:"戒酒、減重（減少腹部脂肪）、規律運動",
-    related:"與ALT、體重、脂肪肝、飲酒習慣相關",
-  },
-  bun: {
-    name:"BUN（血中尿素氮）",
-    desc:"蛋白質代謝產物，由腎臟排出，反映腎功能和蛋白質攝取量。",
-    range:"正常 7-23 mg/dL",
-    meaning:"偏高可能是腎功能下降或高蛋白飲食；偏低可能是蛋白質攝取不足。",
-    improve:"適量蛋白質攝取、多喝水、控制血糖血壓",
-    related:"與肌酸酐、eGFR共同評估腎功能",
-  },
-  hb: {
-    name:"血紅素 Hb（Hemoglobin）",
-    desc:"紅血球中攜帶氧氣的蛋白質，反映貧血狀態。",
-    range:"正常 男性 13.7-17.0 g/dL",
-    meaning:"偏低代表貧血，可能影響疲勞感和運動能力；與T2D腎臟病變相關。",
-    improve:"補充鐵質、維生素B12、葉酸，治療潛在疾病",
-    related:"與RBC、HCT、MCV相關",
-  },
-  wbc: {
-    name:"WBC（白血球）",
-    desc:"免疫系統的主要細胞，負責對抗感染和異物。",
-    range:"正常 3.6-11.2 x10³/uL",
-    meaning:"偏高可能是感染、發炎、壓力；偏低可能是免疫抑制或骨髓問題。",
-    improve:"維持規律作息、均衡飲食、避免過度疲勞",
-    related:"與CRP、感染狀態相關",
-  },
-  platelet: {
-    name:"血小板（Platelet）",
-    desc:"負責血液凝固和止血的小細胞片段。",
-    range:"正常 130-400 x10³/uL",
-    meaning:"偏低增加出血風險；偏高增加血栓風險。T2D患者血小板功能常有異常。",
-    improve:"均衡飲食、避免NSAID類藥物（影響血小板功能）",
-    related:"與凝血功能、肝功能相關",
-  },
-};
+
 
 // ── 趨勢分析函數 ──────────────────────────────────────
 const analyzeTrend = (key, data) => {
@@ -7353,25 +7435,7 @@ const analyzeTrend = (key, data) => {
   }
 
   // 建議文字
-  const suggestions = {
-    hba1c: {worse:"減少精緻澱粉、增加運動", better:"繼續維持良好飲食習慣", stable:"維持目前生活方式"},
-    glucose_ac: {worse:"注意睡前飲食、減少甜食", better:"血糖控制改善中", stable:"維持空腹規律"},
-    alt: {worse:"注意飲酒、避免油膩食物", better:"肝功能改善中", stable:"定期追蹤"},
-    hdl: {worse:"增加有氧運動、減少反式脂肪", better:"好膽固醇上升中", stable:"持續運動維持"},
-    ldl: {worse:"減少飽和脂肪、增加纖維攝取", better:"壞膽固醇下降中", stable:"定期追蹤"},
-    tg: {worse:"減少精緻糖和酒精", better:"三酸甘油酯改善中", stable:"定期追蹤"},
-    uric_acid: {worse:"多喝水、減少紅肉和海鮮", better:"尿酸下降中", stable:"定期追蹤"},
-    creatinine: {worse:"注意腎臟健康、多補充水分", better:"腎功能指標改善", stable:"定期追蹤"},
-    upcr: {worse:"注意腎臟早期病變", better:"蛋白尿指標改善", stable:"定期追蹤"},
-    crp: {worse:"注意發炎來源、改善生活習慣", better:"發炎指標下降", stable:"定期追蹤"},
-    ggt: {worse:"注意脂肪肝或飲酒影響", better:"肝膽指標改善", stable:"定期追蹤"},
-    ck: {worse:"避免過度激烈運動", better:"肌肉壓力減少", stable:"定期追蹤"},
-    bun: {worse:"注意腎功能或蛋白質攝取", better:"腎功能指標改善", stable:"定期追蹤"},
-    na: {worse:"注意電解質平衡", better:"鈉值趨於正常", stable:"維持均衡飲食"},
-    k: {worse:"注意電解質平衡", better:"鉀值趨於正常", stable:"維持均衡飲食"},
-    mg: {worse:"考慮補充鎂", better:"鎂值改善", stable:"維持均衡飲食"},
-    ca: {worse:"注意鈣質攝取", better:"鈣值改善", stable:"維持均衡飲食"},
-  };
+  
 
   const suggest = suggestions[key]?.[direction] || "定期追蹤";
 
@@ -7709,7 +7773,7 @@ ${exSummary}
       updates.push({id:rem.id,lastDate:srcDate,nextDate:newNext});
     }
     if(updates.length===0){
-      localStorage.setItem("hj_reminder_sync_date",todayStr);
+      LS.set("hj_reminder_sync_date",todayStr);
       return;
     }
     (async()=>{
@@ -7724,7 +7788,7 @@ ${exSummary}
         await api.saveSetting("reminders", newReminders);
         localStorage.setItem("hj_reminders",JSON.stringify(newReminders));
       }catch(e){console.log("reminder sync error",e);}
-      localStorage.setItem("hj_reminder_sync_date",todayStr);
+      LS.set("hj_reminder_sync_date",todayStr);
     })();
   },[loading]);
 
@@ -7736,7 +7800,7 @@ ${exSummary}
     {key:"trend",label:"趨勢",icon:<TrendIcon/>},
     {key:"record",label:"記錄",icon:<RecordIcon/>},
     {key:"ai",label:"AI",icon:<AIIcon/>},
-    {key:"knowledge",label:"知識",icon:<span style={{fontSize:18}}>📚</span>},
+    {key:"knowledge",label:"知識",icon:<span style={ST.S26}>📚</span>},
     {key:"setting",label:"設定",icon:<SettingIcon/>},
   ];
 
@@ -7756,9 +7820,9 @@ ${exSummary}
               <br/>建議優先使用「貼上文字」以節省費用
               <br/><br/>確定要用照片解析嗎？
             </div>
-            <div style={{display:"flex",gap:10}}>
-              <button className="btn-secondary" style={{flex:1}} onClick={()=>{setShowPhotoWarning(false);setPendingPhotos(null);}}>取消</button>
-              <button className="btn-primary" style={{flex:2}} onClick={()=>{confirmPhotos();photoInputRef.current?.click();}}>確定上傳照片</button>
+            <div style={ST.S21}>
+              <button className="btn-secondary" style={ST.S2} onClick={()=>{setShowPhotoWarning(false);setPendingPhotos(null);}}>取消</button>
+              <button className="btn-primary" style={ST.S10} onClick={()=>{confirmPhotos();photoInputRef.current?.click();}}>確定上傳照片</button>
             </div>
           </div>
         </div>
@@ -7775,54 +7839,54 @@ ${exSummary}
             </div>
             {/* 類型+日期 */}
             <div style={{display:"flex",gap:8,marginBottom:8}}>
-              <select className="input-field" style={{flex:1}} value={editImaging.type}
+              <select className="input-field" style={ST.S2} value={editImaging.type}
                 onChange={e=>setEditImaging(v=>({...v,type:e.target.value}))}>
                 {IMAGING_TYPES.map(t=><option key={t}>{t}</option>)}
               </select>
-              <input className="input-field" type="date" style={{flex:1}} value={editImaging.date}
+              <input className="input-field" type="date" style={ST.S2} value={editImaging.date}
                 onChange={e=>setEditImaging(v=>({...v,date:e.target.value}))}/>
             </div>
             {/* 醫院+國家 */}
             <div style={{display:"flex",gap:8,marginBottom:8}}>
-              <input className="input-field" placeholder="醫院名稱" style={{flex:2}} value={editImaging.hospital||""}
+              <input className="input-field" placeholder="醫院名稱" style={ST.S10} value={editImaging.hospital||""}
                 onChange={e=>setEditImaging(v=>({...v,hospital:e.target.value}))}/>
-              <input className="input-field" placeholder="國家" style={{flex:1}} value={editImaging.country||""}
+              <input className="input-field" placeholder="國家" style={ST.S2} value={editImaging.country||""}
                 onChange={e=>setEditImaging(v=>({...v,country:e.target.value}))}/>
             </div>
             {/* 報告結論 */}
-            <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>報告結論（詳細）</div>
+            <div style={ST.S11}>報告結論（詳細）</div>
             <textarea className="input-field" rows={8} style={{resize:"vertical",marginBottom:8,fontSize:12,lineHeight:1.7}}
               value={editImaging.finding||""}
               onChange={e=>setEditImaging(v=>({...v,finding:e.target.value}))}
               placeholder="貼上完整報告內容..."/>
             {/* 醫師建議 */}
-            <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>醫師建議</div>
+            <div style={ST.S11}>醫師建議</div>
             <textarea className="input-field" rows={3} style={{resize:"vertical",marginBottom:8,fontSize:12}}
               value={editImaging.recommendation||""}
               onChange={e=>setEditImaging(v=>({...v,recommendation:e.target.value}))}
               placeholder="醫師建議、追蹤事項..."/>
             {/* 下次追蹤+備註 */}
             <div style={{display:"flex",gap:8,marginBottom:12}}>
-              <div style={{flex:1}}>
-                <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>下次追蹤日期</div>
+              <div style={ST.S2}>
+                <div style={ST.S11}>下次追蹤日期</div>
                 <input className="input-field" type="date" value={editImaging.nextDate||""}
                   onChange={e=>setEditImaging(v=>({...v,nextDate:e.target.value}))}/>
               </div>
-              <div style={{flex:1}}>
-                <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>備註</div>
+              <div style={ST.S2}>
+                <div style={ST.S11}>備註</div>
                 <input className="input-field" value={editImaging.note||""}
                   onChange={e=>setEditImaging(v=>({...v,note:e.target.value}))}
                   placeholder="其他備註..."/>
               </div>
             </div>
             {/* ★ v4.72 照片：直接上傳（縮圖+刪除），沿用Cloudinary標準（1200px JPEG 75%）*/}
-            <div style={{fontSize:11,color:C.textMuted,marginBottom:4}}>照片（最多3張）</div>
+            <div style={ST.S11}>照片（最多3張）</div>
             {(()=>{
               const urls=(editImaging.driveUrl||"").split(",").map(s=>s.trim()).filter(Boolean);
               return(
-                <div style={{marginBottom:8}}>
+                <div style={ST.S1}>
                   {urls.length>0&&(
-                    <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                    <div style={ST.S36}>
                       {urls.map((p,i)=>(
                         <div key={i} className="photo-preview">
                           <img src={p} alt={`影像${i+1}`}/>
@@ -7838,10 +7902,10 @@ ${exSummary}
                     <div style={{border:`2px dashed ${C.border}`,borderRadius:10,padding:"12px",textAlign:"center",cursor:"pointer"}}
                       onClick={()=>editImagingPhotoRef.current?.click()}>
                       <div style={{fontSize:20,marginBottom:2}}>📷</div>
-                      <div style={{fontSize:12,color:C.textMuted}}>點擊上傳照片</div>
+                      <div style={ST.S6}>點擊上傳照片</div>
                     </div>
                   )}
-                  <input ref={editImagingPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}}
+                  <input ref={editImagingPhotoRef} type="file" accept="image/*" multiple style={ST.S25}
                     onChange={async e=>{
                       const cloudName=localStorage.getItem("cloudinary_name");
                       if(!cloudName){showToast("⚠️ 請先在設定頁填入 Cloudinary 設定");e.target.value="";return;}
@@ -7867,9 +7931,9 @@ ${exSummary}
               value={editImaging.driveUrl||""}
               onChange={e=>setEditImaging(v=>({...v,driveUrl:e.target.value}))}
               placeholder="https://res.cloudinary.com/..."/>
-            <div style={{display:"flex",gap:10}}>
-              <button className="btn-secondary" style={{flex:1}} onClick={()=>setEditImaging(null)}>取消</button>
-              <button className="btn-primary" style={{flex:2}} onClick={updateImaging}>💾 儲存更新</button>
+            <div style={ST.S21}>
+              <button className="btn-secondary" style={ST.S2} onClick={()=>setEditImaging(null)}>取消</button>
+              <button className="btn-primary" style={ST.S10} onClick={updateImaging}>💾 儲存更新</button>
             </div>
           </div>
         </div>
