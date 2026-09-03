@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.83"; // v4.83: 修正Modal被推到頁面底部看不到（fade-in的transform動畫使position:fixed改以容器為基準）
+const VERSION = "v4.84"; // v4.84: 「肝功能ALT+尿酸追蹤」拆為兩獨立項目（含既有資料自動遷移）
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
 const GEMINI_MODEL_DEFAULT = "gemini-3.5-flash";
@@ -6249,10 +6249,30 @@ function HealthJournalInner(){
     {id:"R004",title:"眼底檢查",icon:"👁️",intervalDays:365,lastDate:"2025-05-27",nextDate:"2026-05-27"},
     {id:"R005",title:"心電圖",icon:"💓",intervalDays:365,lastDate:"2025-05-27",nextDate:"2026-05-27"},
   ];
+  // ★ v4.84 舊資料遷移：把合併的「肝功能ALT+尿酸追蹤」拆成兩筆獨立項目
+  const migrateReminders=(list)=>{
+    if(!Array.isArray(list))return list;
+    const idx=list.findIndex(r=>String(r&&r.title||"").indexOf("肝功能ALT+尿酸")>=0);
+    if(idx<0)return list;
+    const old=list[idx];
+    const out=[...list];
+    out[idx]={...old,id:old.id||"HF06",title:"肝功能ALT追蹤",icon:"🫁"};
+    if(!list.some(r=>String(r&&r.title||"")==="尿酸追蹤")){
+      // 尿酸不沿用ALT的日期（近期抽血未驗尿酸），回到2025-03住院那次→會顯示到期提醒
+      out.splice(idx+1,0,{
+        id:"HF07",title:"尿酸追蹤",icon:"🔬",
+        intervalDays:old.intervalDays||90,
+        lastDate:"2025-03-19",
+        nextDate:"2025-06-19",
+      });
+    }
+    try{localStorage.setItem("hj_reminders",JSON.stringify(out));}catch(e){}
+    return out;
+  };
   const [reminders,setReminders]=useState(()=>{
     try{
       const saved=localStorage.getItem("hj_reminders");
-      return saved?JSON.parse(saved):DEFAULT_REMINDERS;
+      return saved?migrateReminders(JSON.parse(saved)):DEFAULT_REMINDERS;
     }catch(e){return DEFAULT_REMINDERS;}
   });
   const [editReminder,setEditReminder]=useState(null);
@@ -7091,7 +7111,8 @@ ${textPart}
       {id:"HF03",title:"眼底追蹤+OCT（視網膜退化）",icon:"👁️",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-09-19"},
       {id:"HF04",title:"腹部超音波（脂肪肝G2+腎囊腫）",icon:"🔬",intervalDays:365,lastDate:"2025-03-19",nextDate:"2025-09-19"},
       {id:"HF05",title:"血液常規（WBC+血小板追蹤）",icon:"🩸",intervalDays:90,lastDate:"2025-03-19",nextDate:"2025-06-19"},
-      {id:"HF06",title:"肝功能ALT+尿酸追蹤",icon:"🫁",intervalDays:90,lastDate:"2025-03-19",nextDate:"2025-06-19"},
+      {id:"HF06",title:"肝功能ALT追蹤",icon:"🫁",intervalDays:90,lastDate:"2025-03-19",nextDate:"2025-06-19"},
+      {id:"HF07",title:"尿酸追蹤",icon:"🔬",intervalDays:90,lastDate:"2025-03-19",nextDate:"2025-06-19"},
     ];
     setReminders(prev=>{
       const existIds=new Set(prev.map(r=>r.id));
