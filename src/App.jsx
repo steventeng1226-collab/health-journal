@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.88"; // v4.88: 修正GAS回傳非陣列/含空白列時App崩潰（Sheets有空行或雲端資料異常的實際風險）
+const VERSION = "v4.89"; // v4.89: 睡眠頁支援直接上傳Watch截圖由AI解析（免經ChatGPT），ChatGPT流程保留為備援
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
 const GEMINI_MODEL_DEFAULT = "gemini-3.5-flash";
@@ -428,6 +428,14 @@ const StatusDot = ({status}) => {
 };
 
 // ── Cloudinary 照片上傳 ───────────────────────────────
+// ★ v4.89 File → base64（供 Gemini inline_data）
+const fileToBase64 = (file) => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => { const d=String(r.result||""); res(d.slice(d.indexOf(",")+1)); };
+  r.onerror = () => rej(new Error("讀取圖片失敗"));
+  r.readAsDataURL(file);
+});
+
 const compressImage = (file) => new Promise((res) => {
   if (!file.type.startsWith("image/")) { res(file); return; }
   const img = new Image();
@@ -4000,7 +4008,7 @@ const MealTab=({hj})=>{ const{setTab,showToast}=hj;
   };
 
 // ═══ RecordTab（v4.74 搬出至模組層：穩定元件identity，根治重建/閃爍/焦點問題）═══
-const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,editSleepRecord,emptySleepForm,glucoseForm,hospitalList,imagingForm,imagingPhotoRef,imagingPhotos,recordTab,saveBP,saveGlucose,saveImaging,saveWeight,setBpForm,setEditBPRecord,setEditSleepRecord,setGlucoseForm,setImagingForm,setImagingPhotos,setRecordTab,setShowSleepPaste,setSleepAnalysis,setSleepAnalyzing,setSleepForm,setSleepLog,setSleepPasteText,setWeightForm,showSleepPaste,showToast,sleepAnalysis,sleepAnalyzing,sleepForm,sleepLog,sleepPasteText,updateBP,weightForm,weightHistory}=hj;
+const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,editSleepRecord,emptySleepForm,glucoseForm,hospitalList,imagingForm,imagingPhotoRef,imagingPhotos,recordTab,saveBP,saveGlucose,saveImaging,saveWeight,setBpForm,setEditBPRecord,setEditSleepRecord,setGlucoseForm,setImagingForm,setImagingPhotos,setRecordTab,setShowSleepPaste,setSleepAnalysis,setSleepAnalyzing,setSleepForm,setSleepLog,setSleepPasteText,setSleepShotBusy,setWeightForm,showSleepPaste,showToast,sleepAnalysis,sleepAnalyzing,sleepForm,sleepLog,sleepPasteText,sleepShotBusy,sleepShotRef,updateBP,weightForm,weightHistory}=hj;
     const SUBS=[{key:"history",label:"📂歷史"},{key:"glucose",label:"🩸血糖"},{key:"bp",label:"💓血壓"},{key:"weight",label:"⚖️體重"},{key:"lab",label:"📋抽血"},{key:"imaging",label:"🔬影像"},{key:"meal",label:"🍱飲食"},{key:"exercise",label:"🏃運動"},{key:"sleep",label:"😴睡眠"}];
     return(
       <div className="fade-in" style={ST.S8}>
@@ -4309,6 +4317,99 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
             showToast("✅ 解析完成，請確認後儲存");
           };
 
+          // ★ v4.89 直接上傳 Watch 截圖 → AI 解析（免經 ChatGPT）
+          const parseSleepShots = async (files) => {
+            const key=(localStorage.getItem("hj_apikey")||"").trim();
+            if(!key){showToast("⚠️ 請先到設定頁輸入 Gemini API 金鑰");return;}
+            const list=Array.from(files).slice(0,6);
+            if(!list.length)return;
+            setSleepShotBusy(true);
+            try{
+              showToast(`⏳ 壓縮 ${list.length} 張截圖…`);
+              const parts=[];
+              for(const f of list){
+                const c=await compressImage(f);
+                const b64=await fileToBase64(c);
+                parts.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}});
+              }
+              parts.push({type:"text",text:`你是資料擷取助手。以下是 Samsung Health 睡眠報告的多張截圖（可能包含：睡眠分數組成因素、實際睡眠時間、深層睡眠、快速動眼期(REM)、清醒、入睡期、血氧、心率等頁面）。
+
+請擷取數據並「只」輸出下列格式，每行一項，冒號用全形「：」，不要任何說明文字、不要markdown：
+
+日期：YYYY/MM/DD
+上床時間：HH:MM
+起床時間：HH:MM
+總時間（分鐘）：數字
+實際睡眠（分鐘）：數字
+睡眠評分：數字
+深層睡眠（分鐘）：數字
+淺層睡眠（分鐘）：數字
+REM（分鐘）：數字
+清醒（分鐘）：數字
+血氧平均（%）：數字
+血氧最低值（%）：數字
+血氧低於90%（分鐘）：數字
+平均心跳（次/分）：數字
+心率最低值（次/分）：數字
+呼吸速率（次/分）：數字
+
+規則：
+1. 時間如「2 小時 57 分」請換算成分鐘（177）。
+2. 「46 分鐘/2 小時 57 分」代表該項46分鐘、實際睡眠177分鐘。
+3. 日期以起床當天為準；截圖若只顯示時間軸（如 23:24→03:06），上床時間取起點、起床時間取終點。
+4. 截圖中找不到的項目，該行數值填 0（時間類填空白），不要省略該行。
+5. 只輸出上述16行。`});
+
+              showToast("⏳ AI 解析中（約10秒）…");
+              const raw=await callAI([{role:"user",content:parts}],800);
+              const txt=String(raw||"").replace(/\u0060\u0060\u0060/g,"").trim();
+              if(!txt){showToast("❌ AI 未回傳內容");return;}
+
+              // 複用既有的固定格式解析
+              const ls=txt.split("\n").map(l=>l.trim()).filter(Boolean);
+              const g=(k)=>{const l=ls.find(x=>x.startsWith(k));return l?(l.split("：")[1]||"").trim():"";};
+              const I=(x)=>parseInt(x)||0, F=(x)=>parseFloat(x)||0;
+              const parsed={
+                date:(g("日期")||today()).replace(/\//g,"-"),
+                bedtime:g("上床時間")||"",
+                waketime:g("起床時間")||"",
+                total_min:I(g("總時間（分鐘）")),
+                actual_min:I(g("實際睡眠（分鐘）")),
+                score:I(g("睡眠評分")),
+                deep_min:I(g("深層睡眠（分鐘）")),
+                light_min:I(g("淺層睡眠（分鐘）")),
+                rem_min:I(g("REM（分鐘）")),
+                awake_min:I(g("清醒（分鐘）")),
+                spo2_avg:I(g("血氧平均（%）")),
+                spo2_min:I(g("血氧最低值（%）")),
+                spo2_below90_min:F(g("血氧低於90%（分鐘）")),
+                hr_avg:I(g("平均心跳（次/分）")),
+                hr_min:I(g("心率最低值（次/分）")),
+                breath_rate:F(g("呼吸速率（次/分）")),
+                note:"",
+              };
+              if(!parsed.total_min&&!parsed.actual_min&&!parsed.score){
+                setSleepPasteText(txt);
+                setShowSleepPaste(true);
+                showToast("⚠️ 擷取不完整，AI原文已放入下方貼上區供手動調整");
+                return;
+              }
+              setSleepForm(parsed);
+              const miss=[];
+              if(!parsed.score)miss.push("評分");
+              if(!parsed.deep_min)miss.push("深層");
+              if(!parsed.rem_min)miss.push("REM");
+              if(!parsed.spo2_avg)miss.push("血氧");
+              showToast(miss.length
+                ? `✅ 已填入，缺 ${miss.join("/")}（截圖未含，可手動補）`
+                : "✅ 全部欄位已填入，請確認後儲存");
+            }catch(e){
+              showToast("❌ 解析失敗："+String(e.message||e));
+            }finally{
+              setSleepShotBusy(false);
+            }
+          };
+
           const analyzeSleep=async()=>{
             const key=localStorage.getItem("hj_apikey")||apiKey||"";
             if(!key){showToast("⚠️ 請先設定API金鑰");return;}
@@ -4395,9 +4496,27 @@ ${weekData||"尚無記錄"}
           return(
             <div>
               <div className="card" style={ST.S4}>
-                <div className="card-title">😴 輸入 Watch 7 睡眠數據</div>
+                <div className="card-title">😴 輸入 Watch 睡眠數據</div>
 
-                {/* ChatGPT指令複製區 */}
+                {/* ★ v4.89 主要入口：直接上傳截圖由AI解析 */}
+                <div style={{border:`1px solid ${C.green}`,borderRadius:10,padding:"12px",marginBottom:12,
+                  background:"linear-gradient(135deg,rgba(46,204,138,0.10),rgba(52,152,219,0.08))"}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.green,marginBottom:4}}>📷 上傳截圖自動填入（推薦）</div>
+                  <div style={{fontSize:11,color:C.textMuted,marginBottom:10,lineHeight:1.7}}>
+                    從 Samsung Health 截下睡眠頁面（可多選最多6張：分數組成／深層／REM／清醒／入睡期／血氧），AI 直接讀圖填好所有欄位。
+                  </div>
+                  <button disabled={sleepShotBusy}
+                    onClick={()=>sleepShotRef.current&&sleepShotRef.current.click()}
+                    style={{width:"100%",padding:"12px",background:sleepShotBusy?C.border:C.green,border:"none",
+                      borderRadius:8,color:sleepShotBusy?C.textMuted:"#000",fontSize:14,fontWeight:700,
+                      cursor:sleepShotBusy?"default":"pointer",fontFamily:"'Noto Sans TC',sans-serif"}}>
+                    {sleepShotBusy?"⏳ AI 解析中…":"📷 選擇截圖（可多選）"}
+                  </button>
+                  <input ref={sleepShotRef} type="file" accept="image/*" multiple style={ST.S25}
+                    onChange={e=>{const f=e.target.files;e.target.value="";if(f&&f.length)parseSleepShots(f);}}/>
+                </div>
+
+                {/* ChatGPT指令複製區（備援：Gemini額度用完時可用）*/}
                 {<MealRecordSection showToast={showToast}/>}
                 {/* 貼上解析區 */}
                 <button onClick={()=>setShowSleepPaste(v=>!v)}
@@ -6533,6 +6652,8 @@ function HealthJournalInner(){
     pre_sleep_exercise:"",pre_sleep_stress:"無",note:""};
   const [sleepForm,setSleepForm]=useState(emptySleepForm);
   const [sleepPasteText,setSleepPasteText]=useState("");
+  const [sleepShotBusy,setSleepShotBusy]=useState(false); // ★ v4.89 截圖解析中
+  const sleepShotRef=useRef(null);
   const [showSleepPaste,setShowSleepPaste]=useState(false);
   const [sleepAnalysis,setSleepAnalysis]=useState(null);
   const [sleepAnalyzing,setSleepAnalyzing]=useState(false);
@@ -7805,7 +7926,7 @@ ${exSummary}
   ];
 
   // ★ v4.74 元件context：集中傳遞父層state/函數給模組層元件
-  const hj={addHospitalFollowups,aiLoading,aiReport,aiReportDate,analyzeTrend,apiKey,bpForm,bpHistory,customArticles,dailyGreeting,deleteBP,detectHealthAlerts,editBPRecord,editReminder,editSleepRecord,emptySleepForm,exerciseLog,generateAIReport,generateDailyGreeting,generateOverallReport,glucoseForm,glucoseHistory,greetingLoading,handlePhotoChange,hospitalList,imagingForm,imagingHistory,imagingPhotoRef,imagingPhotos,isOnline,kbTab,labForm,labHistory,labInputText,labParsed,labPhotos,labStep,lastSync,latestLab,lightboxUrl,loadData,loading,overallDate,overallLoading,overallReport,overdueReminders,parseLabText,photoInputRef,recordTab,reminderSyncDone,reminders,saveBP,saveGlucose,saveImaging,saveLabReport,saveWeight,selectedArticle,selectedKnowledge,selectedMedicine,setAiReport,setAiReportDate,setApiKey,setBpForm,setCustomArticles,setDailyGreeting,setEditBPRecord,setEditImaging,setEditReminder,setEditSleepRecord,setExerciseLog,setGlucoseForm,setHospitalList,setImagingForm,setImagingPhotos,setKbTab,setLabForm,setLabInputText,setLabParsed,setLabPhotos,setLabStep,setLightboxUrl,setOverallDate,setOverallReport,setRecordTab,setReminders,setSelectedArticle,setSelectedKnowledge,setSelectedMedicine,setShowAddArticle,setShowOverdue,setShowPhotoWarning,setShowSleepPaste,setShowTrackPicker,setSleepAnalysis,setSleepAnalyzing,setSleepForm,setSleepLog,setSleepPasteText,setTab,setTrackItems,setTrendAiKey,setTrendAiLoading,setTrendAiResult,setTrendItem,setWeightForm,showAddArticle,showOverdue,showSleepPaste,showToast,showTrackPicker,sleepAnalysis,sleepAnalyzing,sleepForm,sleepLog,sleepPasteText,syncStatus,toggleTrack,trackItems,trendAiKey,trendAiLoading,trendAiResult,trendItem,updateBP,updateReminderDate,weightForm,weightHistory};
+  const hj={addHospitalFollowups,aiLoading,aiReport,aiReportDate,analyzeTrend,apiKey,bpForm,bpHistory,customArticles,dailyGreeting,deleteBP,detectHealthAlerts,editBPRecord,editReminder,editSleepRecord,emptySleepForm,exerciseLog,generateAIReport,generateDailyGreeting,generateOverallReport,glucoseForm,glucoseHistory,greetingLoading,handlePhotoChange,hospitalList,imagingForm,imagingHistory,imagingPhotoRef,imagingPhotos,isOnline,kbTab,labForm,labHistory,labInputText,labParsed,labPhotos,labStep,lastSync,latestLab,lightboxUrl,loadData,loading,overallDate,overallLoading,overallReport,overdueReminders,parseLabText,photoInputRef,recordTab,reminderSyncDone,reminders,saveBP,saveGlucose,saveImaging,saveLabReport,saveWeight,selectedArticle,selectedKnowledge,selectedMedicine,setAiReport,setAiReportDate,setApiKey,setBpForm,setCustomArticles,setDailyGreeting,setEditBPRecord,setEditImaging,setEditReminder,setEditSleepRecord,setExerciseLog,setGlucoseForm,setHospitalList,setImagingForm,setImagingPhotos,setKbTab,setLabForm,setLabInputText,setLabParsed,setLabPhotos,setLabStep,setLightboxUrl,setOverallDate,setOverallReport,setRecordTab,setReminders,setSelectedArticle,setSelectedKnowledge,setSelectedMedicine,setShowAddArticle,setShowOverdue,setShowPhotoWarning,setShowSleepPaste,setShowTrackPicker,setSleepAnalysis,setSleepAnalyzing,setSleepForm,setSleepLog,setSleepPasteText,setSleepShotBusy,setTab,setTrackItems,setTrendAiKey,setTrendAiLoading,setTrendAiResult,setTrendItem,setWeightForm,showAddArticle,showOverdue,showSleepPaste,showToast,showTrackPicker,sleepAnalysis,sleepAnalyzing,sleepForm,sleepLog,sleepPasteText,sleepShotBusy,sleepShotRef,syncStatus,toggleTrack,trackItems,trendAiKey,trendAiLoading,trendAiResult,trendItem,updateBP,updateReminderDate,weightForm,weightHistory};
   return(
     <>
       <style>{styles}</style>
