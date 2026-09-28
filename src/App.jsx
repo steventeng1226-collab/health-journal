@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.89"; // v4.89: 睡眠頁支援直接上傳Watch截圖由AI解析（免經ChatGPT），ChatGPT流程保留為備援
+const VERSION = "v4.90"; // v4.90: 修正睡眠截圖上傳無反應（清空input前未複製FileList導致檔案遺失）+壓縮逾時保護+錯誤可見化
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
 const GEMINI_MODEL_DEFAULT = "gemini-3.5-flash";
@@ -439,7 +439,13 @@ const fileToBase64 = (file) => new Promise((res, rej) => {
 const compressImage = (file) => new Promise((res) => {
   if (!file.type.startsWith("image/")) { res(file); return; }
   const img = new Image();
+  // ★ v4.90 逾時/失敗保護：解碼失敗時原本會永遠卡在 await，改為退回原檔
+  let done = false;
+  const finish = (r) => { if (!done) { done = true; res(r); } };
+  const timer = setTimeout(() => finish(file), 15000);
+  img.onerror = () => { clearTimeout(timer); finish(file); };
   img.onload = () => {
+    clearTimeout(timer);
     const MAX = 1200;
     let w = img.width, h = img.height;
     if (w > MAX || h > MAX) {
@@ -450,7 +456,7 @@ const compressImage = (file) => new Promise((res) => {
     canvas.width = w; canvas.height = h;
     canvas.getContext("2d").drawImage(img, 0, 0, w, h);
     canvas.toBlob(
-      blob => res(new File([blob], file.name, { type: "image/jpeg" })),
+      blob => finish(blob ? new File([blob], file.name, { type: "image/jpeg" }) : file),
       "image/jpeg", 0.75
     );
   };
@@ -4321,11 +4327,11 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
           const parseSleepShots = async (files) => {
             const key=(localStorage.getItem("hj_apikey")||"").trim();
             if(!key){showToast("⚠️ 請先到設定頁輸入 Gemini API 金鑰");return;}
-            const list=Array.from(files).slice(0,6);
-            if(!list.length)return;
+            const list=Array.from(files||[]).slice(0,6);
+            if(!list.length){showToast("⚠️ 沒有選到檔案");return;}
             setSleepShotBusy(true);
             try{
-              showToast(`⏳ 壓縮 ${list.length} 張截圖…`);
+              showToast(`⏳ 處理 ${list.length} 張截圖…`);
               const parts=[];
               for(const f of list){
                 const c=await compressImage(f);
@@ -4513,7 +4519,13 @@ ${weekData||"尚無記錄"}
                     {sleepShotBusy?"⏳ AI 解析中…":"📷 選擇截圖（可多選）"}
                   </button>
                   <input ref={sleepShotRef} type="file" accept="image/*" multiple style={ST.S25}
-                    onChange={e=>{const f=e.target.files;e.target.value="";if(f&&f.length)parseSleepShots(f);}}/>
+                    onChange={e=>{
+                      // ★ v4.90 必須先複製成陣列：e.target.value="" 會同時清空 FileList（即時參照）
+                      const picked=Array.from(e.target.files||[]);
+                      e.target.value="";
+                      if(picked.length)parseSleepShots(picked);
+                      else showToast("⚠️ 未取得檔案，請再試一次");
+                    }}/>
                 </div>
 
                 {/* ChatGPT指令複製區（備援：Gemini額度用完時可用）*/}
