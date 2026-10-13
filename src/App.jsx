@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.90"; // v4.90: 修正睡眠截圖上傳無反應（清空input前未複製FileList導致檔案遺失）+壓縮逾時保護+錯誤可見化
+const VERSION = "v4.91"; // v4.91: 睡眠截圖辨識改善——高解析壓縮(1200→2000px防小字糊掉)+日期由App提供(截圖無日期)+24小時制與秒數換算規則
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
 const GEMINI_MODEL_DEFAULT = "gemini-3.5-flash";
@@ -436,7 +436,8 @@ const fileToBase64 = (file) => new Promise((res, rej) => {
   r.readAsDataURL(file);
 });
 
-const compressImage = (file) => new Promise((res) => {
+// ★ v4.91 maxSize 可調：手機截圖(1080x2400)壓到1200會變540x1200，小字糊掉導致AI讀不到
+const compressImage = (file, maxSize) => new Promise((res) => {
   if (!file.type.startsWith("image/")) { res(file); return; }
   const img = new Image();
   // ★ v4.90 逾時/失敗保護：解碼失敗時原本會永遠卡在 await，改為退回原檔
@@ -446,7 +447,7 @@ const compressImage = (file) => new Promise((res) => {
   img.onerror = () => { clearTimeout(timer); finish(file); };
   img.onload = () => {
     clearTimeout(timer);
-    const MAX = 1200;
+    const MAX = maxSize || 1200;
     let w = img.width, h = img.height;
     if (w > MAX || h > MAX) {
       if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
@@ -457,7 +458,7 @@ const compressImage = (file) => new Promise((res) => {
     canvas.getContext("2d").drawImage(img, 0, 0, w, h);
     canvas.toBlob(
       blob => finish(blob ? new File([blob], file.name, { type: "image/jpeg" }) : file),
-      "image/jpeg", 0.75
+      "image/jpeg", maxSize ? 0.9 : 0.75
     );
   };
   img.src = URL.createObjectURL(file);
@@ -4334,15 +4335,16 @@ const RecordTab=({hj})=>{ const{apiKey,bpForm,bpHistory,deleteBP,editBPRecord,ed
               showToast(`⏳ 處理 ${list.length} 張截圖…`);
               const parts=[];
               for(const f of list){
-                const c=await compressImage(f);
+                const c=await compressImage(f,2000); // ★ v4.91 高解析，確保小字可辨識
                 const b64=await fileToBase64(c);
                 parts.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}});
               }
-              parts.push({type:"text",text:`你是資料擷取助手。以下是 Samsung Health 睡眠報告的多張截圖（可能包含：睡眠分數組成因素、實際睡眠時間、深層睡眠、快速動眼期(REM)、清醒、入睡期、血氧、心率等頁面）。
+              parts.push({type:"text",text:`你是資料擷取助手。以下是 Samsung Health 睡眠報告的多張截圖，請「逐張仔細看完每一張」再作答。
+截圖可能包含：睡眠分數總覽、睡眠分數組成因素、睡眠階段、深層睡眠、快速動眼期(REM)、清醒、入睡期、血氧、心跳率、呼吸速率、體溫等頁面。
 
-請擷取數據並「只」輸出下列格式，每行一項，冒號用全形「：」，不要任何說明文字、不要markdown：
+請「只」輸出下列16行，每行一項，冒號用全形「：」，不要任何說明文字、不要markdown、不要程式碼區塊：
 
-日期：YYYY/MM/DD
+日期：${today()}
 上床時間：HH:MM
 起床時間：HH:MM
 總時間（分鐘）：數字
@@ -4359,12 +4361,21 @@ REM（分鐘）：數字
 心率最低值（次/分）：數字
 呼吸速率（次/分）：數字
 
-規則：
-1. 時間如「2 小時 57 分」請換算成分鐘（177）。
-2. 「46 分鐘/2 小時 57 分」代表該項46分鐘、實際睡眠177分鐘。
-3. 日期以起床當天為準；截圖若只顯示時間軸（如 23:24→03:06），上床時間取起點、起床時間取終點。
-4. 截圖中找不到的項目，該行數值填 0（時間類填空白），不要省略該行。
-5. 只輸出上述16行。`});
+擷取規則（務必遵守）：
+1. 【日期】截圖上沒有日期，日期一律固定輸出 ${today()}，不要自己推測或編造。
+2. 【24小時制】時間一律用24小時制。時間軸起點若是 00:33 就輸出 00:33，絕對不可寫成 12:33。上床時間＝時間軸最左端，起床時間＝時間軸最右端（例如「23:23 - 06:17」→上床23:23、起床06:17）。
+3. 【時間換算】「6 小時 34 分」→394；「1 小時 30 分」→90；「28 分」→28。
+4. 【秒數換算】「26 分鐘 13 秒」→26；「1 分鐘 35 秒」→1.6（四捨五入到小數一位）。
+5. 【斜線格式】「46 分鐘/2 小時 57 分」代表該項目46分鐘、實際睡眠177分鐘。
+6. 【欄位對應】
+   ・「睡眠時間」或總覽上方大字時間＝總時間；「實際睡眠時間」＝實際睡眠。
+   ・「血氧 平均：91%」→血氧平均；「X 分鐘 Y 秒的時間維持在 90% 以下」→血氧低於90%（分鐘）。
+   ・血氧圖表若可看出最低點數值→血氧最低值，看不出則填 0。
+   ・「心跳率 平均：66 bpm」→平均心跳；心率圖表最低值→心率最低值，看不出則填 0。
+   ・「呼吸速率 平均：14.9 次/分」→呼吸速率（保留小數）。
+   ・睡眠階段頁的「清醒 7% 28分」→清醒28；「淺層 51% 3小時15分」→淺層195。
+7. 【找不到就填0】某項目在所有截圖中都找不到，該行填 0（上床/起床時間找不到則留空），但不可省略該行。
+8. 只輸出上述16行，不要多、不要少。`});
 
               showToast("⏳ AI 解析中（約10秒）…");
               const raw=await callAI([{role:"user",content:parts}],800);
@@ -4375,8 +4386,16 @@ REM（分鐘）：數字
               const ls=txt.split("\n").map(l=>l.trim()).filter(Boolean);
               const g=(k)=>{const l=ls.find(x=>x.startsWith(k));return l?(l.split("：")[1]||"").trim():"";};
               const I=(x)=>parseInt(x)||0, F=(x)=>parseFloat(x)||0;
+              // ★ v4.91 日期防呆：截圖無日期，AI若編造離譜日期（差距>7天）一律改用今天
+              const rawDate=(g("日期")||"").replace(/\//g,"-");
+              const okDate=(()=>{
+                if(!/^\d{4}-\d{2}-\d{2}$/.test(rawDate))return today();
+                const d=new Date(rawDate), n=new Date(today());
+                if(isNaN(d))return today();
+                return Math.abs((n-d)/86400000)>7 ? today() : rawDate;
+              })();
               const parsed={
-                date:(g("日期")||today()).replace(/\//g,"-"),
+                date:okDate,
                 bedtime:g("上床時間")||"",
                 waketime:g("起床時間")||"",
                 total_min:I(g("總時間（分鐘）")),
