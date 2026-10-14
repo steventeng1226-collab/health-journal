@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-const VERSION = "v4.91"; // v4.91: 睡眠截圖辨識改善——高解析壓縮(1200→2000px防小字糊掉)+日期由App提供(截圖無日期)+24小時制與秒數換算規則
+const VERSION = "v4.92"; // v4.92: 睡眠截圖缺欄位自動補問一次（針對缺漏項重新詢問AI並合併結果）
 const GAS_URL = "https://script.google.com/macros/s/AKfycbzEQmF8JD_QI_Wq4fOpcwkCXKjrKG8ke63wqR8Mfx0IvUeSLxseJUwSncmJhuJpf4cyqw/exec";
 // ★ v4.75 Gemini API 直接呼叫（AI Studio金鑰：AQ.或AIza開頭皆可，一律用x-goog-api-key header）
 const GEMINI_MODEL_DEFAULT = "gemini-3.5-flash";
@@ -4378,12 +4378,17 @@ REM（分鐘）：數字
 8. 只輸出上述16行，不要多、不要少。`});
 
               showToast("⏳ AI 解析中（約10秒）…");
+              const imgParts=parts.slice(0,-1); // 圖片部分，補問時重複使用
+              const ask=async(promptText,maxTok)=>{
+                const r=await callAI([{role:"user",content:[...imgParts,{type:"text",text:promptText}]}],maxTok||800);
+                return String(r||"").replace(/\u0060\u0060\u0060/g,"").trim();
+              };
               const raw=await callAI([{role:"user",content:parts}],800);
-              const txt=String(raw||"").replace(/\u0060\u0060\u0060/g,"").trim();
+              let txt=String(raw||"").replace(/\u0060\u0060\u0060/g,"").trim();
               if(!txt){showToast("❌ AI 未回傳內容");return;}
 
               // 複用既有的固定格式解析
-              const ls=txt.split("\n").map(l=>l.trim()).filter(Boolean);
+              let ls=txt.split("\n").map(l=>l.trim()).filter(Boolean);
               const g=(k)=>{const l=ls.find(x=>x.startsWith(k));return l?(l.split("：")[1]||"").trim():"";};
               const I=(x)=>parseInt(x)||0, F=(x)=>parseFloat(x)||0;
               // ★ v4.91 日期防呆：截圖無日期，AI若編造離譜日期（差距>7天）一律改用今天
@@ -4419,15 +4424,67 @@ REM（分鐘）：數字
                 showToast("⚠️ 擷取不完整，AI原文已放入下方貼上區供手動調整");
                 return;
               }
+
+              // ★ v4.92 缺欄位自動補問一次：第一輪常是AI沒看仔細，針對缺的項目再問一次通常會中
+              const RETRY_FIELDS=[
+                {k:"score",      label:"睡眠評分",            line:"睡眠評分",            num:"int"},
+                {k:"deep_min",   label:"深層睡眠（分鐘）",    line:"深層睡眠（分鐘）",    num:"int"},
+                {k:"light_min",  label:"淺層睡眠（分鐘）",    line:"淺層睡眠（分鐘）",    num:"int"},
+                {k:"rem_min",    label:"REM（分鐘）",         line:"REM（分鐘）",         num:"int"},
+                {k:"awake_min",  label:"清醒（分鐘）",        line:"清醒（分鐘）",        num:"int"},
+                {k:"spo2_avg",   label:"血氧平均（%）",       line:"血氧平均（%）",       num:"int"},
+                {k:"spo2_below90_min",label:"血氧低於90%（分鐘）",line:"血氧低於90%（分鐘）",num:"float"},
+                {k:"hr_avg",     label:"平均心跳（次/分）",   line:"平均心跳（次/分）",   num:"int"},
+                {k:"hr_min",     label:"心率最低值（次/分）", line:"心率最低值（次/分）", num:"int"},
+                {k:"breath_rate",label:"呼吸速率（次/分）",   line:"呼吸速率（次/分）",   num:"float"},
+                {k:"spo2_min",   label:"血氧最低值（%）",     line:"血氧最低值（%）",     num:"int"},
+              ];
+              // 補問時血氧低於90%一律再確認一次（此欄有臨床意義，不可因AI漏看而遺失）
+              const isMissing=(f)=>!parsed[f.k];
+              let missing=RETRY_FIELDS.filter(isMissing);
+              let retried=false, recovered=[];
+              if(missing.length){
+                retried=true;
+                showToast(`🔍 缺 ${missing.length} 項，再看一次截圖…`);
+                try{
+                  const retryPrompt=`以下是同一批 Samsung Health 睡眠截圖。先前有幾個數值沒有擷取到，請「重新逐張仔細看過每一張截圖」，只找出下列項目：
+
+${missing.map(f=>f.line+"：數字").join("\n")}
+
+重要提示：
+・數值可能在次要頁面或小字區域（例如「心跳率 平均：66 bpm」「呼吸速率 平均：14.9 次/分」「血氧 平均：91%」「X 分鐘 Y 秒的時間維持在 90% 以下」）。
+・圖表上的最低點（血氧最低值、心率最低值）若圖上標有刻度可推估，請取圖中曲線最低處對應的數值。
+・「26 分鐘 13 秒」→26；「1 分鐘 35 秒」→1.6。
+・「1 小時 30 分」→90。
+・真的完全找不到的項目才填 0。
+・只輸出上列 ${missing.length} 行，格式「項目：數字」，冒號用全形「：」，不要任何其他文字。`;
+                  const txt2=await ask(retryPrompt,400);
+                  if(txt2){
+                    const ls2=txt2.split("\n").map(l=>l.trim()).filter(Boolean);
+                    const g2=(k)=>{const l=ls2.find(x=>x.startsWith(k));return l?(l.split("：")[1]||"").trim():"";};
+                    missing.forEach(f=>{
+                      const v=g2(f.line);
+                      const n=f.num==="float"?(parseFloat(v)||0):(parseInt(v)||0);
+                      if(n){parsed[f.k]=n;recovered.push(f.label.replace(/（.*/,""));}
+                    });
+                  }
+                }catch(e){ /* 補問失敗不影響第一輪結果 */ }
+                // 補問後：血氧平均讀得到時，「低於90%=0」是正常好結果，不列為缺漏
+                missing=RETRY_FIELDS.filter(f=>
+                  isMissing(f) && !(f.k==="spo2_below90_min" && parsed.spo2_avg));
+              }
+
               setSleepForm(parsed);
-              const miss=[];
-              if(!parsed.score)miss.push("評分");
-              if(!parsed.deep_min)miss.push("深層");
-              if(!parsed.rem_min)miss.push("REM");
-              if(!parsed.spo2_avg)miss.push("血氧");
-              showToast(miss.length
-                ? `✅ 已填入，缺 ${miss.join("/")}（截圖未含，可手動補）`
-                : "✅ 全部欄位已填入，請確認後儲存");
+              const missNames=missing.map(f=>f.label.replace(/（.*/,""));
+              if(!missNames.length){
+                showToast(retried
+                  ? `✅ 全部欄位已填入（補問補回 ${recovered.join("/")}）`
+                  : "✅ 全部欄位已填入，請確認後儲存");
+              }else{
+                showToast(recovered.length
+                  ? `✅ 已填入，補回 ${recovered.join("/")}；仍缺 ${missNames.join("/")}，可手動補`
+                  : `✅ 已填入，缺 ${missNames.join("/")}（截圖未含，可手動補）`);
+              }
             }catch(e){
               showToast("❌ 解析失敗："+String(e.message||e));
             }finally{
